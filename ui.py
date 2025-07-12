@@ -1,18 +1,17 @@
 import os
 import onec_dtools
-from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
-    QFileDialog, QLineEdit, QMessageBox, QProgressBar, QHBoxLayout, QStyle
+    QFileDialog, QLineEdit, QMessageBox, QHBoxLayout, QStyle
 )
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent
+from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QMovie, QTransform
 from localization import loc
 import sys
 from os_utils import get_default_unpack_dir, open_folder
 
 
 class UnpackThread(QThread):
-    progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str)
 
     def __init__(self, input_file, output_dir):
@@ -61,9 +60,26 @@ class MainWindow(QMainWindow):
         self.btn_reset_path.setIcon(self.style().standardIcon(QStyle.SP_FileDialogBack))
         self.btn_unpack = QPushButton(loc.get('unpack_button'))
         self.btn_unpack.setEnabled(False)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
+        
+        # Заменяем прогресс бар на анимированную иконку загрузки
+        self.loading_label = QLabel()
+        self.loading_movie = QMovie("resources/loading.gif")
+        
+        # Настраиваем качественное масштабирование
+        self.loading_movie.setCacheMode(QMovie.CacheAll)  # Кэшируем все кадры для лучшего качества
+        self.loading_movie.setScaledSize(QSize(96, 96))  # Оптимальный размер для качества
+        
+        self.loading_label.setMovie(self.loading_movie)
+        self.loading_label.setAlignment(Qt.AlignCenter)
+        # Добавляем CSS для сглаживания и центрирования
+        self.loading_label.setStyleSheet("""
+            QLabel { 
+                margin: 20px; 
+                image-rendering: -webkit-optimize-contrast;
+                image-rendering: crisp-edges;
+            }
+        """)
+        self.loading_label.setVisible(False)
 
         self.label_message = QLabel()
         self.label_message.setAlignment(Qt.AlignCenter)
@@ -91,7 +107,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(output_layout)
         
         layout.addWidget(self.btn_unpack)
-        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.loading_label) # Добавляем анимированную иконку
         layout.addWidget(self.label_message)
         layout.addWidget(self.btn_retry)
         
@@ -110,13 +126,14 @@ class MainWindow(QMainWindow):
         self.btn_reset_path.clicked.connect(self.reset_output_path)
 
     def hide_interface_elements(self):
-        """Скрыть все элементы интерфейса кроме прогресс-бара"""
+        """Скрыть все элементы интерфейса кроме анимированной иконки загрузки"""
         self.label_input.setVisible(False)
         self.edit_output.setVisible(False)
         self.btn_browse.setVisible(False)
         self.btn_reset_path.setVisible(False)
         self.btn_unpack.setVisible(False)
-        self.progress_bar.setVisible(True)
+        self.loading_label.setVisible(True)
+        self.loading_movie.start()  # Запускаем анимацию
         self.label_message.setVisible(False)
         self.btn_retry.setVisible(False)
         self.btn_open_folder.setVisible(False)
@@ -129,7 +146,8 @@ class MainWindow(QMainWindow):
         self.btn_browse.setVisible(True)
         self.btn_reset_path.setVisible(True)
         self.btn_unpack.setVisible(True)
-        self.progress_bar.setVisible(False)
+        self.loading_movie.stop()  # Останавливаем анимацию
+        self.loading_label.setVisible(False)
         self.label_message.setVisible(False)
         self.btn_retry.setVisible(False)
         self.btn_open_folder.setVisible(False)
@@ -141,7 +159,8 @@ class MainWindow(QMainWindow):
         self.edit_output.setVisible(False)
         self.btn_browse.setVisible(False)
         self.btn_unpack.setVisible(False)
-        self.progress_bar.setVisible(False)
+        self.loading_movie.stop()  # Останавливаем анимацию
+        self.loading_label.setVisible(False)
         self.label_message.setText(text)
         self.label_message.setStyleSheet("color: #4caf50; font-size: 16px;" if not is_error else "color: #d32f2f; font-size: 16px;")
         self.label_message.setVisible(True)
@@ -155,7 +174,6 @@ class MainWindow(QMainWindow):
         self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
         self.edit_output.setText(self.output_path)
         self.show_interface_elements()
-        self.progress_bar.setValue(0)
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(True)
         self.btn_reset_path.setEnabled(True)
@@ -225,13 +243,11 @@ class MainWindow(QMainWindow):
                 return
 
         self.hide_interface_elements()
-        self.progress_bar.setValue(0)
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(False)
         self.btn_reset_path.setEnabled(False)
 
         self.thread = UnpackThread(self.input_file, output_dir)
-        self.thread.progress.connect(self.progress_bar.setValue)
         self.thread.finished.connect(self.unpack_finished)
         self.thread.start()
 
