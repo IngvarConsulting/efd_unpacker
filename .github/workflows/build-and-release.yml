@@ -1,0 +1,215 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Add permissions for creating releases
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip libxcb-xinerama0 libxcb-shape0 libxkbcommon-x11-0 libxcb-keysyms1 libxcb-icccm4 libxcb-xkb1 libxcb-image0 libxcb-render-util0 dpkg-dev rpm
+
+      - name: Install appimagetool
+        run: |
+          wget -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          sudo mv appimagetool /usr/local/bin/
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Create version.txt from tag
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ -z "$VERSION" ]; then VERSION="dev"; fi
+          echo "$VERSION" > version.txt
+          echo "Created version.txt with version: $VERSION"
+      - name: Build Linux version
+        run: |
+          chmod +x build_linux.sh
+          ./build_linux.sh
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: |
+            dist/efd-unpacker-*-linux-portable.zip
+            dist/efd-unpacker-*-linux-portable.tar.gz
+            dist/efd-unpacker-*-linux.AppImage
+            dist/efd-unpacker_*.deb
+            dist/efd-unpacker-*-1.x86_64.rpm
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install WiX Toolset
+        run: |
+          # Проверяем, установлен ли уже WiX
+          if (Get-Command candle -ErrorAction SilentlyContinue) {
+            Write-Host "WiX Toolset уже установлен и доступен в PATH" -ForegroundColor Green
+            candle -version
+            light -version
+          } else {
+            Write-Host "Устанавливаем WiX Toolset..." -ForegroundColor Yellow
+            choco install wixtoolset --yes
+            # Обновляем PATH для текущей сессии
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+            # Проверяем установку
+            candle -version
+            light -version
+          }
+          
+          # Запускаем детальную проверку WiX
+          Write-Host "Запускаем детальную проверку WiX..." -ForegroundColor Yellow
+          .\scripts\check_wix.ps1 -Verbose
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Create version.txt from tag
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF -replace 'refs/tags/v',''
+          if (-not $version) { $version = 'dev' }
+          Set-Content -Path version.txt -Value $version
+          Write-Host "Created version.txt with version: $version"
+      - name: Build Windows version
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+          .\build_windows.ps1
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            dist/efd-unpacker-*-windows-portable.zip
+            dist/efd-unpacker-*-windows.msi
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install create-dmg
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Create version.txt from tag
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF -replace 'refs/tags/v',''
+          if (-not $version) { $version = 'dev' }
+          Set-Content -Path version.txt -Value $version
+          Write-Host "Created version.txt with version: $version"
+      - name: Build macOS version
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: |
+            dist/efd-unpacker-*-macos-portable.zip
+            dist/efd-unpacker-*-macos.dmg
+
+  create-release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Нужно для получения истории коммитов
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          # Извлекаем версию из тега (убираем префикс 'v')
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using version from tag: $VERSION"
+
+      - name: Create version.txt from tag
+        run: |
+          echo "${{ steps.get_version.outputs.VERSION }}" > version.txt
+          echo "Created version.txt with version: ${{ steps.get_version.outputs.VERSION }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          python scripts/generate_release_notes.py ${{ steps.get_version.outputs.VERSION }} > release_notes.md
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EFD Unpacker ${{ steps.get_version.outputs.VERSION }}
+          body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/linux-builds/*
+            artifacts/windows-builds/*
+            artifacts/macos-builds/*

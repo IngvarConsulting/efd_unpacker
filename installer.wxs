@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="EFD Unpacker" Language="1033" Version="VERSION_PLACEHOLDER" Manufacturer="Ingvar Consulting" UpgradeCode="12345678-1234-1234-1234-123456789012">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+    <Media Id="1" Cabinet="cab1.cab" EmbedCab="yes" />
+    
+    <!-- Условия установки -->
+    <Condition Message="This application requires Windows 7 or later.">
+      <![CDATA[Installed OR (VersionNT >= 601)]]>
+    </Condition>
+    
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="EFD Unpacker" />
+      </Directory>
+      
+      <!-- Иконка в меню Пуск -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="EFD Unpacker" />
+      </Directory>
+      
+      <!-- Desktop Shortcut -->
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+    
+    <!-- Основные компоненты приложения -->
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="87654321-4321-4321-4321-210987654321">
+        <File Source="dist\EFDUnpacker.exe" KeyPath="yes" Id="EFDUnpackerEXE" Name="EFDUnpacker.exe" />
+        
+        <!-- File Association Registration -->
+        <RegistryValue Root="HKCR" Key=".efd" Value="EFDFile" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDFile" Value="EFD Archive File" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDFile\DefaultIcon" Value="[INSTALLFOLDER]EFDUnpacker.exe,0" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDFile\shell\open\command" Value="&quot;[INSTALLFOLDER]EFDUnpacker.exe&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDFile\shell\open" Value="Open with EFD Unpacker" Type="string" />
+        
+        <!-- MIME Type Registration -->
+        <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd" Value="EFD Archive File" Type="string" />
+        <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd\Extension" Value=".efd" Type="string" />
+      </Component>
+    </ComponentGroup>
+    
+    <!-- Компоненты ярлыков -->
+    <ComponentGroup Id="ShortcutComponents" Directory="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="11111111-1111-1111-1111-111111111111">
+        <Shortcut Id="ApplicationStartMenuShortcut" 
+                  Name="EFD Unpacker" 
+                  Description="EFD Unpacker Application"
+                  Target="[INSTALLFOLDER]EFDUnpacker.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\EFD Unpacker" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    
+    <ComponentGroup Id="DesktopShortcutComponents" Directory="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="22222222-2222-2222-2222-222222222222">
+        <Shortcut Id="DesktopShortcut" 
+                  Name="EFD Unpacker" 
+                  Description="EFD Unpacker Application"
+                  Target="[INSTALLFOLDER]EFDUnpacker.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\EFD Unpacker" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    
+    <!-- Основная фича -->
+    <Feature Id="ProductFeature" Title="EFD Unpacker" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+      <ComponentGroupRef Id="DesktopShortcutComponents" />
+    </Feature>
+  </Product>
+</Wix>

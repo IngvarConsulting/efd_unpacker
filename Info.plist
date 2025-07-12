@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>efd</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>EFD File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleTypeIconFile</key>
+            <string>icon.icns</string>
+            <key>CFBundleTypeDescription</key>
+            <string>EFD (Enterprise File Distribution) archive file</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.efd.unpacker.efd-file</string>
+            </array>
+        </dict>
+    </array>
+    
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.efd.unpacker.efd-file</string>
+            <key>UTTypeDescription</key>
+            <string>EFD Archive File</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.archive</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <string>efd</string>
+                <key>public.mime-type</key>
+                <string>application/x-efd</string>
+            </dict>
+        </dict>
+    </array>
+    
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>EFD File Handler</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>efd</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
