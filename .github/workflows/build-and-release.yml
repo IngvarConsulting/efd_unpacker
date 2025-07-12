@@ -196,7 +196,7 @@ jobs:
       - name: Generate release notes
         id: release_notes
         run: |
-          python scripts/generate_release_notes.py ${{ steps.get_version.outputs.VERSION }} > release_notes.md
+          python scripts/generate_release_notes.py > release_notes.md
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
           cat release_notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
