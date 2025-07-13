@@ -1,95 +1,96 @@
 # Система локализации EFD Unpacker
 
+## Обзор
+
+EFD Unpacker использует Qt Translation (QTranslator) для локализации интерфейса. Система автоматически определяет язык операционной системы и загружает соответствующие переводы.
+
 ## Структура файлов
 
-- `localization.py` - Основной файл с переводами
-- `language_manager.py` - Менеджер для управления языками
+- `translations/ru.ts` - Файл переводов для русского языка (Qt Linguist)
+- `translations/ru.qm` - Скомпилированный файл переводов для русского языка
 
 ## Автоматическое определение языка
 
 Приложение автоматически определяет системный язык при запуске:
-- Если системный язык поддерживается (русский или английский), он используется
+- Использует стандартную Qt локаль (`QLocale.system()`)
+- Поддерживает русский (`ru`) и английский (`en`) языки
 - Если системный язык не поддерживается, используется английский язык
-- Настройки языка не сохраняются между запусками
+- Язык определяется при каждом запуске, настройки не сохраняются
 
-## Использование
+## Определение системного языка
 
-### Получение переведенной строки
+Система использует стандартный Qt механизм:
+- `QLocale.system()` для получения системной локали
+- Анализ имени локали и языка для определения поддерживаемого языка
+- Fallback на английский язык для неподдерживаемых языков
 
+## Использование в коде
+
+### В UI классах
 ```python
-from localization import loc
-
 # Простая строка
-title = loc.get('window_title')
+self.setWindowTitle(self.tr('EFD Unpacker'))
 
 # Строка с параметрами
-message = loc.get('file_selected', file_path='/path/to/file')
+self.label.setText(self.tr('%1').replace('%1', file_path))
 ```
 
-### Переключение языка
-
+### В сервисах
 ```python
-from language_manager import language_manager
+from PyQt6.QtCore import QCoreApplication
 
-# Установить английский язык
-language_manager.set_language('en')
+# Простая строка
+message = QCoreApplication.translate('UnpackService', 'File not found')
 
-# Получить текущий язык
-current_lang = language_manager.get_current_language()
-
-# Получить список доступных языков
-languages = language_manager.get_available_languages()
+# Строка с параметрами
+message = QCoreApplication.translate('UnpackService', 'Unexpected error: %1').replace('%1', str(error))
 ```
 
 ## Добавление нового языка
 
-1. Откройте файл `localization.py`
-2. Добавьте новый язык в словарь `translations`:
-
-```python
-'tr': {  # Турецкий язык
-    'window_title': 'EFD Unpacker',
-    'drag_drop_hint': 'Dosyayı buraya sürükleyin veya çift tıklayın',
-    # ... остальные переводы
-}
-```
-
-3. Добавьте язык в `language_manager.py`:
-
-```python
-self.available_languages = {
-    'ru': 'Русский',
-    'en': 'English',
-    'tr': 'Türkçe'  # Новый язык
-}
-```
+1. Создайте файл `translations/xx.ts` (где xx - код языка)
+2. Добавьте переводы в формате Qt Linguist
+3. Скомпилируйте в `.qm` файл:
+   ```bash
+   lrelease translations/xx.ts -qm translations/xx.qm
+   ```
+4. Добавьте поддержку языка в `main.py`:
+   ```python
+   if lang not in ('ru', 'en', 'xx'):
+       lang = 'en'
+   ```
 
 ## Добавление новых строк
 
-1. Добавьте ключ в словарь переводов в `localization.py`
-2. Добавьте переводы для всех поддерживаемых языков
-3. Используйте `loc.get('new_key')` в коде
+1. Добавьте строку в код с `self.tr()` или `QCoreApplication.translate()`
+2. Обновите `.ts` файлы с помощью `lupdate`:
+   ```bash
+   lupdate main.py ui.py unpack_service.py -ts translations/ru.ts
+   ```
+3. Отредактируйте переводы в Qt Linguist
+4. Скомпилируйте в `.qm` файлы
 
-## Форматирование строк
+## Компиляция переводов
 
-Для строк с параметрами используйте форматирование Python:
+### Установка инструментов
+- **macOS:** `brew install qt5-tools`
+- **Ubuntu/Debian:** `sudo apt install qttools5-dev-tools`
+- **Windows:** Установите Qt через официальный инсталлятор
 
-```python
-# В localization.py
-'file_selected': 'Файл выбран:\n{file_path}'
+### Команды
+```bash
+# Обновление .ts файлов
+lupdate main.py ui.py unpack_service.py -ts translations/ru.ts
 
-# В коде
-loc.get('file_selected', file_path='/path/to/file')
+# Компиляция в .qm
+lrelease translations/ru.ts -qm translations/ru.qm
 ```
 
 ## Fallback механизм
 
-Если перевод не найден для текущего языка, система автоматически использует английский перевод. Если и английский перевод отсутствует, возвращается ключ строки.
+Если перевод не найден для текущего языка, Qt автоматически использует исходную строку (английскую).
 
-## Определение системного языка
+## Контексты переводов
 
-Система использует модуль `locale` Python для определения системного языка:
-- Получает системную локаль через `locale.getdefaultlocale()`
-- Извлекает код языка (первые 2 символа)
-- Проверяет поддержку языка в списке доступных
-- Использует английский как fallback 
+- `MainWindow` - Основной интерфейс приложения
+- `UnpackService` - Сообщения сервиса распаковки

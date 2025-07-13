@@ -1,11 +1,11 @@
 import os
-from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
+from PyQt6 import QtWidgets
+from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize, QCoreApplication
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
-    QFileDialog, QMessageBox, QHBoxLayout, QComboBox
+    QMessageBox, QHBoxLayout, QComboBox
 )
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
-from localization import loc
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart, open_folder
 from unpack_service import UnpackService
 
@@ -24,9 +24,9 @@ class UnpackThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, language='en'):
         super().__init__()
-        self.setWindowTitle(loc.get('window_title'))
+        self.setWindowTitle(self.tr('EFD Unpacker'))
         self.resize(500, 250)
         self.setAcceptDrops(True)
 
@@ -38,23 +38,22 @@ class MainWindow(QMainWindow):
         self.output_path = self.settings.value('output_path', default_output_path)
         self.manual_selected_path = None  # путь, выбранный вручную через Select folder
 
-        self.label_input = QLabel(loc.get('drag_drop_hint'))
+        self.label_input = QLabel(self.tr('Drag .efd file here or click to choose'))
         self.label_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
+        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7;")
         self.label_input.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.label_input.mousePressEvent = self.open_file_dialog
 
         self.combo_output_paths = QComboBox()
-        self.combo_output_paths.setToolTip(loc.get('reset_folder_button'))
+        self.combo_output_paths.setToolTip(self.tr('Reset to Default'))
         self.combo_output_paths.setEditable(False)
         self.combo_output_paths.setMinimumWidth(200)
         self.combo_output_paths.activated.connect(self.on_output_path_selected)
         self.update_output_paths_combobox()
-        self.btn_browse = QPushButton(loc.get('select_folder_button'))
-        self.btn_unpack = QPushButton(loc.get('unpack_button'))
+        self.btn_browse = QPushButton(self.tr('Select Folder'))
+        self.btn_unpack = QPushButton(self.tr('Unpack'))
         self.btn_unpack.setEnabled(False)
         
-        # Заменяем прогресс бар на анимированную иконку загрузки
         self.loading_label = QLabel()
         self.loading_movie = QMovie("resources/loading.gif")
         
@@ -68,8 +67,6 @@ class MainWindow(QMainWindow):
         self.loading_label.setStyleSheet("""
             QLabel { 
                 margin: 20px; 
-                image-rendering: -webkit-optimize-contrast;
-                image-rendering: crisp-edges;
             }
         """)
         self.loading_label.setVisible(False)
@@ -78,14 +75,14 @@ class MainWindow(QMainWindow):
         self.label_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_message.setWordWrap(True)
         self.label_message.setVisible(False)
-        self.btn_retry = QPushButton(loc.get('retry_button'))
+        self.btn_retry = QPushButton(self.tr('Retry'))
         self.btn_retry.setVisible(False)
         self.btn_retry.clicked.connect(self.reset_ui)
 
-        self.btn_open_folder = QPushButton(loc.get('open_folder_button'))
+        self.btn_open_folder = QPushButton(self.tr('Open Folder'))
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self.open_output_folder)
-        self.btn_close = QPushButton(loc.get('close_button'))
+        self.btn_close = QPushButton(self.tr('Close'))
         self.btn_close.setVisible(False)
         self.btn_close.clicked.connect(self.close)
 
@@ -130,7 +127,7 @@ class MainWindow(QMainWindow):
             seen.add(os.path.normpath(self.manual_selected_path))
         # 2. Последний использованный
         if last_used:
-            label = f"{last_used} {loc.get('last_used_label')}"
+            label = f"{last_used} {self.tr('(last used)')}"
             if os.path.normpath(last_used) not in seen:
                 items.append((last_used, label))
                 seen.add(os.path.normpath(last_used))
@@ -143,7 +140,7 @@ class MainWindow(QMainWindow):
         # 4. По умолчанию
         norm_default = os.path.normpath(default_path)
         if norm_default not in seen:
-            items.append((default_path, f"{default_path} {loc.get('default_label')}"))
+            items.append((default_path, f"{default_path} {self.tr('(default)')}"))
             seen.add(norm_default)
         for path, label in items:
             self.combo_output_paths.addItem(label, path)
@@ -206,25 +203,30 @@ class MainWindow(QMainWindow):
 
     def reset_ui(self) -> None:
         self.input_file = None
-        self.label_input.setText(loc.get('drag_drop_hint'))
-        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
+        self.label_input.setText(self.tr('Drag .efd file here or click to choose'))
+        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7;")
         self.show_interface_elements()
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(True)
         self.combo_output_paths.setEnabled(True)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData() is not None and event.mimeData().hasUrls(): # Добавлена проверка на None
-            event.acceptProposedAction()
-            self.set_drag_active(True)
+        mime = event.mimeData()
+        if mime and hasattr(mime, "urls"):
+            for url in mime.urls():
+                if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
+                    event.acceptProposedAction()
+                    self.set_drag_active(True)
+                    break
 
     def dragLeaveEvent(self, event):
         self.set_drag_active(False)
 
     def dropEvent(self, event: QDropEvent):
         self.set_drag_active(False)
-        if event.mimeData() is not None: # Добавлена проверка на None
-            for url in event.mimeData().urls():
+        mime = event.mimeData()
+        if mime and hasattr(mime, "urls"):
+            for url in mime.urls():
                 if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
                     self.set_input_file(url.toLocalFile())
                     break
@@ -232,28 +234,29 @@ class MainWindow(QMainWindow):
     def set_drag_active(self, active):
         self.drag_active = active
         if active:
-            self.label_input.setText(loc.get('drop_file_hint'))
+            self.label_input.setText(self.tr('Drop file to upload'))
             self.label_input.setStyleSheet("border: 2px dashed #0078d7; background: #e6f2ff; color: #000000; padding: 20px;")
         else:
-            self.label_input.setText(loc.get('drag_drop_hint'))
+            self.label_input.setText(self.tr('Drag .efd file here or click to choose'))
             self.label_input.setStyleSheet("border: 2px dashed #aaa; color: inherit; padding: 20px;")
 
     def set_input_file(self, file_path):
         if not os.path.exists(file_path):
-            QMessageBox.warning(self, loc.get('error_title'), loc.get('file_does_not_exist'))
+            QMessageBox.warning(self, self.tr('Error'), self.tr('File does not exist'))
             self.btn_unpack.setEnabled(False)
             return
         if not file_path.lower().endswith('.efd'):
-            QMessageBox.warning(self, loc.get('error_title'), loc.get('invalid_file_format'))
+            QMessageBox.warning(self, self.tr('Error'), self.tr('Invalid file format'))
             self.btn_unpack.setEnabled(False)
             return
         self.input_file = file_path
-        self.label_input.setText(loc.get('file_selected', file_path=file_path))
+        self.label_input.setText(file_path)
         self.label_input.setStyleSheet("border: 2px solid #4caf50; padding: 20px; background: #f1fff1; color: #000000;")
         self.btn_unpack.setEnabled(True)
 
     def browse_output_path(self):
-        directory = QFileDialog.getExistingDirectory(self, loc.get('select_folder_dialog_title'), self.combo_output_paths.currentData())
+        from PyQt6.QtWidgets import QFileDialog
+        directory = QFileDialog.getExistingDirectory(self, self.tr('Select output folder'), self.combo_output_paths.currentData())
         if directory:
             self.manual_selected_path = directory
             self.output_path = directory
@@ -265,22 +268,22 @@ class MainWindow(QMainWindow):
         self.combo_output_paths.setEnabled(True)
 
     def open_file_dialog(self, ev):
-        options = QFileDialog.Option(0)
-        file_filter = loc.get('efd_files_filter')
-        file_path, _ = QFileDialog.getOpenFileName(self, loc.get('select_efd_file'), "", file_filter, options=options)
+        from PyQt6.QtWidgets import QFileDialog
+        file_filter = self.tr('EFD Files (*.efd)')
+        file_path, _ = QFileDialog.getOpenFileName(self, self.tr('Select .efd file'), "", file_filter)
         if file_path:
             self.set_input_file(file_path)
 
     def unpack_file(self, skip_clear_check=False):
         if not self.input_file:
-            QMessageBox.warning(self, loc.get('error_title'), loc.get('no_file_selected'))
+            QMessageBox.warning(self, self.tr('Error'), self.tr('No .efd file selected'))
             return
         output_dir = self.combo_output_paths.currentData()
         if not os.path.isdir(output_dir):
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except Exception as e:
-                QMessageBox.warning(self, loc.get('error_title'), loc.get('invalid_output_folder'))
+                QMessageBox.warning(self, self.tr('Error'), self.tr('Invalid output folder'))
                 return
         self.hide_interface_elements()
         self.btn_unpack.setEnabled(False)
@@ -303,10 +306,9 @@ class MainWindow(QMainWindow):
         if success:
             self.show_message(message, is_error=False)
         else:
-            self.show_message(loc.get('unpack_error', error_message=message), is_error=True)
+            self.show_message(self.tr('Unpack error: %1').replace('%1', message), is_error=True)
 
     def open_output_folder(self):
         """Открыть папку с распакованными файлами"""
         output_dir = self.combo_output_paths.currentData()
         open_folder(output_dir)
-        

@@ -114,7 +114,7 @@ if (Test-Path "dist") {
 
 # Build executable
 Write-Host "Building executable..." -ForegroundColor Yellow
-pyinstaller --noconfirm --onefile --windowed $iconOption --name=EFDUnpacker main.py
+pyinstaller --noconfirm --onefile --windowed $iconOption --name=EFDUnpacker --add-data "translations;translations" main.py
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: PyInstaller build failed." -ForegroundColor Red
@@ -122,6 +122,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Executable created successfully" -ForegroundColor Green
+
+# Copy translations folder to dist
+if (Test-Path "dist/translations") {
+    Remove-Item -Recurse -Force "dist/translations"
+}
+Copy-Item -Recurse -Force "translations" "dist/translations"
 
 # Check if executable was created
 if (-not (Test-Path "dist\EFDUnpacker.exe")) {
@@ -162,7 +168,7 @@ if ($wixAvailable) {
 
 # Create ZIP archive (portable)
 Write-Host "Creating ZIP archive..." -ForegroundColor Yellow
-$portableFiles = @("dist\EFDUnpacker.exe")
+$portableFiles = @("dist\EFDUnpacker.exe", "dist\translations")
 Compress-Archive -Path $portableFiles -DestinationPath "dist\efd-unpacker-$VERSION-windows-portable.zip" -Force
 
 # Show results
