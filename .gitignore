@@ -165,7 +165,6 @@ cython_debug/
 *.iws
 
 # VS Code
-.vscode/
 *.code-workspace
 
 # Sublime Text
