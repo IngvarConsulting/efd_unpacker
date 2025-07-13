@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<WixLocalization Culture="en-us" Codepage="1252">
+<WixLocalization xmlns="http://schemas.microsoft.com/wix/2006/localization" Culture="en-us" Codepage="1252">
   <String Id="DlgTitle">EFD Unpacker — PATH Options</String>
   <String Id="PathLabel">Choose whether to add EFDUnpacker to PATH:</String>
   <String Id="NoPathText">Do not add to PATH</String>
