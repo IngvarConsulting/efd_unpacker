@@ -1,13 +1,14 @@
 import os
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize, QCoreApplication
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QCoreApplication
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
     QMessageBox, QHBoxLayout, QComboBox
 )
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
-from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart, open_folder
+from os_utils import open_folder
 from unpack_service import UnpackService
+from settings_service import SettingsService
 
 
 class UnpackThread(QThread):
@@ -31,11 +32,10 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.drag_active = False
-        self.settings = QSettings('efd_unpacker', 'settings')
         self.input_file = None
         self.thread: UnpackThread | None = None # Инициализируем поток
-        default_output_path = get_1c_configuration_location_default()
-        self.output_path = self.settings.value('output_path', default_output_path)
+        self.settings_service = SettingsService()
+        self.output_path = self.settings_service.get_output_path()
         self.manual_selected_path = None  # путь, выбранный вручную через Select folder
 
         self.label_input = QLabel(self.tr('Drag .efd file here or click to choose'))
@@ -115,37 +115,14 @@ class MainWindow(QMainWindow):
 
     def update_output_paths_combobox(self):
         self.combo_output_paths.clear()
-        last_used = self.settings.value('output_path', '')
-        from_1cestart = get_1c_configuration_location_from_1cestart()
-        default_path = get_1c_configuration_location_default()
-        seen = set()
-        items = []
-        # 1. Вручную выбранный путь (если есть и не совпадает с последним использованным)
-        if self.manual_selected_path and os.path.normpath(self.manual_selected_path) != os.path.normpath(last_used):
-            label = f"{self.manual_selected_path}"
-            items.append((self.manual_selected_path, label))
-            seen.add(os.path.normpath(self.manual_selected_path))
-        # 2. Последний использованный
-        if last_used:
-            label = f"{last_used} {self.tr('(last used)')}"
-            if os.path.normpath(last_used) not in seen:
-                items.append((last_used, label))
-                seen.add(os.path.normpath(last_used))
-        # 3. Пути из 1cestart
-        for path in from_1cestart:
-            norm = os.path.normpath(path)
-            if norm not in seen:
-                items.append((path, path))
-                seen.add(norm)
-        # 4. По умолчанию
-        norm_default = os.path.normpath(default_path)
-        if norm_default not in seen:
-            items.append((default_path, f"{default_path} {self.tr('(default)')}"))
-            seen.add(norm_default)
+        # Используем SettingsService для получения списка путей
+        items = self.settings_service.get_output_path_items(self.manual_selected_path)
+        
         for path, label in items:
             self.combo_output_paths.addItem(label, path)
+        
         # Установить выбранный путь
-        current_path = self.manual_selected_path or last_used
+        current_path = self.manual_selected_path or self.settings_service.get_output_path()
         if current_path:
             idx = self.combo_output_paths.findData(current_path)
             if idx != -1:
@@ -296,7 +273,7 @@ class MainWindow(QMainWindow):
     def unpack_finished(self, success, message):
         if success:
             # Сохраняем путь только после успешной распаковки
-            self.settings.setValue('output_path', self.combo_output_paths.currentData())
+            self.settings_service.set_output_path(self.combo_output_paths.currentData())
             # После успешной распаковки manual_selected_path сбрасывается
             self.manual_selected_path = None
             self.update_output_paths_combobox()

@@ -130,4 +130,15 @@
         <translation>Неожиданная ошибка: %1</translation>
     </message>
 </context>
+<context>
+    <name>SettingsService</name>
+    <message>
+        <source>(last used)</source>
+        <translation>(последний использованный)</translation>
+    </message>
+    <message>
+        <source>(default)</source>
+        <translation>(по-умолчанию)</translation>
+    </message>
+</context>
 </TS>
