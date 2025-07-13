@@ -1,18 +1,19 @@
 from PyQt6.QtCore import QSettings, QCoreApplication
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart
 import os
+from typing import List, Tuple, Optional
 
 class SettingsService:
-    def __init__(self):
+    def __init__(self) -> None:
         self.settings = QSettings('efd_unpacker', 'settings')
 
     def get_output_path(self) -> str:
         return self.settings.value('output_path', get_1c_configuration_location_default())
 
-    def set_output_path(self, path: str):
+    def set_output_path(self, path: str) -> None:
         self.settings.setValue('output_path', path)
 
-    def get_output_path_items(self, manual_selected_path=None):
+    def get_output_path_items(self, manual_selected_path: Optional[str] = None) -> List[Tuple[str, str]]:
         """
         Возвращает список (path, label) для комбобокса, учитывая manual_selected_path, last_used, from_1cestart, default_path и локализацию.
         """

@@ -1,9 +1,10 @@
 import onec_dtools
 from PyQt6.QtCore import QCoreApplication
+from typing import Tuple
 
 class UnpackService:
     @staticmethod
-    def unpack(input_file: str, output_dir: str) -> tuple[bool, str]:
+    def unpack(input_file: str, output_dir: str) -> Tuple[bool, str]:
         try:
             with open(input_file, 'rb') as f:
                 supply_reader = onec_dtools.SupplyReader(f)

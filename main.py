@@ -5,8 +5,9 @@ from ui import MainWindow
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QEvent, QLocale, QTimer, QTranslator
 from unpack_service import UnpackService
+from typing import Optional
 
-def process_file_argument(file_path):
+def process_file_argument(file_path: str) -> Optional[str]:
     """Обработать аргумент файла, поддерживая URL схемы и относительные пути"""
     # Обработка URL схемы file:// (macOS может передавать файлы так)
     if file_path.startswith('file://'):
@@ -34,7 +35,7 @@ def process_file_argument(file_path):
     
     return file_path
 
-def cli_unpack(input_file, output_dir):
+def cli_unpack(input_file: str, output_dir: str) -> bool:
     """CLI-распаковка без GUI. Возвращает True/False."""
     success, message = UnpackService.unpack(input_file, output_dir)
     if success:
@@ -47,10 +48,10 @@ def cli_unpack(input_file, output_dir):
 class FileAssociationApp(QApplication):
     """Приложение с поддержкой Apple Events для файловых ассоциаций в macOS"""
     
-    def __init__(self, argv):
+    def __init__(self, argv: list) -> None:
         super().__init__(argv)
-        self.window = None
-        self.pending_files = []
+        self.window: Optional[MainWindow] = None
+        self.pending_files: list[str] = []
         
         # Устанавливаем обработчик событий
         self.installEventFilter(self)
@@ -60,14 +61,14 @@ class FileAssociationApp(QApplication):
         self.file_timer.setSingleShot(True)
         self.file_timer.timeout.connect(self.process_pending_files)
     
-    def set_window(self, window):
+    def set_window(self, window: MainWindow) -> None:
         """Установить главное окно"""
         self.window = window
         # Обрабатываем отложенные файлы
         if self.pending_files:
             self.process_pending_files()
     
-    def process_file(self, file_path):
+    def process_file(self, file_path: str) -> bool:
         """Обработать файл"""
         processed_path = process_file_argument(file_path)
         if processed_path and self.window:
@@ -78,7 +79,7 @@ class FileAssociationApp(QApplication):
                 pass
         return False
     
-    def eventFilter(self, obj, event):
+    def eventFilter(self, obj, event) -> bool:
         """Обработчик событий для получения файлов через Apple Events"""
         # В PyQt6 QEvent.Type.FileOpen доступен напрямую
         if event.type() == QEvent.Type.FileOpen:
@@ -92,7 +93,7 @@ class FileAssociationApp(QApplication):
             return True
         return super().eventFilter(obj, event)
     
-    def process_pending_files(self):
+    def process_pending_files(self) -> None:
         """Обработать отложенные файлы"""
         if self.window and self.pending_files:
             for file_path in self.pending_files:
@@ -100,7 +101,7 @@ class FileAssociationApp(QApplication):
                     break  # Обрабатываем только первый валидный файл
             self.pending_files.clear()
 
-def main():
+def main() -> None:
     # CLI режим: EFDUnpacker unpack /path/to/file.efd -tmplts /path/to/dir
     if len(sys.argv) >= 5 and sys.argv[1] == 'unpack' and sys.argv[3] == '-tmplts':
         input_file = process_file_argument(sys.argv[2])

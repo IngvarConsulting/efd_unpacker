@@ -4,12 +4,13 @@ import subprocess
 import platform
 import locale
 import re
+from typing import List
 
 # Добавляем импорт ctypes только для Windows
 if sys.platform.startswith('win'):
     import ctypes
 
-def get_1c_configuration_location_default():
+def get_1c_configuration_location_default() -> str:
     """Возвращает путь к каталогу распаковки по умолчанию в зависимости от ОС."""
     if sys.platform.startswith('win'):
         appdata = os.environ.get('APPDATA')
@@ -21,7 +22,7 @@ def get_1c_configuration_location_default():
         home = os.path.expanduser('~')
         return os.path.join(home, '.1cv8', '1C', '1cv8', 'tmplts')
 
-def get_1c_configuration_location_from_1cestart():
+def get_1c_configuration_location_from_1cestart() -> List[str]:
     """
     Возвращает массив значений ConfigurationTemplatesLocation из файла 1cestart.cfg.
     
@@ -62,7 +63,7 @@ def get_1c_configuration_location_from_1cestart():
                     continue
     return locations
 
-def open_folder(path):
+def open_folder(path: str) -> bool:
     """Открывает указанный путь в системном файловом менеджере."""
     if not os.path.exists(path):
         return False
