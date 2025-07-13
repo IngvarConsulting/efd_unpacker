@@ -1,5 +1,4 @@
 import os
-import onec_dtools
 from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
@@ -8,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
 from localization import loc
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart, open_folder
+from unpack_service import UnpackService
 
 
 class UnpackThread(QThread):
@@ -19,17 +19,8 @@ class UnpackThread(QThread):
         self.output_dir = output_dir
 
     def run(self):
-        try:
-            with open(self.input_file, 'rb') as f:
-                supply_reader = onec_dtools.SupplyReader(f)
-                supply_reader.unpack(self.output_dir)
-            self.finished.emit(True, loc.get('unpack_success'))
-        except FileNotFoundError:
-            self.finished.emit(False, loc.get('file_not_found_error'))
-        except PermissionError:
-            self.finished.emit(False, loc.get('permission_error'))
-        except Exception as e:
-            self.finished.emit(False, loc.get('unexpected_error', error=str(e)))
+        success, message = UnpackService.unpack(self.input_file, self.output_dir)
+        self.finished.emit(success, message)
 
 
 class MainWindow(QMainWindow):
