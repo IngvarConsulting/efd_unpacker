@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=EFD Unpacker
+Comment=Unpack EFD (Enterprise File Distribution) files
+Exec=efd_unpacker %f
+Icon=efd_unpacker
+Type=Application
+Categories=Utility;FileManager;Archiving;
+MimeType=application/x-efd;
+Terminal=false
+StartupNotify=true
+Keywords=efd;unpack;archive;1c;enterprise; 

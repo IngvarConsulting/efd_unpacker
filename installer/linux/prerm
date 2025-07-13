@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+# Remove desktop file associations
+if [ -f /usr/share/applications/efd_unpacker.desktop ]; then
+    rm -f /usr/share/applications/efd_unpacker.desktop
+fi
+
+# Update desktop database
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications
+fi
+
+echo "EFD Unpacker uninstalled successfully!" 

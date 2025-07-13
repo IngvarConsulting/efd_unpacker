@@ -1,0 +1,17 @@
+Package: efd-unpacker
+Version: VERSION_PLACEHOLDER
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: libc6 (>= 2.17), libstdc++6 (>= 4.8.1)
+Maintainer: Ingvar Consulting, LLC
+Description: EFD Unpacker
+ A tool for unpacking EFD (Enterprise File Distribution) files.
+ EFD files are archives used by 1C:Enterprise platform.
+ .
+ Features:
+  * Unpack EFD files to local directories
+  * Support for both GUI and command line interfaces
+  * Automatic file association with .efd files
+  * Cross-platform compatibility
+  * Localization support (English and Russian) 

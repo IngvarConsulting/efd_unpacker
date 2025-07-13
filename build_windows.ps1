@@ -114,7 +114,7 @@ if (Test-Path "dist") {
 
 # Build executable
 Write-Host "Building executable..." -ForegroundColor Yellow
-pyinstaller --noconfirm --onefile --windowed $iconOption --name=EFDUnpacker --add-data "translations;translations" main.py
+pyinstaller --noconfirm --onefile --windowed $iconOption --name=EFDUnpacker --add-data "translations;translations" src/main.py
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: PyInstaller build failed." -ForegroundColor Red
@@ -141,29 +141,29 @@ if ($wixAvailable) {
     
     # Replace version placeholder in installer.wxs
     Write-Host "Updating version in installer.wxs..." -ForegroundColor Yellow
-    $wxsContent = Get-Content "installer.wxs" -Raw
+    $wxsContent = Get-Content "installer/windows/installer.wxs" -Raw
     $wxsContent = $wxsContent -replace "VERSION_PLACEHOLDER", $VERSION
-    Set-Content "installer.wxs" $wxsContent -NoNewline
+    Set-Content "installer/windows/installer.wxs" $wxsContent -NoNewline
     
     # Compile WiX source
-    & $candle installer.wxs -out installer.wixobj
+    & $candle installer/windows/installer.wxs -out installer/windows/installer.wixobj
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: WiX compilation failed." -ForegroundColor Red
         exit 1
     }
     
     # Link WiX object with both localizations (multi-language MSI)
-    & $light installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi -cultures:en-us,ru-ru -ext WixUIExtension
+    & $light installer/windows/installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi -cultures:en-us,ru-ru -ext WixUIExtension -loc installer/windows/installer_en.wxl -loc installer/windows/installer_ru.wxl
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: WiX linking failed." -ForegroundColor Red
         exit 1
     }
     
     # Clean up WiX files
-    Remove-Item "installer.wixobj" -ErrorAction SilentlyContinue
+    Remove-Item "installer/windows/installer.wixobj" -ErrorAction SilentlyContinue
     
     # Restore original installer.wxs
-    git checkout installer.wxs
+    git checkout installer/windows/installer.wxs
 }
 
 # Create ZIP archive (portable)

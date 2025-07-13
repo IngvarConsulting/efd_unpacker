@@ -1,0 +1,18 @@
+#!/bin/bash
+set -e
+
+# Update desktop database
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications
+fi
+
+# Update mime database
+if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database /usr/share/mime
+fi
+
+# Set executable permissions
+chmod +x /usr/bin/efd_unpacker
+
+echo "EFD Unpacker installed successfully!"
+echo "You can now associate .efd files with EFD Unpacker in your file manager." 
