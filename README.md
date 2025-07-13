@@ -1,4 +1,5 @@
-[![Test Suite](https://github.com/ingvarvilkman/efd_unpacker/actions/workflows/test.yml/badge.svg)](https://github.com/ingvarvilkman/efd_unpacker/actions/workflows/test.yml)
+[![Test Suite](https://github.com/IngvarConsulting/efd_unpacker/actions/workflows/test.yml/badge.svg)](https://github.com/IngvarConsulting/efd_unpacker/actions/workflows/test.yml)
+
 
 # EFD Unpacker
 
