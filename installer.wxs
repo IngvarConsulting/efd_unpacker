@@ -39,8 +39,6 @@
         </Control>
       </Dialog>
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="PathDlg">1</Publish>
-      <Publish Dialog="PathDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg">1</Publish>
-      <Publish Dialog="PathDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
     </UI>
     
     <Directory Id="TARGETDIR" Name="SourceDir">
