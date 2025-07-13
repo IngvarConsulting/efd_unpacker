@@ -10,6 +10,7 @@ from os_utils import open_folder
 from unpack_service import UnpackService
 from settings_service import SettingsService
 from file_validator import FileValidator
+from constants import UIConstants, UIState, Styles, FileExtensions
 from typing import Optional, List, Tuple
 
 
@@ -29,54 +30,82 @@ class UnpackThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self, language: str = 'en') -> None:
         super().__init__()
+        self.language = language
+        
+        self._init_window_properties()
+        self._init_services()
+        self._init_ui_elements()
+        self._init_layout()
+        self._connect_signals()
+
+    def _init_window_properties(self) -> None:
+        """Инициализирует свойства окна"""
         self.setWindowTitle(self.tr('EFD Unpacker'))
-        self.resize(500, 250)
+        self.resize(UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
         self.setAcceptDrops(True)
 
-        self.drag_active = False
-        self.input_file: Optional[str] = None
-        self.thread: Optional[UnpackThread] = None # Инициализируем поток
+    def _init_services(self) -> None:
+        """Инициализирует сервисы"""
         self.settings_service = SettingsService()
         self.output_path = self.settings_service.get_output_path()
-        self.manual_selected_path: Optional[str] = None  # путь, выбранный вручную через Select folder
+        self.manual_selected_path: Optional[str] = None
 
+    def _init_ui_elements(self) -> None:
+        """Инициализирует UI элементы"""
+        self._create_input_area()
+        self._create_output_area()
+        self._create_buttons()
+        self._create_loading_area()
+        self._create_message_area()
+
+    def _create_input_area(self) -> None:
+        """Создает область ввода файла"""
+        self.drag_active = False
+        self.input_file: Optional[str] = None
+        self.thread: Optional[UnpackThread] = None
+        
         self.label_input = QLabel(self.tr('Drag .efd file here or click to choose'))
         self.label_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7;")
+        self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
         self.label_input.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.label_input.mousePressEvent = self.open_file_dialog
 
+    def _create_output_area(self) -> None:
+        """Создает область выбора выходной папки"""
         self.combo_output_paths = QComboBox()
         self.combo_output_paths.setToolTip(self.tr('Reset to Default'))
         self.combo_output_paths.setEditable(False)
-        self.combo_output_paths.setMinimumWidth(200)
+        self.combo_output_paths.setMinimumWidth(UIConstants.COMBO_MIN_WIDTH)
         self.combo_output_paths.activated.connect(self.on_output_path_selected)
         self.update_output_paths_combobox()
+
+    def _create_buttons(self) -> None:
+        """Создает кнопки"""
         self.btn_browse = QPushButton(self.tr('Select Folder'))
         self.btn_unpack = QPushButton(self.tr('Unpack'))
         self.btn_unpack.setEnabled(False)
-        
+
+    def _create_loading_area(self) -> None:
+        """Создает область загрузки"""
         self.loading_label = QLabel()
         self.loading_movie = QMovie("resources/loading.gif")
         
         # Настраиваем качественное масштабирование
-        self.loading_movie.setCacheMode(QMovie.CacheMode.CacheAll)  # Кэшируем все кадры для лучшего качества
-        self.loading_movie.setScaledSize(QSize(96, 96))  # Оптимальный размер для качества
+        self.loading_movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        self.loading_movie.setScaledSize(QSize(UIConstants.LOADING_ICON_SIZE, UIConstants.LOADING_ICON_SIZE))
         
         self.loading_label.setMovie(self.loading_movie)
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Добавляем CSS для сглаживания и центрирования
-        self.loading_label.setStyleSheet("""
-            QLabel { 
-                margin: 20px; 
-            }
-        """)
+        self.loading_label.setStyleSheet(Styles.LOADING_LABEL)
         self.loading_label.setVisible(False)
 
+    def _create_message_area(self) -> None:
+        """Создает область сообщений"""
         self.label_message = QLabel()
         self.label_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_message.setWordWrap(True)
         self.label_message.setVisible(False)
+        
         self.btn_retry = QPushButton(self.tr('Retry'))
         self.btn_retry.setVisible(False)
         self.btn_retry.clicked.connect(self.reset_ui)
@@ -84,10 +113,13 @@ class MainWindow(QMainWindow):
         self.btn_open_folder = QPushButton(self.tr('Open Folder'))
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self.open_output_folder)
+        
         self.btn_close = QPushButton(self.tr('Close'))
         self.btn_close.setVisible(False)
         self.btn_close.clicked.connect(self.close)
 
+    def _init_layout(self) -> None:
+        """Инициализирует layout"""
         layout = QVBoxLayout()
         layout.addWidget(self.label_input)
         
@@ -98,7 +130,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(output_layout)
         
         layout.addWidget(self.btn_unpack)
-        layout.addWidget(self.loading_label) # Добавляем анимированную иконку
+        layout.addWidget(self.loading_label)
         layout.addWidget(self.label_message)
         layout.addWidget(self.btn_retry)
         
@@ -112,6 +144,8 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+    def _connect_signals(self) -> None:
+        """Подключает сигналы"""
         self.btn_browse.clicked.connect(self.browse_output_path)
         self.btn_unpack.clicked.connect(self.unpack_file)
 
@@ -139,51 +173,57 @@ class MainWindow(QMainWindow):
                 self.manual_selected_path = None
                 self.update_output_paths_combobox()
 
-    def hide_interface_elements(self) -> None:
-        """Скрыть все элементы интерфейса кроме анимированной иконки загрузки"""
+    def set_ui_state(self, state: UIState) -> None:
+        """Устанавливает состояние UI"""
+        # Скрываем все элементы
         self.label_input.setVisible(False)
         self.combo_output_paths.setVisible(False)
         self.btn_browse.setVisible(False)
         self.btn_unpack.setVisible(False)
-        self.loading_label.setVisible(True)
-        self.loading_movie.start()  # Запускаем анимацию
+        self.loading_label.setVisible(False)
         self.label_message.setVisible(False)
         self.btn_retry.setVisible(False)
         self.btn_open_folder.setVisible(False)
         self.btn_close.setVisible(False)
+        
+        # Останавливаем анимацию
+        self.loading_movie.stop()
+        
+        # Показываем элементы в зависимости от состояния
+        if state == UIState.NORMAL:
+            self.label_input.setVisible(True)
+            self.combo_output_paths.setVisible(True)
+            self.btn_browse.setVisible(True)
+            self.btn_unpack.setVisible(True)
+        elif state == UIState.LOADING:
+            self.loading_label.setVisible(True)
+            self.loading_movie.start()
+        elif state == UIState.SUCCESS:
+            self.label_message.setVisible(True)
+            self.btn_open_folder.setVisible(True)
+            self.btn_close.setVisible(True)
+        elif state == UIState.ERROR:
+            self.label_message.setVisible(True)
+            self.btn_retry.setVisible(True)
+
+    def hide_interface_elements(self) -> None:
+        """Скрыть все элементы интерфейса кроме анимированной иконки загрузки"""
+        self.set_ui_state(UIState.LOADING)
 
     def show_interface_elements(self) -> None:
         """Показать все элементы интерфейса"""
-        self.label_input.setVisible(True)
-        self.combo_output_paths.setVisible(True)
-        self.btn_browse.setVisible(True)
-        self.btn_unpack.setVisible(True)
-        self.loading_movie.stop()  # Останавливаем анимацию
-        self.loading_label.setVisible(False)
-        self.label_message.setVisible(False)
-        self.btn_retry.setVisible(False)
-        self.btn_open_folder.setVisible(False)
-        self.btn_close.setVisible(False)
+        self.set_ui_state(UIState.NORMAL)
 
     def show_message(self, text: str, is_error: bool = False) -> None:
         """Показать сообщение в основном окне"""
-        self.label_input.setVisible(False)
-        self.combo_output_paths.setVisible(False)
-        self.btn_browse.setVisible(False)
-        self.btn_unpack.setVisible(False)
-        self.loading_movie.stop()  # Останавливаем анимацию
-        self.loading_label.setVisible(False)
         self.label_message.setText(text)
-        self.label_message.setStyleSheet("color: #4caf50; font-size: 16px;" if not is_error else "color: #d32f2f; font-size: 16px;")
-        self.label_message.setVisible(True)
-        self.btn_retry.setVisible(is_error)
-        self.btn_open_folder.setVisible(not is_error)
-        self.btn_close.setVisible(not is_error)
+        self.label_message.setStyleSheet(Styles.MESSAGE_SUCCESS if not is_error else Styles.MESSAGE_ERROR)
+        self.set_ui_state(UIState.ERROR if is_error else UIState.SUCCESS)
 
     def reset_ui(self) -> None:
         self.input_file = None
         self.label_input.setText(self.tr('Drag .efd file here or click to choose'))
-        self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7;")
+        self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
         self.show_interface_elements()
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(True)
@@ -193,7 +233,7 @@ class MainWindow(QMainWindow):
         mime = event.mimeData()
         if mime and hasattr(mime, "urls"):
             for url in mime.urls():
-                if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
+                if url.isLocalFile() and url.toLocalFile().lower().endswith(FileExtensions.EFD):
                     event.acceptProposedAction()
                     self.set_drag_active(True)
                     break
@@ -206,7 +246,7 @@ class MainWindow(QMainWindow):
         mime = event.mimeData()
         if mime and hasattr(mime, "urls"):
             for url in mime.urls():
-                if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
+                if url.isLocalFile() and url.toLocalFile().lower().endswith(FileExtensions.EFD):
                     self.set_input_file(url.toLocalFile())
                     break
 
@@ -214,10 +254,10 @@ class MainWindow(QMainWindow):
         self.drag_active = active
         if active:
             self.label_input.setText(self.tr('Drop file to upload'))
-            self.label_input.setStyleSheet("border: 2px dashed #0078d7; background: #e6f2ff; color: #000000; padding: 20px;")
+            self.label_input.setStyleSheet(Styles.INPUT_DRAG)
         else:
             self.label_input.setText(self.tr('Drag .efd file here or click to choose'))
-            self.label_input.setStyleSheet("border: 2px dashed #aaa; color: inherit; padding: 20px;")
+            self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
 
     def set_input_file(self, file_path: str) -> None:
         # Используем FileValidator для валидации файла
@@ -229,13 +269,12 @@ class MainWindow(QMainWindow):
         
         self.input_file = file_path
         self.label_input.setText(file_path)
-        self.label_input.setStyleSheet("border: 2px solid #4caf50; padding: 20px; background: #f1fff1; color: #000000;")
+        self.label_input.setStyleSheet(Styles.INPUT_SUCCESS)
         self.btn_unpack.setEnabled(True)
 
     def browse_output_path(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
         from settings_service import SettingsService
-        settings_service = SettingsService()
         directory = QFileDialog.getExistingDirectory(self, self.tr('Select output folder'), self.combo_output_paths.currentData())
         if directory:
             self.manual_selected_path = directory
