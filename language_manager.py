@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-import locale
-import os
+
 from localization import loc
 from os_utils import get_default_language # Импортируем новую функцию
 

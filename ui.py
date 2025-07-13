@@ -1,13 +1,12 @@
 import os
 import onec_dtools
-from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
+from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
-    QFileDialog, QLineEdit, QMessageBox, QHBoxLayout, QStyle, QMenu, QAction, QComboBox
+    QFileDialog, QMessageBox, QHBoxLayout, QComboBox
 )
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QMovie, QTransform
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
 from localization import loc
-import sys
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart, open_folder
 
 
@@ -43,14 +42,15 @@ class MainWindow(QMainWindow):
         self.drag_active = False
         self.settings = QSettings('efd_unpacker', 'settings')
         self.input_file = None
+        self.thread: UnpackThread | None = None # Инициализируем поток
         default_output_path = get_1c_configuration_location_default()
         self.output_path = self.settings.value('output_path', default_output_path)
         self.manual_selected_path = None  # путь, выбранный вручную через Select folder
 
         self.label_input = QLabel(loc.get('drag_drop_hint'))
-        self.label_input.setAlignment(Qt.AlignCenter)
+        self.label_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
-        self.label_input.setCursor(Qt.PointingHandCursor)
+        self.label_input.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.label_input.mousePressEvent = self.open_file_dialog
 
         self.combo_output_paths = QComboBox()
@@ -68,11 +68,11 @@ class MainWindow(QMainWindow):
         self.loading_movie = QMovie("resources/loading.gif")
         
         # Настраиваем качественное масштабирование
-        self.loading_movie.setCacheMode(QMovie.CacheAll)  # Кэшируем все кадры для лучшего качества
+        self.loading_movie.setCacheMode(QMovie.CacheMode.CacheAll)  # Кэшируем все кадры для лучшего качества
         self.loading_movie.setScaledSize(QSize(96, 96))  # Оптимальный размер для качества
         
         self.loading_label.setMovie(self.loading_movie)
-        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Добавляем CSS для сглаживания и центрирования
         self.loading_label.setStyleSheet("""
             QLabel { 
@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.loading_label.setVisible(False)
 
         self.label_message = QLabel()
-        self.label_message.setAlignment(Qt.AlignCenter)
+        self.label_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_message.setWordWrap(True)
         self.label_message.setVisible(False)
         self.btn_retry = QPushButton(loc.get('retry_button'))
@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.setVisible(not is_error)
         self.btn_close.setVisible(not is_error)
 
-    def reset_ui(self):
+    def reset_ui(self) -> None:
         self.input_file = None
         self.label_input.setText(loc.get('drag_drop_hint'))
         self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         self.combo_output_paths.setEnabled(True)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
+        if event.mimeData() is not None and event.mimeData().hasUrls(): # Добавлена проверка на None
             event.acceptProposedAction()
             self.set_drag_active(True)
 
@@ -232,10 +232,11 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent):
         self.set_drag_active(False)
-        for url in event.mimeData().urls():
-            if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
-                self.set_input_file(url.toLocalFile())
-                break
+        if event.mimeData() is not None: # Добавлена проверка на None
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and url.toLocalFile().lower().endswith('.efd'):
+                    self.set_input_file(url.toLocalFile())
+                    break
 
     def set_drag_active(self, active):
         self.drag_active = active
@@ -272,8 +273,10 @@ class MainWindow(QMainWindow):
         self.btn_browse.setEnabled(True)
         self.combo_output_paths.setEnabled(True)
 
-    def open_file_dialog(self, event):
-        file_path, _ = QFileDialog.getOpenFileName(self, loc.get('select_efd_file'), os.getcwd(), loc.get('efd_files_filter'))
+    def open_file_dialog(self, ev):
+        options = QFileDialog.Option(0)
+        file_filter = loc.get('efd_files_filter')
+        file_path, _ = QFileDialog.getOpenFileName(self, loc.get('select_efd_file'), "", file_filter, options=options)
         if file_path:
             self.set_input_file(file_path)
 

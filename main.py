@@ -2,9 +2,8 @@ import sys
 import os
 import urllib.parse
 from ui import MainWindow
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QEvent, QTimer
-from language_manager import language_manager
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QEvent, QTimer
 import onec_dtools
 
 def process_file_argument(file_path):
@@ -88,7 +87,8 @@ class FileAssociationApp(QApplication):
     
     def eventFilter(self, obj, event):
         """Обработчик событий для получения файлов через Apple Events"""
-        if event.type() == QEvent.FileOpen:
+        # В PyQt6 QEvent.Type.FileOpen доступен напрямую
+        if event.type() == QEvent.Type.FileOpen:
             file_open_event = event
             file_path = file_open_event.url().toLocalFile()
             if file_path:
@@ -138,7 +138,7 @@ def main():
                     pass  # Игнорируем ошибки при установке файла
     
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
