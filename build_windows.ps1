@@ -146,8 +146,8 @@ if ($wixAvailable) {
         exit 1
     }
     
-    # Link WiX object
-    & $light installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi
+    # Link WiX object with both localizations (multi-language MSI)
+    & $light installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi -cultures:en-us,ru-ru
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: WiX linking failed." -ForegroundColor Red
         exit 1
@@ -160,9 +160,10 @@ if ($wixAvailable) {
     git checkout installer.wxs
 }
 
-# Create ZIP archive
+# Create ZIP archive (portable)
 Write-Host "Creating ZIP archive..." -ForegroundColor Yellow
-Compress-Archive -Path "dist\EFDUnpacker.exe" -DestinationPath "dist\efd-unpacker-$VERSION-windows-portable.zip" -Force
+$portableFiles = @("dist\EFDUnpacker.exe")
+Compress-Archive -Path $portableFiles -DestinationPath "dist\efd-unpacker-$VERSION-windows-portable.zip" -Force
 
 # Show results
 Write-Host ""

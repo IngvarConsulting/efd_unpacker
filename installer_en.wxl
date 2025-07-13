@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="en-us" Codepage="1252">
+  <String Id="DlgTitle">EFD Unpacker — PATH Options</String>
+  <String Id="PathLabel">Choose whether to add EFDUnpacker to PATH:</String>
+  <String Id="NoPathText">Do not add to PATH</String>
+  <String Id="UserPathText">Add to PATH for current user only</String>
+  <String Id="AllPathText">Add to PATH for all users (restart required)</String>
+  <String Id="WarningLabelText">If you select "all users", a system restart is required for PATH changes to take effect.</String>
+  <String Id="BackBtn">&lt; Back</String>
+  <String Id="NextBtn">Next &gt;</String>
+  <String Id="CancelBtn">Cancel</String>
+</WixLocalization> 

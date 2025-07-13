@@ -9,6 +9,40 @@
       <![CDATA[Installed OR (VersionNT >= 601)]]>
     </Condition>
     
+    <!-- Добавляем свойство выбора PATH -->
+    <Property Id="ADD_TO_PATH" Value="none" />
+
+    <!-- UI: диалог выбора PATH -->
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+      <Dialog Id="PathDlg" Width="370" Height="270" Title="[DlgTitle]">
+        <Control Id="PathLabel" Type="Text" X="20" Y="20" Width="330" Height="40" Text="[PathLabel]" />
+        <Control Id="NoPath" Type="RadioButtonGroup" X="40" Y="70" Width="290" Height="60" Property="ADD_TO_PATH">
+          <RadioButtonGroup Property="ADD_TO_PATH">
+            <RadioButton Value="none" X="0" Y="0" Width="280" Height="16" Text="[NoPathText]" />
+            <RadioButton Value="user" X="0" Y="20" Width="280" Height="16" Text="[UserPathText]" />
+            <RadioButton Value="all" X="0" Y="40" Width="280" Height="16" Text="[AllPathText]" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="WarningLabel" Type="Text" X="40" Y="140" Width="290" Height="30" Text="[WarningLabelText]" Hidden="yes">
+          <Condition Action="show">ADD_TO_PATH = "all"</Condition>
+          <Condition Action="hide">ADD_TO_PATH &lt;&gt; "all"</Condition>
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="230" Width="56" Height="17" Default="no" Cancel="no" Text="[BackBtn]">
+          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="230" Width="56" Height="17" Default="yes" Cancel="no" Text="[NextBtn]">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="292" Y="230" Width="56" Height="17" Cancel="yes" Text="[CancelBtn]">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="PathDlg">1</Publish>
+      <Publish Dialog="PathDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg">1</Publish>
+      <Publish Dialog="PathDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+    </UI>
+    
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
         <Directory Id="INSTALLFOLDER" Name="EFD Unpacker" />
@@ -38,6 +72,19 @@
         <!-- MIME Type Registration -->
         <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd" Value="EFD Archive File" Type="string" />
         <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd\Extension" Value=".efd" Type="string" />
+      </Component>
+      <!-- Добавляем компоненты для PATH -->
+      <Component Id="PathUser" Guid="33333333-3333-3333-3333-333333333333" Win64="yes">
+        <RegistryKey Root="HKCU" Key="Environment" Action="write">
+          <RegistryValue Name="PATH" Type="expand" Value="[~]EFDUnpackerPATHUSER" KeyPath="yes" />
+        </RegistryKey>
+        <Condition>ADD_TO_PATH = "user"</Condition>
+      </Component>
+      <Component Id="PathAll" Guid="44444444-4444-4444-4444-444444444444" Win64="yes">
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment" Action="write">
+          <RegistryValue Name="PATH" Type="expand" Value="[~]EFDUnpackerPATHALL" KeyPath="yes" />
+        </RegistryKey>
+        <Condition>ADD_TO_PATH = "all"</Condition>
       </Component>
     </ComponentGroup>
     
@@ -71,5 +118,13 @@
       <ComponentGroupRef Id="ShortcutComponents" />
       <ComponentGroupRef Id="DesktopShortcutComponents" />
     </Feature>
+
+    <!-- Прописываем значения для PATH -->
+    <CustomAction Id="SetEFDUnpackerPATHUSER" Property="EFDUnpackerPATHUSER" Value="[INSTALLFOLDER];%PATH%" Execute="immediate" />
+    <CustomAction Id="SetEFDUnpackerPATHALL" Property="EFDUnpackerPATHALL" Value="[INSTALLFOLDER];%PATH%" Execute="immediate" />
+    <InstallExecuteSequence>
+      <Custom Action="SetEFDUnpackerPATHUSER" Before="WriteRegistryValues">ADD_TO_PATH = "user"</Custom>
+      <Custom Action="SetEFDUnpackerPATHALL" Before="WriteRegistryValues">ADD_TO_PATH = "all"</Custom>
+    </InstallExecuteSequence>
   </Product>
 </Wix>

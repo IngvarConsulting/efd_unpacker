@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="ru-ru" Codepage="1251">
+  <String Id="DlgTitle">EFD Unpacker — параметры PATH</String>
+  <String Id="PathLabel">Выберите, нужно ли добавить EFDUnpacker в PATH:</String>
+  <String Id="NoPathText">Не добавлять в PATH</String>
+  <String Id="UserPathText">Добавить в PATH только для текущего пользователя</String>
+  <String Id="AllPathText">Добавить в PATH для всех пользователей (требуется перезагрузка)</String>
+  <String Id="WarningLabelText">Если выбран вариант для всех пользователей, потребуется перезагрузка системы для применения изменений PATH.</String>
+  <String Id="BackBtn">&lt; Назад</String>
+  <String Id="NextBtn">Далее &gt;</String>
+  <String Id="CancelBtn">Отмена</String>
+</WixLocalization> 
