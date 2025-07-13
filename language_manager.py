@@ -13,6 +13,14 @@ class LanguageManager:
     
     def get_system_language(self):
         """Определить системный язык"""
+        # Попытка получить язык из переменных окружения (более точные для Unix/macOS)
+        for env_var in ['LC_ALL', 'LC_MESSAGES', 'LANG']:
+            lang_env = os.environ.get(env_var)
+            if lang_env:
+                lang_code = lang_env.split('_')[0].lower()
+                if lang_code in self.available_languages:
+                    return lang_code
+
         try:
             # Получаем системную локаль
             system_locale = locale.getdefaultlocale()[0]
