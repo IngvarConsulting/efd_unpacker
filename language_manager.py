@@ -2,6 +2,7 @@
 import locale
 import os
 from localization import loc
+from os_utils import get_default_language # Импортируем новую функцию
 
 class LanguageManager:
     def __init__(self):
@@ -13,27 +14,14 @@ class LanguageManager:
     
     def get_system_language(self):
         """Определить системный язык"""
-        # Попытка получить язык из переменных окружения (более точные для Unix/macOS)
-        for env_var in ['LC_ALL', 'LC_MESSAGES', 'LANG']:
-            lang_env = os.environ.get(env_var)
-            if lang_env:
-                lang_code = lang_env.split('_')[0].lower()
-                if lang_code in self.available_languages:
-                    return lang_code
-
-        try:
-            # Получаем системную локаль
-            system_locale = locale.getdefaultlocale()[0]
-            if system_locale:
-                # Извлекаем код языка (первые 2 символа)
-                lang_code = system_locale.split('_')[0].lower()
-                # Проверяем, поддерживается ли этот язык
-                if lang_code in self.available_languages:
-                    return lang_code
-        except Exception:
-            pass
+        # Используем новую платформо-зависимую функцию из os_utils
+        lang_code = get_default_language()
         
-        # Если не удалось определить или язык не поддерживается, используем английский
+        # Проверяем, поддерживается ли этот язык
+        if lang_code in self.available_languages:
+            return lang_code
+        
+        # Если язык не поддерживается, используем английский
         return 'en'
     
     def load_system_language(self):
