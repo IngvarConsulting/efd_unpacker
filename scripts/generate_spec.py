@@ -28,7 +28,7 @@ def generate_spec(version: str) -> None:
 block_cipher = None
 
 a = Analysis(
-    ['{os.path.join(project_root, "main.py")}'],
+    ['{os.path.join(project_root, "src/main.py")}'],
     pathex=[],
     binaries=[],
     datas=[

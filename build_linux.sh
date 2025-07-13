@@ -67,7 +67,7 @@ fi
 
 # Сборка исполняемого файла
 echo "Building executable with PyInstaller..."
-pyinstaller --noconfirm --onedir --windowed $icon_option --name=EFDUnpacker --add-data "translations:translations" main.py
+pyinstaller --noconfirm --onedir --windowed $icon_option --name=EFDUnpacker --add-data "translations:translations" src/main.py
 
 if [ $? -ne 0 ]; then
     echo "Error: PyInstaller build failed."
@@ -116,19 +116,9 @@ if command -v appimagetool &> /dev/null; then
         echo "No icon found, skipping icon copy"
     fi
     
-    # Создаем .desktop файл
-    echo "Creating .desktop file..."
-    cat > AppDir/usr/share/applications/efd_unpacker.desktop << EOF
-[Desktop Entry]
-Name=EFD Unpacker
-Comment=Unpack EFD files
-Exec=efd_unpacker %f
-Icon=efd_unpacker
-Type=Application
-Categories=Utility;FileManager;
-MimeType=application/x-efd;
-Terminal=false
-EOF
+    # Копируем .desktop файл из шаблона
+    echo "Copying .desktop file from template..."
+    cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/efd_unpacker.desktop
 
     echo "Desktop file created at AppDir/usr/share/applications/efd_unpacker.desktop"
     
@@ -147,17 +137,11 @@ EOF
         cat AppDir/usr/share/applications/efd_unpacker.desktop
     fi
     
-    # Создаем AppRun
-    echo "Creating AppRun..."
-    cat > AppDir/AppRun << EOF
-#!/bin/bash
-HERE="\$(dirname "\$(readlink -f "\${0}")")"
-export PATH="\${HERE}"/usr/bin/:"\${PATH}"
-export LD_LIBRARY_PATH="\${HERE}"/usr/lib/:"\${LD_LIBRARY_PATH}"
-exec "\${HERE}"/usr/bin/efd_unpacker "\$@"
-EOF
+    # Копируем AppRun из шаблона
+    echo "Copying AppRun from template..."
+    cp installer/linux/AppRun AppDir/AppRun
     chmod +x AppDir/AppRun
-    echo "AppRun created and made executable"
+    echo "AppRun copied and made executable"
     
     # Показываем структуру AppDir
     echo "AppDir structure:"
@@ -188,6 +172,7 @@ if command -v dpkg-deb &> /dev/null; then
     mkdir -p debian/usr/bin
     mkdir -p debian/usr/share/applications
     mkdir -p debian/usr/share/icons/hicolor/256x256/apps
+    mkdir -p debian/usr/share/mime/packages
     
     # Копируем файлы
     cp dist/EFDUnpacker/EFDUnpacker debian/usr/bin/efd_unpacker
@@ -199,40 +184,21 @@ if command -v dpkg-deb &> /dev/null; then
         cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png
     fi
     
-    # Создаем .desktop файл
-    cat > debian/usr/share/applications/efd_unpacker.desktop << EOF
-[Desktop Entry]
-Name=EFD Unpacker
-Comment=Unpack EFD files
-Exec=efd_unpacker %f
-Icon=efd_unpacker
-Type=Application
-Categories=Utility;FileManager;
-MimeType=application/x-efd;
-Terminal=false
-EOF
+    # Копируем шаблоны
+    cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/
+    cp installer/linux/mime-info.xml debian/usr/share/mime/packages/
     
-    # Создаем control файл
-    cat > debian/DEBIAN/control << EOF
-Package: efd-unpacker
-Version: $APP_VERSION
-Section: utils
-Priority: optional
-Architecture: amd64
-Depends: libc6
-Maintainer: Ingvar Consulting <info@ingvarconsulting.com>
-Description: EFD Unpacker
- A tool for unpacking EFD (Electronic Fiscal Document) files.
- Provides a graphical interface for easy file extraction.
-EOF
-
-    # Добавляем postinst-скрипт для добавления symlink в /usr/local/bin
-    cat > debian/DEBIAN/postinst << EOF
-#!/bin/bash
-set -e
-ln -sf /usr/bin/efd_unpacker /usr/local/bin/EFDUnpacker || true
-EOF
-    chmod 755 debian/DEBIAN/postinst
+    # Подготавливаем control файл
+    cp installer/linux/control debian/DEBIAN/
+    sed -i "s/VERSION_PLACEHOLDER/$APP_VERSION/g" debian/DEBIAN/control
+    
+    # Подготавливаем скрипты установки/удаления
+    cp installer/linux/postinst debian/DEBIAN/
+    cp installer/linux/prerm debian/DEBIAN/
+    chmod +x debian/DEBIAN/postinst
+    chmod +x debian/DEBIAN/prerm
+    
+    # Файлы уже скопированы из шаблонов выше
 
     # Создаем DEB пакет
     mkdir -p dist
@@ -274,18 +240,8 @@ if command -v rpmbuild &> /dev/null; then
         cp resources/icon.png rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png
     fi
     
-    # Создаем .desktop файл
-    cat > rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/share/applications/efd_unpacker.desktop << EOF
-[Desktop Entry]
-Name=EFD Unpacker
-Comment=Unpack EFD files
-Exec=efd_unpacker %f
-Icon=efd_unpacker
-Type=Application
-Categories=Utility;FileManager;
-MimeType=application/x-efd;
-Terminal=false
-EOF
+    # Копируем .desktop файл из шаблона
+    cp installer/linux/efd_unpacker.desktop rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/share/applications/
     
     # Создаем spec файл
     cat > rpmbuild/SPECS/efd-unpacker.spec << EOF
