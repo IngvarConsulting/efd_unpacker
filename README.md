@@ -117,8 +117,8 @@ EFDUnpacker ./file.efd
 
 Скрипт создает три файла:
 - **EFDUnpacker.app** - приложение для macOS
-- **EFDUnpacker-<версия>-macos.dmg** - красивый установщик с иконками
-- **EFDUnpacker-<версия>-macos.zip** - портативная версия
+- **efd-unpacker-<версия>-macos.dmg** - красивый установщик с иконками
+- **efd-unpacker-<версия>-macos-portable.zip** - портативная версия
 
 #### Требования для сборки Linux
 
@@ -134,13 +134,13 @@ EFDUnpacker ./file.efd
 
 **Обязательные файлы:**
 - **EFDUnpacker/** - исполняемая папка
-- **EFDUnpacker-<версия>-linux.zip** - портативная версия
-- **EFDUnpacker-<версия>-linux.tar.gz** - альтернативная портативная версия
+- **efd-unpacker-<версия>-linux-portable.zip** - портативная версия
+- **efd-unpacker-<версия>-linux-portable.tar.gz** - альтернативная портативная версия
 
 **Дополнительные файлы (если доступны инструменты):**
-- **EFDUnpacker-<версия>-linux.AppImage** - универсальный пакет (если доступен appimagetool)
-- **efd-unpacker_<версия>_amd64.deb** - пакет для Debian/Ubuntu (если доступен dpkg-deb)
-- **efd-unpacker-<версия>-1.x86_64.rpm** - пакет для Red Hat/Fedora (если доступен rpmbuild)
+- **efd-unpacker-<версия>-linux.AppImage** - универсальный пакет (если доступен appimagetool)
+- **efd-unpacker-<версия>-linux-amd64.deb** - пакет для Debian/Ubuntu (если доступен dpkg-deb)
+- **efd-unpacker-<версия>-linux.x86_64.rpm** - пакет для Red Hat/Fedora (если доступен rpmbuild)
 
 #### Требования для сборки Windows
 
@@ -155,10 +155,10 @@ EFDUnpacker ./file.efd
 
 **Обязательные файлы:**
 - **EFDUnpacker/** - исполняемая папка
-- **EFDUnpacker-<версия>-windows.zip** - портативная версия
+- **efd-unpacker-<версия>-windows-portable.zip** - портативная версия
 
 **Дополнительные файлы (если доступен WiX Toolset):**
-- **EFDUnpacker-<версия>-windows.msi** - установщик Windows
+- **efd-unpacker-<версия>-windows.msi** - установщик Windows
 
 #### Опции сборки Windows
 
@@ -210,16 +210,16 @@ efd_unpacker/
 
 ```bash
 # Новые функции
-git commit -m "feat: добавлена поддержка drag & drop"
+git commit -m "feat: Добавлена поддержка drag & drop"
 
 # Исправления ошибок
-git commit -m "fix(build): исправлена сборка MSI на Windows"
+git commit -m "fix(build): Исправлена сборка MSI на Windows"
 
 # Документация
-git commit -m "docs: обновлен README с новыми функциями"
+git commit -m "docs: Обновлен README с новыми функциями"
 
 # Рефакторинг
-git commit -m "refactor(ui): вынесена логика в отдельный модуль"
+git commit -m "refactor(ui): Вынесена логика в отдельный модуль"
 ```
 
 ### Зависимости

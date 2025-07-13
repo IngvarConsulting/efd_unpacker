@@ -216,7 +216,7 @@ EOF
     
     # Создаем DEB пакет
     mkdir -p dist
-    DEB_FILE="dist/efd-unpacker_${APP_VERSION}_amd64.deb"
+    DEB_FILE="dist/efd-unpacker-${APP_VERSION}-linux-amd64.deb"
     dpkg-deb --build debian "$DEB_FILE"
     
     if [ $? -eq 0 ]; then
@@ -302,7 +302,9 @@ EOF
         # Находим и копируем созданный RPM файл
         RPM_FILE=$(find rpmbuild/RPMS/x86_64 -name "efd-unpacker-$APP_VERSION-1.x86_64.rpm" -type f)
         if [ -n "$RPM_FILE" ]; then
-            cp "$RPM_FILE" dist/
+            # Копируем с новым именем, включающим суффикс linux
+            NEW_RPM_NAME="efd-unpacker-${APP_VERSION}-linux.x86_64.rpm"
+            cp "$RPM_FILE" "dist/$NEW_RPM_NAME"
             echo "RPM package created successfully"
         else
             echo "Warning: RPM file not found after build"
@@ -339,12 +341,12 @@ if [ -f "dist/efd-unpacker-${APP_VERSION}-linux.AppImage" ]; then
     echo "  - dist/efd-unpacker-${APP_VERSION}-linux.AppImage (AppImage package)"
 fi
 
-if [ -f "dist/efd-unpacker_${APP_VERSION}_amd64.deb" ]; then
-    echo "  - dist/efd-unpacker_${APP_VERSION}_amd64.deb (Debian package)"
+if [ -f "dist/efd-unpacker-${APP_VERSION}-linux-amd64.deb" ]; then
+    echo "  - dist/efd-unpacker-${APP_VERSION}-linux-amd64.deb (Debian package)"
 fi
 
-if [ -f "dist/efd-unpacker-$APP_VERSION-1"*.rpm ]; then
-    echo "  - dist/efd-unpacker-$APP_VERSION-1*.rpm (RPM package)"
+if [ -f "dist/efd-unpacker-${APP_VERSION}-linux.x86_64.rpm" ]; then
+    echo "  - dist/efd-unpacker-${APP_VERSION}-linux.x86_64.rpm (RPM package)"
 fi
 
 # Показываем размеры файлов
