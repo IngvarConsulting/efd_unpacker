@@ -72,13 +72,13 @@
         <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd\Extension" Value=".efd" Type="string" />
       </Component>
       <!-- Добавляем компоненты для PATH -->
-      <Component Id="PathUser" Guid="33333333-3333-3333-3333-333333333333" Win64="yes">
+      <Component Id="PathUser" Guid="33333333-3333-3333-3333-333333333333">
         <RegistryKey Root="HKCU" Key="Environment" Action="create">
           <RegistryValue Name="PATH" Type="expandable" Value="[~]EFDUnpackerPATHUSER" KeyPath="yes" />
         </RegistryKey>
         <Condition>ADD_TO_PATH = "user"</Condition>
       </Component>
-      <Component Id="PathAll" Guid="44444444-4444-4444-4444-444444444444" Win64="yes">
+      <Component Id="PathAll" Guid="44444444-4444-4444-4444-444444444444">
         <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment" Action="create">
           <RegistryValue Name="PATH" Type="expandable" Value="[~]EFDUnpackerPATHALL" KeyPath="yes" />
         </RegistryKey>
