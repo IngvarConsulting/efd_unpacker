@@ -3,8 +3,8 @@ import os
 import urllib.parse
 from ui import MainWindow
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QEvent, QTimer
-import onec_dtools
+from PyQt6.QtCore import QEvent, QLocale, QTimer, QTranslator
+from unpack_service import UnpackService
 
 def process_file_argument(file_path):
     """Обработать аргумент файла, поддерживая URL схемы и относительные пути"""
@@ -111,25 +111,61 @@ def main():
         ok = cli_unpack(input_file, output_dir)
         sys.exit(0 if ok else 1)
 
+    # Используем стандартную Qt локаль
+    system_locale = QLocale.system()
+    locale_name = system_locale.name()
+    
+    # Определяем язык более точно
+    if 'ru' in locale_name.lower():
+        lang = 'ru'
+    elif 'en' in locale_name.lower():
+        lang = 'en'
+    else:
+        # Fallback на язык из системной локали
+        lang = system_locale.language()
+        if lang == QLocale.Language.Russian:
+            lang = 'ru'
+        elif lang == QLocale.Language.English:
+            lang = 'en'
+        else:
+            lang = 'en'
+
     app = FileAssociationApp(sys.argv)
     
-    # Получаем аргументы через Qt для fallback
+    # Устанавливаем локаль приложения
+    if lang == 'ru':
+        locale = QLocale(QLocale.Language.Russian, QLocale.Country.Russia)
+    else:
+        locale = QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+    
+    QLocale.setDefault(locale)
+    
+    # Загружаем наш собственный перевод
+    translator = QTranslator()
+    # Определяем путь к папке с переводами
+    if getattr(sys, 'frozen', False):
+        # Если приложение собрано (PyInstaller)
+        translations_path = os.path.join(os.path.dirname(sys.executable), '..', 'Resources', 'translations')
+    else:
+        # Если запускаем из исходников
+        translations_path = 'translations'
+    
+    app_loaded = translator.load(f'{lang}.qm', translations_path)
+    print(f"App translator loaded: {app_loaded}")
+    app.installTranslator(translator)
+
     qt_args = app.arguments()
-    
-    window = MainWindow()
+    window = MainWindow(language=lang)
     app.set_window(window)
-    
-    # Fallback: обрабатываем аргументы командной строки, если Apple Events не сработали
     if len(qt_args) > 1:
         for arg in qt_args[1:]:
             file_path = process_file_argument(arg)
             if file_path:
                 try:
                     window.set_input_file(file_path)
-                    break  # Обрабатываем только первый валидный файл
+                    break
                 except Exception:
-                    pass  # Игнорируем ошибки при установке файла
-    
+                    pass
     window.show()
     sys.exit(app.exec())
 

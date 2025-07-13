@@ -67,7 +67,7 @@ fi
 
 # Сборка исполняемого файла
 echo "Building executable with PyInstaller..."
-pyinstaller --noconfirm --onedir --windowed $icon_option --name=EFDUnpacker main.py
+pyinstaller --noconfirm --onedir --windowed $icon_option --name=EFDUnpacker --add-data "translations:translations" main.py
 
 if [ $? -ne 0 ]; then
     echo "Error: PyInstaller build failed."
@@ -96,6 +96,14 @@ if command -v appimagetool &> /dev/null; then
     # Копируем исполняемый файл
     cp dist/EFDUnpacker/EFDUnpacker AppDir/usr/bin/efd_unpacker
     echo "Copied executable to AppDir/usr/bin/efd_unpacker"
+    
+    # Копируем папку с переводами
+    if [ -d "dist/EFDUnpacker/translations" ]; then
+        cp -r dist/EFDUnpacker/translations AppDir/usr/bin/
+        echo "Copied translations folder to AppDir/usr/bin/translations"
+    else
+        echo "Warning: translations folder not found in dist/EFDUnpacker/"
+    fi
     
     # Копируем иконку если есть
     if [ -f "resources/icon.png" ]; then
@@ -183,6 +191,10 @@ if command -v dpkg-deb &> /dev/null; then
     
     # Копируем файлы
     cp dist/EFDUnpacker/EFDUnpacker debian/usr/bin/efd_unpacker
+    if [ -d "dist/EFDUnpacker/translations" ]; then
+        cp -r dist/EFDUnpacker/translations debian/usr/bin/
+        echo "Copied translations folder to debian/usr/bin/translations"
+    fi
     if [ -f "resources/icon.png" ]; then
         cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png
     fi
@@ -253,6 +265,11 @@ if command -v rpmbuild &> /dev/null; then
     cp dist/EFDUnpacker/EFDUnpacker rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/bin/efd_unpacker
     chmod +x rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/bin/efd_unpacker
     
+    if [ -d "dist/EFDUnpacker/translations" ]; then
+        cp -r dist/EFDUnpacker/translations rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/bin/
+        echo "Copied translations folder to RPM package"
+    fi
+    
     if [ -f "resources/icon.png" ]; then
         cp resources/icon.png rpmbuild/BUILDROOT/efd-unpacker-$APP_VERSION-1.x86_64/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png
     fi
@@ -290,6 +307,7 @@ It provides a graphical interface for easy file extraction.
 
 %files
 %{_bindir}/efd_unpacker
+%{_bindir}/translations/
 %{_datadir}/applications/efd_unpacker.desktop
 %{_datadir}/icons/hicolor/256x256/apps/efd_unpacker.png
 

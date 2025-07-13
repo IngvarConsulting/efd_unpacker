@@ -31,7 +31,9 @@ a = Analysis(
     ['{os.path.join(project_root, "main.py")}'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('{os.path.join(project_root, "translations")}', 'translations'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={{}},
