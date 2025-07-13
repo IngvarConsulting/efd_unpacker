@@ -9,25 +9,8 @@
 - CLI-режим для автоматизации и CI/CD
 - Локализация интерфейса (русский, английский)
 
-## Быстрый старт
-
-### Установка зависимостей
-```bash
-pip install -r requirements.txt
-```
-
-### Запуск GUI
-```bash
-python main.py
-```
-
-### CLI-режим (без GUI)
-```bash
-EFDUnpacker unpack /path/to/file.efd -tmplts /path/to/output_dir
-```
-Подробнее: [docs/CLI.md](docs/CLI.md)
-
 ## Документация
+- [Установка](docs/INSTALL.md)
 - [CLI-режим (автоматизация)](docs/CLI.md)
 - [Ассоциации файлов и интеграция с ОС](docs/FILE_ASSOCIATION_GUIDE.md)
 - [Сборка и требования](docs/BUILD.md)
