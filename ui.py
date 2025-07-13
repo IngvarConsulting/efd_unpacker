@@ -3,12 +3,12 @@ import onec_dtools
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QSize
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
-    QFileDialog, QLineEdit, QMessageBox, QHBoxLayout, QStyle
+    QFileDialog, QLineEdit, QMessageBox, QHBoxLayout, QStyle, QMenu, QAction, QComboBox
 )
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QMovie, QTransform
 from localization import loc
 import sys
-from os_utils import get_default_unpack_dir, open_folder
+from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart, open_folder
 
 
 class UnpackThread(QThread):
@@ -43,8 +43,9 @@ class MainWindow(QMainWindow):
         self.drag_active = False
         self.settings = QSettings('efd_unpacker', 'settings')
         self.input_file = None
-        default_output_path = get_default_unpack_dir()
+        default_output_path = get_1c_configuration_location_default()
         self.output_path = self.settings.value('output_path', default_output_path)
+        self.manual_selected_path = None  # путь, выбранный вручную через Select folder
 
         self.label_input = QLabel(loc.get('drag_drop_hint'))
         self.label_input.setAlignment(Qt.AlignCenter)
@@ -52,12 +53,13 @@ class MainWindow(QMainWindow):
         self.label_input.setCursor(Qt.PointingHandCursor)
         self.label_input.mousePressEvent = self.open_file_dialog
 
-        self.edit_output = QLineEdit(self.output_path)
-        self.edit_output.setReadOnly(True)
+        self.combo_output_paths = QComboBox()
+        self.combo_output_paths.setToolTip(loc.get('reset_folder_button'))
+        self.combo_output_paths.setEditable(False)
+        self.combo_output_paths.setMinimumWidth(200)
+        self.combo_output_paths.activated.connect(self.on_output_path_selected)
+        self.update_output_paths_combobox()
         self.btn_browse = QPushButton(loc.get('select_folder_button'))
-        self.btn_reset_path = QPushButton()
-        self.btn_reset_path.setToolTip(loc.get('reset_folder_button'))
-        self.btn_reset_path.setIcon(self.style().standardIcon(QStyle.SP_FileDialogBack))
         self.btn_unpack = QPushButton(loc.get('unpack_button'))
         self.btn_unpack.setEnabled(False)
         
@@ -101,9 +103,8 @@ class MainWindow(QMainWindow):
         
         # Новая строка: label + поле + кнопка
         output_layout = QHBoxLayout()
-        output_layout.addWidget(self.edit_output)
+        output_layout.addWidget(self.combo_output_paths)
         output_layout.addWidget(self.btn_browse)
-        output_layout.addWidget(self.btn_reset_path)
         layout.addLayout(output_layout)
         
         layout.addWidget(self.btn_unpack)
@@ -123,14 +124,59 @@ class MainWindow(QMainWindow):
 
         self.btn_browse.clicked.connect(self.browse_output_path)
         self.btn_unpack.clicked.connect(self.unpack_file)
-        self.btn_reset_path.clicked.connect(self.reset_output_path)
+
+    def update_output_paths_combobox(self):
+        self.combo_output_paths.clear()
+        last_used = self.settings.value('output_path', '')
+        from_1cestart = get_1c_configuration_location_from_1cestart()
+        default_path = get_1c_configuration_location_default()
+        seen = set()
+        items = []
+        # 1. Вручную выбранный путь (если есть и не совпадает с последним использованным)
+        if self.manual_selected_path and os.path.normpath(self.manual_selected_path) != os.path.normpath(last_used):
+            label = f"{self.manual_selected_path}"
+            items.append((self.manual_selected_path, label))
+            seen.add(os.path.normpath(self.manual_selected_path))
+        # 2. Последний использованный
+        if last_used:
+            label = f"{last_used} {loc.get('last_used_label')}"
+            if os.path.normpath(last_used) not in seen:
+                items.append((last_used, label))
+                seen.add(os.path.normpath(last_used))
+        # 3. Пути из 1cestart
+        for path in from_1cestart:
+            norm = os.path.normpath(path)
+            if norm not in seen:
+                items.append((path, path))
+                seen.add(norm)
+        # 4. По умолчанию
+        norm_default = os.path.normpath(default_path)
+        if norm_default not in seen:
+            items.append((default_path, f"{default_path} {loc.get('default_label')}"))
+            seen.add(norm_default)
+        for path, label in items:
+            self.combo_output_paths.addItem(label, path)
+        # Установить выбранный путь
+        current_path = self.manual_selected_path or last_used
+        if current_path:
+            idx = self.combo_output_paths.findData(current_path)
+            if idx != -1:
+                self.combo_output_paths.setCurrentIndex(idx)
+
+    def on_output_path_selected(self, index):
+        path = self.combo_output_paths.itemData(index)
+        if path:
+            self.output_path = path
+            # Если выбран не вручную выбранный путь, сбрасываем manual_selected_path
+            if self.manual_selected_path and os.path.normpath(path) != os.path.normpath(self.manual_selected_path):
+                self.manual_selected_path = None
+                self.update_output_paths_combobox()
 
     def hide_interface_elements(self):
         """Скрыть все элементы интерфейса кроме анимированной иконки загрузки"""
         self.label_input.setVisible(False)
-        self.edit_output.setVisible(False)
+        self.combo_output_paths.setVisible(False)
         self.btn_browse.setVisible(False)
-        self.btn_reset_path.setVisible(False)
         self.btn_unpack.setVisible(False)
         self.loading_label.setVisible(True)
         self.loading_movie.start()  # Запускаем анимацию
@@ -142,9 +188,8 @@ class MainWindow(QMainWindow):
     def show_interface_elements(self):
         """Показать все элементы интерфейса"""
         self.label_input.setVisible(True)
-        self.edit_output.setVisible(True)
+        self.combo_output_paths.setVisible(True)
         self.btn_browse.setVisible(True)
-        self.btn_reset_path.setVisible(True)
         self.btn_unpack.setVisible(True)
         self.loading_movie.stop()  # Останавливаем анимацию
         self.loading_label.setVisible(False)
@@ -156,7 +201,7 @@ class MainWindow(QMainWindow):
     def show_message(self, text, is_error=False):
         """Показать сообщение в основном окне"""
         self.label_input.setVisible(False)
-        self.edit_output.setVisible(False)
+        self.combo_output_paths.setVisible(False)
         self.btn_browse.setVisible(False)
         self.btn_unpack.setVisible(False)
         self.loading_movie.stop()  # Останавливаем анимацию
@@ -172,11 +217,10 @@ class MainWindow(QMainWindow):
         self.input_file = None
         self.label_input.setText(loc.get('drag_drop_hint'))
         self.label_input.setStyleSheet("border: 2px dashed #aaa; padding: 20px; text-decoration: underline; color: #0078d7; cursor: pointer;")
-        self.edit_output.setText(self.output_path)
         self.show_interface_elements()
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(True)
-        self.btn_reset_path.setEnabled(True)
+        self.combo_output_paths.setEnabled(True)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -217,13 +261,16 @@ class MainWindow(QMainWindow):
         self.btn_unpack.setEnabled(True)
 
     def browse_output_path(self):
-        directory = QFileDialog.getExistingDirectory(self, loc.get('select_folder_dialog_title'), self.output_path)
+        directory = QFileDialog.getExistingDirectory(self, loc.get('select_folder_dialog_title'), self.combo_output_paths.currentData())
         if directory:
+            self.manual_selected_path = directory
             self.output_path = directory
-            self.edit_output.setText(directory)
-            self.settings.setValue('output_path', directory)
+            self.update_output_paths_combobox()
+            idx = self.combo_output_paths.findData(directory)
+            if idx != -1:
+                self.combo_output_paths.setCurrentIndex(idx)
         self.btn_browse.setEnabled(True)
-        self.btn_reset_path.setEnabled(True)
+        self.combo_output_paths.setEnabled(True)
 
     def open_file_dialog(self, event):
         file_path, _ = QFileDialog.getOpenFileName(self, loc.get('select_efd_file'), os.getcwd(), loc.get('efd_files_filter'))
@@ -234,27 +281,31 @@ class MainWindow(QMainWindow):
         if not self.input_file:
             QMessageBox.warning(self, loc.get('error_title'), loc.get('no_file_selected'))
             return
-        output_dir = self.edit_output.text()
+        output_dir = self.combo_output_paths.currentData()
         if not os.path.isdir(output_dir):
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except Exception as e:
                 QMessageBox.warning(self, loc.get('error_title'), loc.get('invalid_output_folder'))
                 return
-
         self.hide_interface_elements()
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(False)
-        self.btn_reset_path.setEnabled(False)
-
+        self.combo_output_paths.setEnabled(False)
         self.thread = UnpackThread(self.input_file, output_dir)
         self.thread.finished.connect(self.unpack_finished)
         self.thread.start()
 
     def unpack_finished(self, success, message):
+        if success:
+            # Сохраняем путь только после успешной распаковки
+            self.settings.setValue('output_path', self.combo_output_paths.currentData())
+            # После успешной распаковки manual_selected_path сбрасывается
+            self.manual_selected_path = None
+            self.update_output_paths_combobox()
         self.btn_unpack.setEnabled(True)
         self.btn_browse.setEnabled(True)
-        self.btn_reset_path.setEnabled(True)
+        self.combo_output_paths.setEnabled(True)
         if success:
             self.show_message(message, is_error=False)
         else:
@@ -262,13 +313,6 @@ class MainWindow(QMainWindow):
 
     def open_output_folder(self):
         """Открыть папку с распакованными файлами"""
-        output_dir = self.edit_output.text()
+        output_dir = self.combo_output_paths.currentData()
         open_folder(output_dir)
-
-    def reset_output_path(self):
-        default_output_path = get_default_unpack_dir()
-        if not os.path.exists(default_output_path):
-            os.makedirs(default_output_path, exist_ok=True)
-        self.output_path = default_output_path
-        self.edit_output.setText(default_output_path)
-        self.settings.setValue('output_path', default_output_path)
+        

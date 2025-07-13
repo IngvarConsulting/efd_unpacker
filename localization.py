@@ -36,7 +36,11 @@ class Localization:
                 'unpack_success': 'Распаковка завершена успешно',
                 'open_folder_button': 'Открыть папку',
                 'close_button': 'Закрыть',
-                'reset_folder_button': 'Восстановить по умолчанию',
+                'reset_folder_button': 'Восстановить по-умолчанию',
+                
+                # Выпадающее меню путей
+                'last_used_label': '(последний использованный)',
+                'default_label': '(по-умолчанию)',
             },
             'en': {
                 # Main interface elements
@@ -71,6 +75,10 @@ class Localization:
                 'open_folder_button': 'Open Folder',
                 'close_button': 'Close',
                 'reset_folder_button': 'Reset to Default',
+                
+                # Dropdown menu paths
+                'last_used_label': '(last used)',
+                'default_label': '(default)',
             }
         }
     
