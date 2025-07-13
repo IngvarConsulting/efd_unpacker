@@ -58,8 +58,8 @@ jobs:
             dist/efd-unpacker-*-linux-portable.zip
             dist/efd-unpacker-*-linux-portable.tar.gz
             dist/efd-unpacker-*-linux.AppImage
-            dist/efd-unpacker-*-linux-*.deb
-            dist/efd-unpacker-*-linux-*.rpm
+            dist/efd-unpacker-*-linux*.deb
+            dist/efd-unpacker-*-linux*.rpm
 
   build-windows:
     runs-on: windows-latest
