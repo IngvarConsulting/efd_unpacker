@@ -1,3 +1,5 @@
+[![Test Suite](https://github.com/ingvarvilkman/efd_unpacker/actions/workflows/test.yml/badge.svg)](https://github.com/ingvarvilkman/efd_unpacker/actions/workflows/test.yml)
+
 # EFD Unpacker
 
 **EFD Unpacker** — кроссплатформенное приложение для распаковки файлов EFD (Enterprise File Distribution) с удобным графическим интерфейсом и поддержкой автоматизации через командную строку.
