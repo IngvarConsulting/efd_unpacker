@@ -5,7 +5,7 @@
 
 import os
 
-def read_version():
+def read_version() -> str:
     """Читает версию из файла version.txt"""
     # Получаем путь к корню проекта (на уровень выше scripts/)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,7 +18,7 @@ def read_version():
         print("Error: version.txt not found")
         exit(1)
 
-def generate_spec(version):
+def generate_spec(version: str) -> None:
     """Генерирует spec файл с указанной версией"""
     # Получаем путь к корню проекта
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
