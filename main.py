@@ -5,6 +5,7 @@ from ui import MainWindow
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QEvent, QTimer
 from language_manager import language_manager
+import onec_dtools
 
 def process_file_argument(file_path):
     """Обработать аргумент файла, поддерживая URL схемы и относительные пути"""
@@ -33,6 +34,23 @@ def process_file_argument(file_path):
         return None
     
     return file_path
+
+def cli_unpack(input_file, output_dir):
+    """CLI-распаковка без GUI. Возвращает True/False."""
+    try:
+        if not os.path.exists(input_file):
+            print(f"[ERROR] File not found: {input_file}")
+            return False
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        with open(input_file, 'rb') as f:
+            supply_reader = onec_dtools.SupplyReader(f)
+            supply_reader.unpack(output_dir)
+        print(f"[OK] Unpacked {input_file} to {output_dir}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return False
 
 class FileAssociationApp(QApplication):
     """Приложение с поддержкой Apple Events для файловых ассоциаций в macOS"""
@@ -90,6 +108,16 @@ class FileAssociationApp(QApplication):
             self.pending_files.clear()
 
 def main():
+    # CLI режим: EFDUnpacker unpack /path/to/file.efd -tmplts /path/to/dir
+    if len(sys.argv) >= 5 and sys.argv[1] == 'unpack' and sys.argv[3] == '-tmplts':
+        input_file = process_file_argument(sys.argv[2])
+        output_dir = sys.argv[4]
+        if not input_file:
+            print(f"[ERROR] Invalid or missing .efd file: {sys.argv[2]}")
+            sys.exit(2)
+        ok = cli_unpack(input_file, output_dir)
+        sys.exit(0 if ok else 1)
+
     app = FileAssociationApp(sys.argv)
     
     # Получаем аргументы через Qt для fallback
