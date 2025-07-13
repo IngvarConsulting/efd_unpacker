@@ -147,7 +147,7 @@ if ($wixAvailable) {
     }
     
     # Link WiX object with both localizations (multi-language MSI)
-    & $light installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi -cultures:en-us,ru-ru
+    & $light installer.wixobj -out dist\efd-unpacker-$VERSION-windows.msi -cultures:en-us,ru-ru -ext WixUIExtension
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: WiX linking failed." -ForegroundColor Red
         exit 1
