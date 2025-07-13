@@ -5,6 +5,7 @@ from ui import MainWindow
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QEvent, QLocale, QTimer, QTranslator
 from unpack_service import UnpackService
+from file_validator import FileValidator
 from typing import Optional
 
 def process_file_argument(file_path: str) -> Optional[str]:
@@ -25,18 +26,28 @@ def process_file_argument(file_path: str) -> Optional[str]:
     if not os.path.isabs(file_path):
         file_path = os.path.abspath(file_path)
     
-    # Проверяем существование файла
-    if not os.path.exists(file_path):
-        return None
-    
-    # Проверяем расширение
-    if not file_path.lower().endswith('.efd'):
+    # Используем FileValidator для валидации файла
+    is_valid, _ = FileValidator.validate_efd_file(file_path)
+    if not is_valid:
         return None
     
     return file_path
 
 def cli_unpack(input_file: str, output_dir: str) -> bool:
     """CLI-распаковка без GUI. Возвращает True/False."""
+    # Валидируем входной файл
+    is_valid, error_message = FileValidator.validate_efd_file(input_file)
+    if not is_valid:
+        print(f"[ERROR] {error_message}")
+        return False
+    
+    # Валидируем и создаем выходную директорию
+    success, error_message = FileValidator.create_output_directory(output_dir)
+    if not success:
+        print(f"[ERROR] {error_message}")
+        return False
+    
+    # Выполняем распаковку
     success, message = UnpackService.unpack(input_file, output_dir)
     if success:
         print(f"[OK] {message}")
