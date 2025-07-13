@@ -9,6 +9,7 @@ from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
 from os_utils import open_folder
 from unpack_service import UnpackService
 from settings_service import SettingsService
+from file_validator import FileValidator
 from typing import Optional, List, Tuple
 
 
@@ -219,14 +220,13 @@ class MainWindow(QMainWindow):
             self.label_input.setStyleSheet("border: 2px dashed #aaa; color: inherit; padding: 20px;")
 
     def set_input_file(self, file_path: str) -> None:
-        if not os.path.exists(file_path):
-            QMessageBox.warning(self, self.tr('Error'), self.tr('File does not exist'))
+        # Используем FileValidator для валидации файла
+        is_valid, error_message = FileValidator.validate_efd_file(file_path)
+        if not is_valid:
+            QMessageBox.warning(self, self.tr('Error'), error_message)
             self.btn_unpack.setEnabled(False)
             return
-        if not file_path.lower().endswith('.efd'):
-            QMessageBox.warning(self, self.tr('Error'), self.tr('Invalid file format'))
-            self.btn_unpack.setEnabled(False)
-            return
+        
         self.input_file = file_path
         self.label_input.setText(file_path)
         self.label_input.setStyleSheet("border: 2px solid #4caf50; padding: 20px; background: #f1fff1; color: #000000;")
@@ -258,13 +258,15 @@ class MainWindow(QMainWindow):
         if not self.input_file:
             QMessageBox.warning(self, self.tr('Error'), self.tr('No .efd file selected'))
             return
+        
         output_dir = self.combo_output_paths.currentData()
-        if not os.path.isdir(output_dir):
-            try:
-                os.makedirs(output_dir, exist_ok=True)
-            except Exception as e:
-                QMessageBox.warning(self, self.tr('Error'), self.tr('Invalid output folder'))
-                return
+        
+        # Используем FileValidator для валидации и создания директории
+        success, error_message = FileValidator.create_output_directory(output_dir)
+        if not success:
+            QMessageBox.warning(self, self.tr('Error'), error_message)
+            return
+        
         self.hide_interface_elements()
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(False)

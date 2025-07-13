@@ -141,4 +141,55 @@
         <translation>(по-умолчанию)</translation>
     </message>
 </context>
+<context>
+    <name>FileValidator</name>
+    <message>
+        <source>File does not exist</source>
+        <translation>Файл не существует</translation>
+    </message>
+    <message>
+        <source>Path is not a file</source>
+        <translation>Путь не является файлом</translation>
+    </message>
+    <message>
+        <source>Invalid file format. Expected .efd file</source>
+        <translation>Неверный формат файла. Ожидается файл .efd</translation>
+    </message>
+    <message>
+        <source>No permission to read file</source>
+        <translation>Нет прав на чтение файла</translation>
+    </message>
+    <message>
+        <source>File is empty</source>
+        <translation>Файл пустой</translation>
+    </message>
+    <message>
+        <source>Cannot access file size</source>
+        <translation>Не удается получить размер файла</translation>
+    </message>
+    <message>
+        <source>Output directory path is empty</source>
+        <translation>Путь к папке вывода пустой</translation>
+    </message>
+    <message>
+        <source>Output path exists but is not a directory</source>
+        <translation>Путь вывода существует, но не является папкой</translation>
+    </message>
+    <message>
+        <source>No permission to write to output directory</source>
+        <translation>Нет прав на запись в папку вывода</translation>
+    </message>
+    <message>
+        <source>No permission to create output directory</source>
+        <translation>Нет прав на создание папки вывода</translation>
+    </message>
+    <message>
+        <source>Invalid output directory path</source>
+        <translation>Неверный путь к папке вывода</translation>
+    </message>
+    <message>
+        <source>Failed to create output directory: %1</source>
+        <translation>Не удалось создать папку вывода: %1</translation>
+    </message>
+</context>
 </TS>
