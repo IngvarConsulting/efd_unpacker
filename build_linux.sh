@@ -65,9 +65,13 @@ if [ -d "AppDir" ]; then
     rm -rf AppDir
 fi
 
+# Генерируем spec файл
+echo "Generating PyInstaller spec file..."
+python3 scripts/generate_spec.py
+
 # Сборка исполняемого файла
 echo "Building executable with PyInstaller..."
-pyinstaller --noconfirm --onedir --windowed $icon_option --name=EFDUnpacker --add-data "translations:translations" src/main.py
+pyinstaller --noconfirm EFDUnpacker.spec
 
 if [ $? -ne 0 ]; then
     echo "Error: PyInstaller build failed."
@@ -263,7 +267,7 @@ It provides a graphical interface for easy file extraction.
 
 %files
 %{_bindir}/efd_unpacker
-%{_bindir}/translations/
+%{_bindir}/translations/*
 %{_datadir}/applications/efd_unpacker.desktop
 %{_datadir}/icons/hicolor/256x256/apps/efd_unpacker.png
 
