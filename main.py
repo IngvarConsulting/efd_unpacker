@@ -36,19 +36,12 @@ def process_file_argument(file_path):
 
 def cli_unpack(input_file, output_dir):
     """CLI-распаковка без GUI. Возвращает True/False."""
-    try:
-        if not os.path.exists(input_file):
-            print(f"[ERROR] File not found: {input_file}")
-            return False
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-        with open(input_file, 'rb') as f:
-            supply_reader = onec_dtools.SupplyReader(f)
-            supply_reader.unpack(output_dir)
-        print(f"[OK] Unpacked {input_file} to {output_dir}")
+    success, message = UnpackService.unpack(input_file, output_dir)
+    if success:
+        print(f"[OK] {message}")
         return True
-    except Exception as e:
-        print(f"[ERROR] {e}")
+    else:
+        print(f"[ERROR] {message}")
         return False
 
 class FileAssociationApp(QApplication):
