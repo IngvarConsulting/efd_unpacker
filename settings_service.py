@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, QCoreApplication
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart
 import os
 
@@ -28,7 +28,7 @@ class SettingsService:
             seen.add(os.path.normpath(manual_selected_path))
         # 2. Последний использованный
         if last_used:
-            label = f"{last_used} (last used)"
+            label = f"{last_used} {QCoreApplication.translate('SettingsService', '(last used)')}"
             if os.path.normpath(last_used) not in seen:
                 items.append((last_used, label))
                 seen.add(os.path.normpath(last_used))
@@ -41,6 +41,6 @@ class SettingsService:
         # 4. По умолчанию
         norm_default = os.path.normpath(default_path)
         if norm_default not in seen:
-            items.append((default_path, f"{default_path} (default)"))
+            items.append((default_path, f"{default_path} {QCoreApplication.translate('SettingsService', '(default)')}"))
             seen.add(norm_default)
         return items 
