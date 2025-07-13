@@ -213,7 +213,15 @@ Description: EFD Unpacker
  A tool for unpacking EFD (Electronic Fiscal Document) files.
  Provides a graphical interface for easy file extraction.
 EOF
-    
+
+    # Добавляем postinst-скрипт для добавления symlink в /usr/local/bin
+    cat > debian/DEBIAN/postinst << EOF
+#!/bin/bash
+set -e
+ln -sf /usr/bin/efd_unpacker /usr/local/bin/EFDUnpacker || true
+EOF
+    chmod 755 debian/DEBIAN/postinst
+
     # Создаем DEB пакет
     mkdir -p dist
     DEB_FILE="dist/efd-unpacker-${APP_VERSION}-linux-amd64.deb"
@@ -286,6 +294,7 @@ It provides a graphical interface for easy file extraction.
 %{_datadir}/icons/hicolor/256x256/apps/efd_unpacker.png
 
 %post
+ln -sf /usr/bin/efd_unpacker /usr/local/bin/EFDUnpacker || :
 update-desktop-database
 
 %postun
