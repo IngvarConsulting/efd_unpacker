@@ -1,6 +1,7 @@
 import os
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QCoreApplication
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
+from tr import tr
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
     QMessageBox, QHBoxLayout, QComboBox
@@ -28,10 +29,8 @@ class UnpackThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, language: str = 'en') -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.language = language
-        
         self._init_window_properties()
         self._init_services()
         self._init_ui_elements()
@@ -40,7 +39,7 @@ class MainWindow(QMainWindow):
 
     def _init_window_properties(self) -> None:
         """Инициализирует свойства окна"""
-        self.setWindowTitle(self.tr('EFD Unpacker'))
+        self.setWindowTitle(tr('MainWindow', 'EFD Unpacker'))
         self.resize(UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
         self.setAcceptDrops(True)
 
@@ -253,17 +252,17 @@ class MainWindow(QMainWindow):
     def set_drag_active(self, active: bool) -> None:
         self.drag_active = active
         if active:
-            self.label_input.setText(self.tr('Drop file to upload'))
+            self.label_input.setText(tr('MainWindow', 'Drop file to upload'))
             self.label_input.setStyleSheet(Styles.INPUT_DRAG)
         else:
-            self.label_input.setText(self.tr('Drag .efd file here or click to choose'))
+            self.label_input.setText(tr('MainWindow', 'Drag .efd file here or click to choose'))
             self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
 
     def set_input_file(self, file_path: str) -> None:
         # Используем FileValidator для валидации файла
         is_valid, error_message = FileValidator.validate_efd_file(file_path)
         if not is_valid:
-            QMessageBox.warning(self, self.tr('Error'), error_message)
+            QMessageBox.warning(self, tr('MainWindow', 'Error'), error_message)
             self.btn_unpack.setEnabled(False)
             return
         
@@ -295,7 +294,7 @@ class MainWindow(QMainWindow):
 
     def unpack_file(self, skip_clear_check: bool = False) -> None:
         if not self.input_file:
-            QMessageBox.warning(self, self.tr('Error'), self.tr('No .efd file selected'))
+            QMessageBox.warning(self, tr('MainWindow', 'Error'), tr('MainWindow', 'No .efd file selected'))
             return
         
         output_dir = self.combo_output_paths.currentData()
@@ -303,7 +302,7 @@ class MainWindow(QMainWindow):
         # Используем FileValidator для валидации и создания директории
         success, error_message = FileValidator.create_output_directory(output_dir)
         if not success:
-            QMessageBox.warning(self, self.tr('Error'), error_message)
+            QMessageBox.warning(self, tr('MainWindow', 'Error'), error_message)
             return
         
         self.hide_interface_elements()
@@ -329,7 +328,7 @@ class MainWindow(QMainWindow):
         if success:
             self.show_message(message, is_error=False)
         else:
-            self.show_message(self.tr('Unpack error: %1').replace('%1', message), is_error=True)
+            self.show_message(tr('MainWindow', 'Unpack error: %1').replace('%1', message), is_error=True)
 
     def open_output_folder(self) -> None:
         open_folder(self.output_path)

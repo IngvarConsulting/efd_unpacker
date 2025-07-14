@@ -93,10 +93,10 @@ jobs:
           name: linux-builds
       - name: Test AppImage
         run: |
-          chmod +x dist/efd-unpacker-*-linux.AppImage
+          chmod +x $(find . -name '*.AppImage')
           ls -l dist/
-          ./dist/efd-unpacker-*-linux.AppImage --help
-          ./dist/efd-unpacker-*-linux.AppImage unpack tests/data/1cv8.efd
+          $(find . -name '*.AppImage') --help
+          $(find . -name '*.AppImage') unpack tests/data/1cv8.efd
 
   test-deb:
     needs: build-linux
@@ -108,7 +108,7 @@ jobs:
           name: linux-builds
       - name: Test DEB
         run: |
-          sudo apt-get install -y ./dist/efd-unpacker-*-linux*.deb
+          sudo apt-get install -y $(find . -name '*.deb')
           ls -l /usr/bin /usr/local/bin || true
           efd_unpacker --help
           efd_unpacker unpack tests/data/1cv8.efd
@@ -123,7 +123,7 @@ jobs:
           name: linux-builds
       - name: Test RPM
         run: |
-          sudo dnf install -y dist/efd-unpacker-*-linux*.rpm
+          sudo dnf install -y $(find . -name '*.rpm')
           ls -l /usr/bin /usr/local/bin || true
           efd_unpacker --help
           efd_unpacker unpack tests/data/1cv8.efd
@@ -138,7 +138,7 @@ jobs:
           name: linux-builds
       - name: Test portable ZIP
         run: |
-          unzip dist/efd-unpacker-*-linux-portable.zip -d test-portable
+          unzip $(find . -name '*-linux-portable.zip') -d test-portable
           ls -l test-portable/
           ./test-portable/efd_unpacker --help
           ./test-portable/efd_unpacker unpack tests/data/1cv8.efd
@@ -153,7 +153,7 @@ jobs:
           name: windows-builds
       - name: Test MSI
         run: |
-          msiexec /i dist/efd-unpacker-*-windows.msi /qn
+          msiexec /i $(powershell -Command "Get-ChildItem -Recurse -Filter *.msi | Select-Object -First 1 -ExpandProperty FullName") /qn
           dir "C:\Program Files"; dir "C:\Program Files (x86)"; dir "C:\efd_unpacker" || exit 0
           efd_unpacker.exe --help
           efd_unpacker.exe unpack tests/data/1cv8.efd
@@ -168,7 +168,7 @@ jobs:
           name: windows-builds
       - name: Test portable ZIP
         run: |
-          powershell -Command "Expand-Archive -Path dist/efd-unpacker-*-windows-portable.zip -DestinationPath test-portable"
+          powershell -Command "Expand-Archive -Path (Get-ChildItem -Recurse -Filter *-windows-portable.zip | Select-Object -First 1 -ExpandProperty FullName) -DestinationPath test-portable"
           dir test-portable
           ./test-portable/efd_unpacker.exe --help
           ./test-portable/efd_unpacker.exe unpack tests/data/1cv8.efd
@@ -183,7 +183,7 @@ jobs:
           name: macos-builds
       - name: Test DMG
         run: |
-          hdiutil attach dist/efd-unpacker-*-macos.dmg
+          hdiutil attach $(find . -name '*.dmg')
           ls -l /Volumes/EFDUnpacker/
           cp -R /Volumes/EFDUnpacker/EFDUnpacker.app /tmp/
           ls -l /tmp/EFDUnpacker.app/Contents/MacOS/
@@ -201,7 +201,7 @@ jobs:
           name: macos-builds
       - name: Test portable ZIP
         run: |
-          unzip dist/efd-unpacker-*-macos-portable.zip -d test-portable
+          unzip $(find . -name '*-macos-portable.zip') -d test-portable
           ls -l test-portable/
           ./test-portable/efd_unpacker --help
           ./test-portable/efd_unpacker unpack tests/data/1cv8.efd

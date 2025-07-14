@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from cli_processor import CLIProcessor
 from file_validator import FileValidator
+from tr import translator
 
 
 class TestCLIIntegration(unittest.TestCase):
@@ -23,6 +24,8 @@ class TestCLIIntegration(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.test_efd_file = os.path.join(self.temp_dir, "test.efd")
         self.output_dir = os.path.join(self.temp_dir, "output")
+        translator.lang = 'en'
+        translator._load_translations()
 
     def tearDown(self):
         """Очистка после каждого теста"""

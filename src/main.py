@@ -3,12 +3,12 @@ import os
 import urllib.parse
 from ui import MainWindow
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QEvent, QTimer
+from PyQt5.QtCore import QEvent, QTimer, QLocale
 from file_validator import FileValidator
-from language_manager import LanguageManager
 from cli_processor import CLIProcessor
 from constants import URLSchemes
 from typing import Optional
+from tr import translator
 
 def process_file_argument(file_path: str) -> Optional[str]:
     """Обработать аргумент файла, поддерживая URL схемы и относительные пути"""
@@ -96,18 +96,19 @@ def main() -> None:
     if CLIProcessor.handle_cli_mode():
         return  # CLI режим уже обработан, выходим
 
-    # Определяем язык приложения
-    language = LanguageManager.determine_language()
-
+    # Определяем язык приложения через QLocale
+    qt_locale = QLocale.system()
+    language = 'ru' if qt_locale.language() == QLocale.Language.Russian else 'en'
     # Создаем приложение
     app = FileAssociationApp(sys.argv)
     
-    # Настраиваем локализацию
-    LanguageManager.setup_localization(app, language)
+    # Настраиваем язык для собственного переводчика
+    translator.lang = language
+    translator._load_translations()
 
     # Обрабатываем файлы из командной строки
     qt_args = app.arguments()
-    window = MainWindow(language=language)
+    window = MainWindow()
     app.set_window(window)
     
     if len(qt_args) > 1:

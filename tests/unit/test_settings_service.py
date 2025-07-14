@@ -12,6 +12,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from settings_service import SettingsService
+from tr import translator
 
 
 class TestSettingsService(unittest.TestCase):
@@ -21,6 +22,8 @@ class TestSettingsService(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.temp_dir = tempfile.mkdtemp()
         self.test_path = os.path.join(self.temp_dir, "test_path")
+        translator.lang = 'en'
+        translator._load_translations()
 
     def tearDown(self):
         """Очистка после каждого теста"""
@@ -74,13 +77,11 @@ class TestSettingsService(unittest.TestCase):
     @patch('settings_service.QSettings')
     @patch('settings_service.get_1c_configuration_location_default')
     @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    @patch('settings_service.QCoreApplication.translate')
-    def test_get_output_path_items_with_manual_path(self, mock_translate, mock_from_1cestart, mock_default_path, mock_qsettings):
+    def test_get_output_path_items_with_manual_path(self, mock_from_1cestart, mock_default_path, mock_qsettings):
         """Тест получения списка путей с вручную выбранным путем"""
         # Мокаем зависимости
         mock_default_path.return_value = "/default/path"
         mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_translate.side_effect = lambda context, text: text
         mock_settings = MagicMock()
         mock_settings.value.return_value = "/last/used/path"
         mock_qsettings.return_value = mock_settings
@@ -96,13 +97,11 @@ class TestSettingsService(unittest.TestCase):
     @patch('settings_service.QSettings')
     @patch('settings_service.get_1c_configuration_location_default')
     @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    @patch('settings_service.QCoreApplication.translate')
-    def test_get_output_path_items_without_manual_path(self, mock_translate, mock_from_1cestart, mock_default_path, mock_qsettings):
+    def test_get_output_path_items_without_manual_path(self, mock_from_1cestart, mock_default_path, mock_qsettings):
         """Тест получения списка путей без вручную выбранного пути"""
         # Мокаем зависимости
         mock_default_path.return_value = "/default/path"
         mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_translate.side_effect = lambda context, text: text
         mock_settings = MagicMock()
         mock_settings.value.return_value = "/last/used/path"
         mock_qsettings.return_value = mock_settings
@@ -118,13 +117,11 @@ class TestSettingsService(unittest.TestCase):
     @patch('settings_service.QSettings')
     @patch('settings_service.get_1c_configuration_location_default')
     @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    @patch('settings_service.QCoreApplication.translate')
-    def test_get_output_path_items_duplicate_removal(self, mock_translate, mock_from_1cestart, mock_default_path, mock_qsettings):
+    def test_get_output_path_items_duplicate_removal(self, mock_from_1cestart, mock_default_path, mock_qsettings):
         """Тест удаления дублирующихся путей"""
         # Мокаем зависимости
         mock_default_path.return_value = "/same/path"
         mock_from_1cestart.return_value = ["/same/path", "/different/path"]
-        mock_translate.side_effect = lambda context, text: text
         mock_settings = MagicMock()
         mock_settings.value.return_value = "/same/path"
         mock_qsettings.return_value = mock_settings
@@ -139,13 +136,11 @@ class TestSettingsService(unittest.TestCase):
     @patch('settings_service.QSettings')
     @patch('settings_service.get_1c_configuration_location_default')
     @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    @patch('settings_service.QCoreApplication.translate')
-    def test_get_output_path_items_order(self, mock_translate, mock_from_1cestart, mock_default_path, mock_qsettings):
+    def test_get_output_path_items_order(self, mock_from_1cestart, mock_default_path, mock_qsettings):
         """Тест порядка путей в списке"""
         # Мокаем зависимости
         mock_default_path.return_value = "/default/path"
         mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_translate.side_effect = lambda context, text: text
         mock_settings = MagicMock()
         mock_settings.value.return_value = "/last/used/path"
         mock_qsettings.return_value = mock_settings
