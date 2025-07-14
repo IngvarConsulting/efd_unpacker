@@ -92,6 +92,31 @@ class FileAssociationApp(QApplication):
             self.pending_files.clear()
 
 def main() -> None:
+    # Поддержка --help без GUI
+    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+        print("""
+EFD Unpacker - cross-platform EFD file unpacker
+
+Usage:
+  efd_unpacker [--help|-h]
+  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>
+
+Options:
+  --help, -h         Show this help message and exit
+
+GUI mode:
+  efd_unpacker [file.efd]   # Open file in GUI
+
+CLI mode:
+  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>
+      Unpack EFD file to output directory without GUI
+
+Examples:
+  efd_unpacker --help
+  efd_unpacker unpack data.efd -tmplts outdir
+  efd_unpacker data.efd
+""")
+        sys.exit(0)
     # Обрабатываем CLI режим
     if CLIProcessor.handle_cli_mode():
         return  # CLI режим уже обработан, выходим
