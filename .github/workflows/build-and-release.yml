@@ -16,20 +16,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: Setup CI environment
         run: |
           make install-deps
-
       - name: Build Linux version
         run: |
           make build-linux
-
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -50,15 +46,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: Setup CI environment
         run: |
           make install-deps
-
       - name: Build Windows version
         run: |
           make build-windows
-
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -72,20 +65,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: Setup CI environment
         run: |
           make install-deps
-
       - name: Build macOS version
         run: |
           make build-macos
-
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -93,6 +82,129 @@ jobs:
           path: |
             dist/efd-unpacker-*-macos-portable.zip
             dist/efd-unpacker-*-macos.dmg
+
+  test-appimage:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-builds
+      - name: Test AppImage
+        run: |
+          chmod +x dist/efd-unpacker-*-linux.AppImage
+          ls -l dist/
+          ./dist/efd-unpacker-*-linux.AppImage --help
+          ./dist/efd-unpacker-*-linux.AppImage unpack tests/data/1cv8.efd
+
+  test-deb:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-builds
+      - name: Test DEB
+        run: |
+          sudo apt-get install -y ./dist/efd-unpacker-*-linux*.deb
+          ls -l /usr/bin /usr/local/bin || true
+          efd_unpacker --help
+          efd_unpacker unpack tests/data/1cv8.efd
+
+  test-rpm:
+    needs: build-linux
+    runs-on: fedora-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-builds
+      - name: Test RPM
+        run: |
+          sudo dnf install -y dist/efd-unpacker-*-linux*.rpm
+          ls -l /usr/bin /usr/local/bin || true
+          efd_unpacker --help
+          efd_unpacker unpack tests/data/1cv8.efd
+
+  test-linux-portable:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-builds
+      - name: Test portable ZIP
+        run: |
+          unzip dist/efd-unpacker-*-linux-portable.zip -d test-portable
+          ls -l test-portable/
+          ./test-portable/efd_unpacker --help
+          ./test-portable/efd_unpacker unpack tests/data/1cv8.efd
+
+  test-msi:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-builds
+      - name: Test MSI
+        run: |
+          msiexec /i dist/efd-unpacker-*-windows.msi /qn
+          dir "C:\Program Files"; dir "C:\Program Files (x86)"; dir "C:\efd_unpacker" || exit 0
+          efd_unpacker.exe --help
+          efd_unpacker.exe unpack tests/data/1cv8.efd
+
+  test-windows-portable:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-builds
+      - name: Test portable ZIP
+        run: |
+          powershell -Command "Expand-Archive -Path dist/efd-unpacker-*-windows-portable.zip -DestinationPath test-portable"
+          dir test-portable
+          ./test-portable/efd_unpacker.exe --help
+          ./test-portable/efd_unpacker.exe unpack tests/data/1cv8.efd
+
+  test-dmg:
+    needs: build-macos
+    runs-on: macos-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-builds
+      - name: Test DMG
+        run: |
+          hdiutil attach dist/efd-unpacker-*-macos.dmg
+          ls -l /Volumes/EFDUnpacker/
+          cp -R /Volumes/EFDUnpacker/EFDUnpacker.app /tmp/
+          ls -l /tmp/EFDUnpacker.app/Contents/MacOS/
+          /tmp/EFDUnpacker.app/Contents/MacOS/efd_unpacker --help
+          /tmp/EFDUnpacker.app/Contents/MacOS/efd_unpacker unpack tests/data/1cv8.efd
+          hdiutil detach /Volumes/EFDUnpacker
+
+  test-macos-portable:
+    needs: build-macos
+    runs-on: macos-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-builds
+      - name: Test portable ZIP
+        run: |
+          unzip dist/efd-unpacker-*-macos-portable.zip -d test-portable
+          ls -l test-portable/
+          ./test-portable/efd_unpacker --help
+          ./test-portable/efd_unpacker unpack tests/data/1cv8.efd
 
   # create-release:
   #   needs: [build-linux, build-windows, build-macos]
