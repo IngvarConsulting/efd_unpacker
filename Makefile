@@ -68,8 +68,8 @@ install-ci-deps:
 		echo "Installing macOS dependencies..."; \
 		brew install create-dmg qt6; \
 	elif [ "$(PLATFORM)" = "windows" ]; then \
-		echo "Installing Windows dependencies..."; \
-		cmd /c "choco install wixtoolset --yes && choco install qt6-tools --yes && set LRELEASE_PATH=C:\\ProgramData\\chocolatey\\lib\\qt6-tools\\tools\\Qt6\\bin && if exist %LRELEASE_PATH%\\lrelease.exe (set \"PATH=%LRELEASE_PATH%;%PATH%\" && echo [DEBUG] lrelease.exe найден и добавлен в PATH: %LRELEASE_PATH%) else (echo [DEBUG] lrelease.exe не найден в %LRELEASE_PATH%) && where lrelease.exe || echo [DEBUG] lrelease.exe не найден в PATH"; \
+		echo "Installing Windows dependencies (Qt5)..."; \
+		cmd /c "choco install wixtoolset --yes && choco install qt5-default --yes && choco install qt5-tools --yes && set LRELEASE_PATH=C:\\Qt\\Tools\\Qt5Tools\\bin && if exist %LRELEASE_PATH%\\lrelease.exe (set \"PATH=%LRELEASE_PATH%;%PATH%\" && echo [DEBUG] lrelease.exe найден и добавлен в PATH: %LRELEASE_PATH%) else (echo [DEBUG] lrelease.exe не найден в %LRELEASE_PATH%) && where lrelease.exe || echo [DEBUG] lrelease.exe не найден в PATH"; \
 	fi
 	@echo "CI dependencies installation completed for $(PLATFORM)"
 
