@@ -115,7 +115,14 @@ clean:
 
 compile-translations: 
 	@echo "Compiling translations..."
-	PATH="/usr/lib/qt6/bin:$$PATH" $(PYTHON) scripts/compile_translations.py
+	@echo "[DEBUG] Поиск lrelease в системе:" && \
+	  which lrelease || echo "[DEBUG] lrelease не найден в PATH"; \
+	  ls -l /usr/lib/qt6/bin/lrelease 2>/dev/null || echo "[DEBUG] /usr/lib/qt6/bin/lrelease не найден"; \
+	  ls -l /usr/lib/qt5/bin/lrelease 2>/dev/null || echo "[DEBUG] /usr/lib/qt5/bin/lrelease не найден"; \
+	  ls -l /usr/bin/lrelease 2>/dev/null || echo "[DEBUG] /usr/bin/lrelease не найден"; \
+	  ls -l /usr/local/bin/lrelease 2>/dev/null || echo "[DEBUG] /usr/local/bin/lrelease не найден"; \
+	  echo "PATH=$$PATH"; \
+	$(PYTHON) scripts/compile_translations.py
 
 verify-translations:
 	@echo "Verifying translations in builds..."
