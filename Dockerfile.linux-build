@@ -14,17 +14,11 @@ RUN apt-get update && \
 COPY . /app
 WORKDIR /app
 
-# Установить переменную DOCKER для Makefile
-ENV DOCKER=1
+RUN make install-deps
+RUN make test
 
-# Установить все зависимости через make
-RUN make setup-ci
-
-# Собрать проект
-RUN make build-linux
-
-# Копировать артефакты наружу
-RUN mkdir -p /build-out && cp -r dist/* /build-out/
+# RUN make setup-ci
+# RUN make build-linux
 
 # По умолчанию просто выводить содержимое папки с артефактами
-CMD ["ls", "-l", "/build-out"] 
+CMD ["ls", "-l", "/dist"] 
