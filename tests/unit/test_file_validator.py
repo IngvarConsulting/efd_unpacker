@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from file_validator import FileValidator
+from tr import translator
 
 
 class TestFileValidator(unittest.TestCase):
@@ -23,6 +24,8 @@ class TestFileValidator(unittest.TestCase):
         self.valid_efd_file = os.path.join(self.temp_dir, "test.efd")
         self.invalid_file = os.path.join(self.temp_dir, "test.txt")
         self.non_existent_file = os.path.join(self.temp_dir, "nonexistent.efd")
+        translator.lang = 'en'
+        translator._load_translations()
 
     def tearDown(self):
         """Очистка после каждого теста"""

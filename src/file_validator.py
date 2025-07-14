@@ -1,6 +1,6 @@
 import os
 from typing import Tuple, Optional
-from PyQt5.QtCore import QCoreApplication
+from tr import tr
 
 
 class FileValidator:
@@ -21,27 +21,27 @@ class FileValidator:
         """
         # Проверяем существование файла
         if not os.path.exists(file_path):
-            return False, QCoreApplication.translate('FileValidator', 'File does not exist')
+            return False, tr('FileValidator', 'File does not exist')
         
         # Проверяем, что это файл, а не директория
         if not os.path.isfile(file_path):
-            return False, QCoreApplication.translate('FileValidator', 'Path is not a file')
+            return False, tr('FileValidator', 'Path is not a file')
         
         # Проверяем расширение файла
         if not file_path.lower().endswith('.efd'):
-            return False, QCoreApplication.translate('FileValidator', 'Invalid file format. Expected .efd file')
+            return False, tr('FileValidator', 'Invalid file format. Expected .efd file')
         
         # Проверяем права на чтение
         if not os.access(file_path, os.R_OK):
-            return False, QCoreApplication.translate('FileValidator', 'No permission to read file')
+            return False, tr('FileValidator', 'No permission to read file')
         
         # Проверяем размер файла (не должен быть пустым)
         try:
             file_size = os.path.getsize(file_path)
             if file_size == 0:
-                return False, QCoreApplication.translate('FileValidator', 'File is empty')
+                return False, tr('FileValidator', 'File is empty')
         except OSError:
-            return False, QCoreApplication.translate('FileValidator', 'Cannot access file size')
+            return False, tr('FileValidator', 'Cannot access file size')
         
         return True, ""
     
@@ -60,26 +60,26 @@ class FileValidator:
         """
         # Проверяем, что путь не пустой
         if not output_dir or not output_dir.strip():
-            return False, QCoreApplication.translate('FileValidator', 'Output directory path is empty')
+            return False, tr('FileValidator', 'Output directory path is empty')
         
         # Проверяем существование директории
         if os.path.exists(output_dir):
             # Если существует, проверяем что это директория
             if not os.path.isdir(output_dir):
-                return False, QCoreApplication.translate('FileValidator', 'Output path exists but is not a directory')
+                return False, tr('FileValidator', 'Output path exists but is not a directory')
             
             # Проверяем права на запись
             if not os.access(output_dir, os.W_OK):
-                return False, QCoreApplication.translate('FileValidator', 'No permission to write to output directory')
+                return False, tr('FileValidator', 'No permission to write to output directory')
         else:
             # Если директория не существует, проверяем возможность создания
             try:
                 # Проверяем права на создание в родительской директории
                 parent_dir = os.path.dirname(output_dir)
                 if parent_dir and not os.access(parent_dir, os.W_OK):
-                    return False, QCoreApplication.translate('FileValidator', 'No permission to create output directory')
+                    return False, tr('FileValidator', 'No permission to create output directory')
             except OSError:
-                return False, QCoreApplication.translate('FileValidator', 'Invalid output directory path')
+                return False, tr('FileValidator', 'Invalid output directory path')
         
         return True, ""
     
@@ -106,7 +106,7 @@ class FileValidator:
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except OSError as e:
-                return False, QCoreApplication.translate('FileValidator', 'Failed to create output directory: %1').replace('%1', str(e))
+                return False, tr('FileValidator', 'Failed to create output directory: %1').replace('%1', str(e))
         
         return True, ""
     

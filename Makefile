@@ -1,6 +1,6 @@
 # EFD Unpacker Makefile
 
-.PHONY: help clean compile-translations build-macos build-linux build-windows test install-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip verify-translations
+.PHONY: help clean compile-translations build-macos build-linux build-windows test install-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
 
 # Определяем ОС
 ifeq ($(OS),Windows_NT)
@@ -21,7 +21,6 @@ help:
 	@echo "EFD Unpacker - Доступные команды:"
 	@echo "  install-deps            - Установить зависимости для разработки"
 	@echo "  create-version          - Создать version.txt из git тега"
-	@echo "  compile-translations    - Скомпилировать .ts файлы в .qm (требует lrelease из qttools5-dev-tools)"
 	@echo "  clean                   - Очистить артефакты сборки"
 	@echo "  build-macos             - Собрать для macOS (portable .zip, .dmg)"
 	@echo "  build-linux             - Собрать для Linux (portable .zip/.tar.gz, AppImage, .deb, .rpm)"
@@ -29,7 +28,6 @@ help:
 	@echo "  test                    - Запустить тесты"
 	@echo "  generate-spec           - Сгенерировать PyInstaller spec файл"
 	@echo "  generate-release-notes  - Сгенерировать заметки о выпуске из истории git"
-	@echo "  verify-translations     - Проверить переводы в сборках"
 	@echo "  check                   - Проверить готовность к сборке"
 	@echo ""
 	@echo "Текущая платформа: $(PLATFORM)"
@@ -59,7 +57,6 @@ check:
 	echo "Файлы проекта:"; \
 	[ -f version.txt ] && echo "✓ Version file" || { echo "✗ Version file"; FAILED=1; }; \
 	[ -d translations ] && echo "✓ Translations dir" || { echo "✗ Translations dir"; FAILED=1; }; \
-	[ -f translations/ru.qm ] && echo "✓ Translations (ru.qm)" || { echo "✗ Translations (ru.qm)"; FAILED=1; }; \
 	echo ""; \
 	if [ $$FAILED -eq 1 ]; then \
 		echo "✗ Есть ошибки!"; \
@@ -68,28 +65,25 @@ check:
 		echo "✓ Все проверки пройдены успешно!"; \
 	fi'
 
-build-macos: clean create-version compile-translations check generate-spec
+build-macos: clean create-version check generate-spec
 	@echo "Building for macOS..."
 	@$(MAKE) build-macos-app
 	@$(MAKE) create-macos-zip
 	@$(MAKE) create-macos-dmg
-	@$(MAKE) verify-translations
 
-build-linux: clean create-version compile-translations check generate-spec
+build-linux: clean create-version check generate-spec
 	@echo "Building for Linux..."
 	@$(MAKE) build-linux-executable
 	@$(MAKE) create-linux-archives
 	@$(MAKE) create-linux-appimage
 	@$(MAKE) create-linux-deb
 	@$(MAKE) create-linux-rpm
-	@$(MAKE) verify-translations
 
-build-windows: clean create-version compile-translations check generate-spec
+build-windows: clean create-version check generate-spec
 	@echo "Building for Windows..."
 	@$(MAKE) build-windows-executable
 	@$(MAKE) create-windows-zip
 	@$(MAKE) create-windows-msi
-	@$(MAKE) verify-translations
 
 test:
 	@echo "Running tests..."
@@ -98,8 +92,7 @@ test:
 generate-spec:
 	@echo "Generating EFDUnpacker.spec from template..."
 	@VERSION=$$(cat version.txt); \
-	QM_FILES=$$(for f in translations/*.qm; do printf "('%s', 'translations'), " "$$f"; done | sed 's/, $$//'); \
-	sed -e "s#{{QM_FILES}}#$$QM_FILES#" \
+	sed -e "s#{{QM_FILES}}##" \
 	    -e "s#{{VERSION}}#$$VERSION#g" \
 	    installer/EFDUnpacker.spec.in > EFDUnpacker.spec; \
 	
@@ -115,7 +108,7 @@ install-deps:
 	@if [ "$(PLATFORM)" = "linux" ]; then \
 		sudo apt-get update; \
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 qtbase5-dev qttools5-dev-tools \
+		libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 \
 			fuse libfuse2 \
 			binutils \
 			fakeroot \
@@ -128,17 +121,13 @@ install-deps:
 			coreutils \
 			xz-utils \
 			file; \
+		if ! command -v appimagetool >/dev/null; then \
+			curl -L -o /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage; \
+			chmod +x /usr/local/bin/appimagetool; \
+		fi; \
 	fi
 	@if [ "$(PLATFORM)" = "macos" ]; then \
-		brew list qt@5 >/dev/null 2>&1 || brew install qt@5; \
-		brew link --force qt@5; \
 		brew list create-dmg >/dev/null 2>&1 || brew install create-dmg; \
-	fi
-	@if [ "$(PLATFORM)" = "windows" ]; then \
-		choco install qt5-default -y; \
-		set "QTPATH=%ProgramFiles%\\Qt\\5.15.2\\mingw81_64\\bin"; \
-		set "PATH=%QTPATH%;%PATH%"; \
-		echo "[INFO] lrelease.exe должен быть доступен: %QTPATH%"; \
 	fi
 
 create-version:
@@ -166,18 +155,6 @@ clean:
 	rm -f EFDUnpacker.spec
 	rm -f version.txt
 	rm -f release_notes.md
-	rm -f translations/*.qm
-
-compile-translations:
-	@command -v lrelease >/dev/null 2>&1 || { echo "[ERROR] lrelease not found! Please install Qt Linguist tools (lrelease)."; exit 1; }
-	@echo "Compiling translations with lrelease..."
-	@for ts in translations/*.ts; do \
-	  lrelease "$$ts" -qm "translations/$$(basename $$ts .ts).qm"; \
-	done
-
-verify-translations:
-	@echo "Verifying translations in builds..."
-	$(PYTHON) scripts/verify_translations.py
 
 # Linux build commands
 build-linux-executable:
@@ -193,10 +170,6 @@ create-linux-appimage:
 	@if command -v appimagetool >/dev/null 2>&1; then \
 		mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps; \
 		cp dist/EFDUnpacker/EFDUnpacker AppDir/usr/bin/efd_unpacker; \
-		if [ -d "dist/EFDUnpacker/translations" ]; then \
-			mkdir -p AppDir/usr/bin/translations; \
-			cp dist/EFDUnpacker/translations/*.qm AppDir/usr/bin/translations/; \
-		fi; \
 		if [ -f "resources/icon.png" ]; then \
 			cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
 			cp resources/icon.png AppDir/efd_unpacker.png; \
@@ -216,10 +189,6 @@ create-linux-deb:
 	@if command -v dpkg-deb >/dev/null 2>&1; then \
 		mkdir -p debian/DEBIAN debian/usr/bin debian/usr/share/applications debian/usr/share/icons/hicolor/256x256/apps debian/usr/share/mime/packages; \
 		cp dist/EFDUnpacker/EFDUnpacker debian/usr/bin/efd_unpacker; \
-		if [ -d "dist/EFDUnpacker/translations" ]; then \
-			mkdir -p debian/usr/bin/translations; \
-			cp dist/EFDUnpacker/translations/*.qm debian/usr/bin/translations/; \
-		fi; \
 		if [ -f "resources/icon.png" ]; then \
 			cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
 		fi; \
@@ -243,8 +212,7 @@ create-linux-rpm:
 		mkdir -p rpm_temp/usr/bin rpm_temp/usr/share/applications rpm_temp/usr/share/icons/hicolor/256x256/apps rpm_temp/usr/share/mime/packages; \
 		cp dist/EFDUnpacker/EFDUnpacker rpm_temp/usr/bin/efd_unpacker; \
 		if [ -d "dist/EFDUnpacker/translations" ]; then \
-			mkdir -p rpm_temp/usr/bin/translations; \
-			cp dist/EFDUnpacker/translations/*.qm rpm_temp/usr/bin/translations/; \
+			echo "Skip copying .qm files (no longer used)"; \
 		fi; \
 		if [ -f "resources/icon.png" ]; then \
 			cp resources/icon.png rpm_temp/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
@@ -269,7 +237,7 @@ create-linux-archives:
 # Windows build commands
 build-windows-executable:
 	@echo "Building Windows executable with PyInstaller..."
-	pyinstaller --noconfirm --onefile --windowed $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) --name=EFDUnpacker --add-data="translations/*.qm;translations" main.py
+	pyinstaller --noconfirm --onefile --windowed $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) --name=EFDUnpacker main.py
 	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
 		echo "Error: EFDUnpacker.exe not found in dist directory."; \
 		exit 1; \
@@ -309,7 +277,7 @@ create-windows-msi:
 # macOS build commands
 build-macos-app:
 	@echo "Building macOS app with PyInstaller..."
-	pyinstaller --noconfirm --windowed --name=EFDUnpacker --icon=resources/icon.icns --add-data="translations/*.qm:translations" main.py
+	pyinstaller --noconfirm --windowed --name=EFDUnpacker --icon=resources/icon.icns main.py
 	@if [ ! -d "dist/EFDUnpacker.app" ]; then \
 		echo "Error: EFDUnpacker.app not found in dist directory."; \
 		exit 1; \
