@@ -73,6 +73,15 @@ install-ci-deps:
 		echo "Installing Qt Linguist tools..."; \
 		choco install qt6-tools --yes; \
 		echo "Qt Linguist tools installed successfully"; \
+		# Добавляем lrelease.exe в PATH, если найден после установки через choco
+		set LRELEASE_PATH="C:\\ProgramData\\chocolatey\\lib\\qt6-tools\\tools\\Qt6\\bin" && \
+		if exist %LRELEASE_PATH%\\lrelease.exe ( \
+		  set "PATH=%LRELEASE_PATH%;%PATH%" && \
+		  echo "[DEBUG] lrelease.exe найден и добавлен в PATH: %LRELEASE_PATH%" \
+		) else ( \
+		  echo "[DEBUG] lrelease.exe не найден в %LRELEASE_PATH%" \
+		); \
+		where lrelease.exe || echo "[DEBUG] lrelease.exe не найден в PATH"; \
 	fi
 	@echo "CI dependencies installation completed for $(PLATFORM)"
 
