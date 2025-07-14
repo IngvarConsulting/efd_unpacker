@@ -46,6 +46,15 @@ check:
 	echo "Зависимости:"; \
 	$(PYTHON) -c "import PyInstaller" 2>/dev/null && echo "✓ PyInstaller" || { echo "✗ PyInstaller"; FAILED=1; }; \
 	command -v python3 >/dev/null && echo "✓ Python" || { echo "✗ Python"; FAILED=1; }; \
+	if [ "$(PLATFORM)" = "macos" ]; then \
+	  command -v create-dmg >/dev/null 2>&1 && echo "✓ create-dmg" || { echo "✗ create-dmg"; FAILED=1; }; \
+	fi; \
+	if [ "$(PLATFORM)" = "linux" ]; then \
+	  command -v appimagetool >/dev/null 2>&1 && echo "✓ appimagetool" || { echo "✗ appimagetool"; FAILED=1; }; \
+	  command -v dpkg-deb >/dev/null 2>&1 && echo "✓ dpkg-deb" || { echo "✗ dpkg-deb"; FAILED=1; }; \
+	  command -v rpmbuild >/dev/null 2>&1 && echo "✓ rpmbuild" || { echo "✗ rpmbuild"; FAILED=1; }; \
+	  command -v zip >/dev/null 2>&1 && echo "✓ zip" || { echo "✗ zip"; FAILED=1; }; \
+	fi; \
 	echo ""; \
 	echo "Файлы проекта:"; \
 	[ -f version.txt ] && echo "✓ Version file" || { echo "✗ Version file"; FAILED=1; }; \
@@ -106,11 +115,24 @@ install-deps:
 	@if [ "$(PLATFORM)" = "linux" ]; then \
 		sudo apt-get update; \
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 qtbase5-dev qttools5-dev-tools; \
+			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 qtbase5-dev qttools5-dev-tools \
+			fuse libfuse2 \
+			ar \
+			fakeroot \
+			dpkg-dev \
+			rpm \
+			zip \
+			patchelf \
+			zsync \
+			curl \
+			coreutils \
+			xz-utils \
+			file; \
 	fi
 	@if [ "$(PLATFORM)" = "macos" ]; then \
 		brew list qt@5 >/dev/null 2>&1 || brew install qt@5; \
 		brew link --force qt@5; \
+		brew list create-dmg >/dev/null 2>&1 || brew install create-dmg; \
 	fi
 	@if [ "$(PLATFORM)" = "windows" ]; then \
 		choco install qt5-default -y; \
