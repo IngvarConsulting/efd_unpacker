@@ -91,12 +91,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+      - name: Move AppImage to root
+        run: |
+          mv dist/*.AppImage ./efd_unpacker.AppImage
       - name: Test AppImage
         run: |
-          chmod +x $(find . -name '*.AppImage')
-          ls -l dist/
-          $(find . -name '*.AppImage') --help
-          $(find . -name '*.AppImage') unpack tests/data/1cv8.efd
+          chmod +x ./efd_unpacker.AppImage
+          ./efd_unpacker.AppImage --help
+          ./efd_unpacker.AppImage unpack tests/data/1cv8.efd
 
   test-deb:
     needs: build-linux
@@ -115,7 +117,7 @@ jobs:
 
   test-rpm:
     needs: build-linux
-    runs-on: fedora-latest
+    runs-on: centos-latest
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -126,7 +128,7 @@ jobs:
           sudo dnf install -y $(find . -name '*.rpm')
           ls -l /usr/bin /usr/local/bin || true
           efd_unpacker --help
-          efd_unpacker unpack tests/data/1cv8.efd
+          efd_unpacker unpack tests/data/1cv8.efd 
 
   test-linux-portable:
     needs: build-linux
@@ -136,12 +138,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+      - name: Unpack portable ZIP
+        run: |
+          unzip $(find dist -name '*-linux-portable.zip') -d dist/test-portable
+          mv dist/test-portable/efd_unpacker ./efd_unpacker
       - name: Test portable ZIP
         run: |
-          unzip $(find . -name '*-linux-portable.zip') -d test-portable
-          ls -l test-portable/
-          ./test-portable/efd_unpacker --help
-          ./test-portable/efd_unpacker unpack tests/data/1cv8.efd
+          ./efd_unpacker --help
+          ./efd_unpacker unpack tests/data/1cv8.efd
 
   test-msi:
     needs: build-windows
@@ -151,9 +155,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-builds
+      - name: Move MSI to root
+        run: |
+          mv dist/*.msi ./efd_unpacker.msi
       - name: Test MSI
         run: |
-          msiexec /i $(powershell -Command "Get-ChildItem -Recurse -Filter *.msi | Select-Object -First 1 -ExpandProperty FullName") /qn
+          msiexec /i ./efd_unpacker.msi /qn
           dir "C:\Program Files"; dir "C:\Program Files (x86)"; dir "C:\efd_unpacker" || exit 0
           efd_unpacker.exe --help
           efd_unpacker.exe unpack tests/data/1cv8.efd
@@ -166,12 +173,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-builds
+      - name: Unpack portable ZIP
+        run: |
+          powershell -Command "Expand-Archive -Path (Get-ChildItem -Recurse -Filter *-windows-portable.zip | Select-Object -First 1 -ExpandProperty FullName) -DestinationPath dist/test-portable"
+          mv dist/test-portable/efd_unpacker.exe ./efd_unpacker.exe
       - name: Test portable ZIP
         run: |
-          powershell -Command "Expand-Archive -Path (Get-ChildItem -Recurse -Filter *-windows-portable.zip | Select-Object -First 1 -ExpandProperty FullName) -DestinationPath test-portable"
-          dir test-portable
-          ./test-portable/efd_unpacker.exe --help
-          ./test-portable/efd_unpacker.exe unpack tests/data/1cv8.efd
+          ./efd_unpacker.exe --help
+          ./efd_unpacker.exe unpack tests/data/1cv8.efd
 
   test-dmg:
     needs: build-macos
@@ -181,9 +190,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-builds
+      - name: Move DMG to root
+        run: |
+          mv dist/*.dmg ./efd_unpacker.dmg
       - name: Test DMG
         run: |
-          hdiutil attach $(find . -name '*.dmg')
+          hdiutil attach ./efd_unpacker.dmg
           ls -l "/Volumes/EFD Unpacker/"
           cp -R "/Volumes/EFD Unpacker/EFDUnpacker.app" /tmp/
           ls -l /tmp/EFDUnpacker.app/Contents/MacOS/
@@ -199,12 +211,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-builds
+      - name: Unpack portable ZIP
+        run: |
+          unzip $(find dist -name '*-macos-portable.zip') -d dist/test-portable
+          mv dist/test-portable/efd_unpacker ./efd_unpacker
       - name: Test portable ZIP
         run: |
-          unzip $(find . -name '*-macos-portable.zip') -d test-portable
-          ls -l test-portable/
-          ./test-portable/efd_unpacker --help
-          ./test-portable/efd_unpacker unpack tests/data/1cv8.efd
+          ./efd_unpacker --help
+          ./efd_unpacker unpack tests/data/1cv8.efd
 
   # create-release:
   #   needs: [build-linux, build-windows, build-macos]

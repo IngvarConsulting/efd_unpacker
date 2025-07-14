@@ -128,6 +128,9 @@ install-deps:
 	@if [ "$(PLATFORM)" = "macos" ]; then \
 		brew list create-dmg >/dev/null 2>&1 || brew install create-dmg; \
 	fi
+	@if [ "$(PLATFORM)" = "windows" ]; then \
+		choco install zip -y; \
+	fi
 
 create-version:
 	@echo "Creating version.txt from git tag or commit..."
@@ -244,6 +247,10 @@ build-windows-executable:
 
 create-windows-zip:
 	@echo "Creating Windows portable ZIP archive..."
+	@if ! command -v zip >/dev/null 2>&1; then \
+		echo "Error: 'zip' not found. Установите zip через Chocolatey: choco install zip -y"; \
+		exit 1; \
+	fi
 	@VERSION=$$(cat version.txt); \
 	cd dist && zip -r efd-unpacker-$$VERSION-windows-portable.zip EFDUnpacker.exe translations/ && cd ..
 
