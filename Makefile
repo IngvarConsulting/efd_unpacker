@@ -117,7 +117,7 @@ install-deps:
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 qtbase5-dev qttools5-dev-tools \
 			fuse libfuse2 \
-			ar \
+			binutils \
 			fakeroot \
 			dpkg-dev \
 			rpm \
