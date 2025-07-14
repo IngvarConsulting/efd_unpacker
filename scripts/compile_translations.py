@@ -13,6 +13,7 @@ def find_lrelease() -> Optional[str]:
     """Ищет lrelease в системе"""
     # Популярные пути для lrelease
     common_paths = [
+        "/usr/lib/qt6/bin/lrelease",  # Добавлено для CI/Ubuntu 22.04+
         "lrelease",
         "lrelease-qt6",
         "lrelease-qt5",
