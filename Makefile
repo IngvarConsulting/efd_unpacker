@@ -42,6 +42,10 @@ help:
 # Установка зависимостей для разработки
 install-deps:
 	@echo "Installing development dependencies..."
+	@if [ "$(PLATFORM)" = "linux" ]; then \
+		sudo apt-get update; \
+		sudo apt-get install -y libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3; \
+	fi
 	$(PYTHON) -m pip install --upgrade pip setuptools wheel
 	pip install --prefer-binary -r requirements.txt
 	@if [ -f requirements-test.txt ]; then \
