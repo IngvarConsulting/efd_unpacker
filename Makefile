@@ -56,10 +56,8 @@ install-ci-deps:
 	pip install pyinstaller
 	@if [ "$(PLATFORM)" = "linux" ]; then \
 		echo "Installing Linux dependencies..."; \
-		sudo apt-get update; \
-		sudo apt-get install -y qt6-l10n-tools qttools5-dev-tools zip unzip wget libxcb-xinerama0 libxcb-shape0 libxkbcommon-x11-0 libxcb-keysyms1 libxcb-icccm4 libxcb-xkb1 libxcb-image0 libxcb-render-util0 dpkg-dev rpm; \
-		apt-get install -y qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools; \
-		ln -sf /usr/bin/qmake6 /usr/bin/qmake; \
+		apt-get update; \
+		apt-get install -y qt6-l10n-tools zip unzip wget libxcb-xinerama0 libxcb-shape0 libxkbcommon-x11-0 libxcb-keysyms1 libxcb-icccm4 libxcb-xkb1 libxcb-image0 libxcb-render-util0 dpkg-dev rpm; \
 		echo "Installing appimagetool..."; \
 		wget -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"; \
 		chmod +x appimagetool; \
@@ -68,13 +66,13 @@ install-ci-deps:
 		echo "Installing macOS dependencies..."; \
 		brew install create-dmg qt6; \
 	elif [ "$(PLATFORM)" = "windows" ]; then \
-		echo "Installing Windows dependencies (Qt5)..."; \
-		cmd /c "choco install wixtoolset --yes && choco install qt5-default --yes && choco install qt5-tools --yes && set LRELEASE_PATH=C:\\Qt\\Tools\\Qt5Tools\\bin && if exist %LRELEASE_PATH%\\lrelease.exe (set \"PATH=%LRELEASE_PATH%;%PATH%\" && echo [DEBUG] lrelease.exe найден и добавлен в PATH: %LRELEASE_PATH%) else (echo [DEBUG] lrelease.exe не найден в %LRELEASE_PATH%) && where lrelease.exe || echo [DEBUG] lrelease.exe не найден в PATH"; \
+		echo "Installing Windows dependencies (only WiX Toolset, translations from artifact)..."; \
+		cmd /c "choco install wixtoolset --yes"; \
 	fi
 	@echo "CI dependencies installation completed for $(PLATFORM)"
 
 # Настройка CI среды
-setup-ci: install-ci-deps install-deps compile-translations
+setup-ci: install-ci-deps install-deps
 	@echo "CI environment setup complete"
 
 # Создание version.txt из git тега
@@ -510,3 +508,12 @@ show-macos-results:
 	@echo "  - .efd files will be associated with EFD Unpacker"
 	@echo "  - Double-clicking .efd files will open them in the app"
 	@echo "  - Files will be automatically selected for unpacking" 
+
+compile-translations-artifact:
+	@echo "Compiling translations and archiving as artifact..."
+	$(MAKE) compile-translations
+	cd translations && zip -r ../translations_qm.zip *.qm
+
+extract-translations-artifact:
+	@echo "Extracting translations_qm.zip to translations/ ..."
+	unzip -o translations_qm.zip -d translations 
