@@ -34,7 +34,6 @@ help:
 	@echo "Python: $(PYTHON)"
 
 check:
-	@if [ "$(PLATFORM)" = "windows" ]; then chcp 65001 >nul; fi
 	@sh -c '\
 	FAILED=0; \
 	echo "=== Проверка готовности к сборке ==="; \
@@ -108,19 +107,19 @@ install-deps:
 	@if [ "$(PLATFORM)" = "linux" ]; then \
 		sudo apt-get update; \
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+		rpm \
 		libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 \
-			fuse libfuse2 \
-			binutils \
-			fakeroot \
-			dpkg-dev \
-			rpm \
-			zip \
-			patchelf \
-			zsync \
-			curl \
-			coreutils \
-			xz-utils \
-			file; \
+		fuse libfuse2 \
+		binutils \
+		fakeroot \
+		dpkg-dev \
+		zip \
+		patchelf \
+		zsync \
+		curl \
+		coreutils \
+		xz-utils \
+		file; \
 		if ! command -v appimagetool >/dev/null; then \
 			curl -L -o /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage; \
 			chmod +x /usr/local/bin/appimagetool; \
