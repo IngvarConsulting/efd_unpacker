@@ -109,7 +109,7 @@
 #### Ubuntu/Debian (.deb)
 ```bash
 sudo dpkg -i efd-unpacker-*.deb
-sudo apt-get install -f  # если есть зависимости
+sudo apt-get install -f
 ```
 
 #### CentOS/RHEL/Fedora (.rpm)
@@ -156,13 +156,13 @@ python main.py
 
 ```bash
 # macOS
-./build_macos.sh
+make build-macos
 
 # Linux
-./build_linux.sh
+make build-linux
 
 # Windows
-./build_windows.ps1
+make build-windows
 ```
 
 ---

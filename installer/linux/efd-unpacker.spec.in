@@ -1,0 +1,25 @@
+Name:           efd-unpacker
+Version:        VERSION_PLACEHOLDER
+Release:        1%{?dist}
+Summary:        EFD Unpacker - Tool for unpacking EFD files
+License:        MIT
+URL:            https://github.com/IngvarConsulting/efd-unpacker
+Source0:        %{name}-%{version}.tar.gz
+BuildArch:      noarch
+BuildRequires:  python3
+%description
+EFD Unpacker is a tool for unpacking EFD (Enterprise File Distribution) files.
+It provides both GUI and command-line interfaces.
+%files
+%defattr(-,root,root,-)
+/usr/bin/efd_unpacker
+/usr/bin/translations/
+/usr/share/applications/efd-unpacker.desktop
+/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png
+/usr/share/mime/packages/mime-info.xml
+%post
+update-desktop-database
+update-mime-database /usr/share/mime
+%postun
+update-desktop-database
+update-mime-database /usr/share/mime 
