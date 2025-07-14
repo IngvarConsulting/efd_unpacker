@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QSettings, QCoreApplication
+from PyQt5.QtCore import QSettings, QCoreApplication
 from os_utils import get_1c_configuration_location_default, get_1c_configuration_location_from_1cestart
 import os
 from typing import List, Tuple, Optional

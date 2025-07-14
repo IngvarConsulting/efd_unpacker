@@ -1,11 +1,11 @@
 import os
-from PyQt6 import QtWidgets
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QCoreApplication
-from PyQt6.QtWidgets import (
+from PyQt5 import QtWidgets
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QCoreApplication
+from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
     QMessageBox, QHBoxLayout, QComboBox
 )
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
+from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QMovie, QCursor
 from os_utils import open_folder
 from unpack_service import UnpackService
 from settings_service import SettingsService
@@ -65,9 +65,9 @@ class MainWindow(QMainWindow):
         self.thread: Optional[UnpackThread] = None
         
         self.label_input = QLabel(self.tr('Drag .efd file here or click to choose'))
-        self.label_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_input.setAlignment(Qt.AlignCenter)
         self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
-        self.label_input.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.label_input.setCursor(QCursor(Qt.PointingHandCursor))
         self.label_input.mousePressEvent = self.open_file_dialog
 
     def _create_output_area(self) -> None:
@@ -91,18 +91,18 @@ class MainWindow(QMainWindow):
         self.loading_movie = QMovie("resources/loading.gif")
         
         # Настраиваем качественное масштабирование
-        self.loading_movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        self.loading_movie.setCacheMode(QMovie.CacheAll)
         self.loading_movie.setScaledSize(QSize(UIConstants.LOADING_ICON_SIZE, UIConstants.LOADING_ICON_SIZE))
         
         self.loading_label.setMovie(self.loading_movie)
-        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet(Styles.LOADING_LABEL)
         self.loading_label.setVisible(False)
 
     def _create_message_area(self) -> None:
         """Создает область сообщений"""
         self.label_message = QLabel()
-        self.label_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_message.setAlignment(Qt.AlignCenter)
         self.label_message.setWordWrap(True)
         self.label_message.setVisible(False)
         
@@ -273,7 +273,7 @@ class MainWindow(QMainWindow):
         self.btn_unpack.setEnabled(True)
 
     def browse_output_path(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt5.QtWidgets import QFileDialog
         from settings_service import SettingsService
         directory = QFileDialog.getExistingDirectory(self, self.tr('Select output folder'), self.combo_output_paths.currentData())
         if directory:
@@ -287,7 +287,7 @@ class MainWindow(QMainWindow):
         self.combo_output_paths.setEnabled(True)
 
     def open_file_dialog(self, ev) -> None:
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt5.QtWidgets import QFileDialog
         file_filter = self.tr('EFD Files (*.efd)')
         file_path, _ = QFileDialog.getOpenFileName(self, self.tr('Select .efd file'), "", file_filter)
         if file_path:

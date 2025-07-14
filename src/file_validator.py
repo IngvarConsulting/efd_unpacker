@@ -1,6 +1,6 @@
 import os
 from typing import Tuple, Optional
-from PyQt6.QtCore import QCoreApplication
+from PyQt5.QtCore import QCoreApplication
 
 
 class FileValidator:

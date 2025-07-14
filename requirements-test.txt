@@ -2,4 +2,5 @@
 pytest>=7.0.0
 pytest-cov>=4.0.0
 pytest-mock>=3.10.0
-pytest-qt>=4.0.0 
+pytest-qt>=4.0.0
+PyQt5==5.15.11

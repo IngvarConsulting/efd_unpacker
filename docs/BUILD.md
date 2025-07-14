@@ -80,7 +80,7 @@ make build-windows
 Для сборки полностью воспроизводимого Linux-образа с артефактами используйте Docker:
 
 ```bash
-docker build -f Dockerfile.linux-build -t efd-linux-build .
+docker build --platform=linux/amd64 -f Dockerfile.linux-build -t efd-linux-build .
 ```
 
 - Артефакты сборки будут находиться внутри контейнера в папке `/build-out`.

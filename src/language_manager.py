@@ -2,7 +2,7 @@
 Менеджер локализации для приложения EFD Unpacker
 """
 
-from PyQt6.QtCore import QLocale, QTranslator
+from PyQt5.QtCore import QLocale, QTranslator
 import os
 import sys
 from typing import Optional

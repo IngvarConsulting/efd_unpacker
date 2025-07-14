@@ -1,5 +1,5 @@
 import onec_dtools
-from PyQt6.QtCore import QCoreApplication
+from PyQt5.QtCore import QCoreApplication
 from typing import Tuple
 
 class UnpackService:

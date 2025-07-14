@@ -1,2 +1,2 @@
 onec_dtools==0.5.0
-PyQt6
+PyQt5==5.15.11
