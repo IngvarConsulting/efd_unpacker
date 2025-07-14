@@ -238,7 +238,6 @@ build/
 dist/
 
 # Application specific
-*.efd
 *.log
 settings.ini
 config.json
