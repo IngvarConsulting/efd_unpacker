@@ -81,22 +81,18 @@ setup-ci: install-ci-deps install-deps
 
 # Создание version.txt из git тега
 create-version:
-	@echo "Creating version.txt from git tag..."
-	@if [ -n "$(GITHUB_REF)" ]; then \
-		VERSION=$$(echo $(GITHUB_REF) | sed 's/refs\/tags\/v//'); \
-		if [ -z "$$VERSION" ]; then VERSION="dev"; fi; \
-		echo "$$VERSION" > version.txt; \
-		echo "Created version.txt with version: $$VERSION"; \
-	elif [ -n "$(GITHUB_REF_NAME)" ]; then \
-		VERSION=$$(echo $(GITHUB_REF_NAME) | sed 's/v//'); \
-		echo "$$VERSION" > version.txt; \
-		echo "Created version.txt with version: $$VERSION"; \
+	@echo "Creating version.txt from git tag or commit..."
+	@if [ -n "$(VERSION)" ]; then \
+		VER="$(VERSION)"; \
+	elif git describe --tags --exact-match >/dev/null 2>&1; then \
+		VER=$$(git describe --tags --exact-match | sed 's/^v//'); \
+	elif git describe --tags >/dev/null 2>&1; then \
+		VER=$$(git describe --tags --always | sed 's/^v//'); \
 	else \
-		echo "GITHUB_REF not set, using current git tag or 'dev'"; \
-		VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/v//' || echo "dev"); \
-		echo "$$VERSION" > version.txt; \
-		echo "Created version.txt with version: $$VERSION"; \
-	fi
+		VER="dev"; \
+	fi; \
+	echo "$$VER" > version.txt; \
+	echo "Created version.txt with version: $$VER"
 
 clean:
 	@echo "Cleaning build artifacts..."
