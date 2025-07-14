@@ -36,6 +36,7 @@ help:
 	@echo "Python: $(PYTHON)"
 
 check:
+	@if [ "$(PLATFORM)" = "windows" ]; then chcp 65001 >nul; fi
 	@sh -c '\
 	FAILED=0; \
 	echo "=== Проверка готовности к сборке ==="; \
@@ -74,7 +75,7 @@ build-linux: clean create-version compile-translations check generate-spec
 	@$(MAKE) create-linux-rpm
 	@$(MAKE) verify-translations
 
-build-windows: clean create-version check generate-spec
+build-windows: clean create-version compile-translations check generate-spec
 	@echo "Building for Windows..."
 	@$(MAKE) build-windows-executable
 	@$(MAKE) create-windows-zip
@@ -107,6 +108,16 @@ install-deps:
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 qtbase5-dev qttools5-dev-tools; \
 	fi
+	@if [ "$(PLATFORM)" = "macos" ]; then \
+		brew list qt@5 >/dev/null 2>&1 || brew install qt@5; \
+		brew link --force qt@5; \
+	fi
+	@if [ "$(PLATFORM)" = "windows" ]; then \
+		choco install qt5-default -y; \
+		set "QTPATH=%ProgramFiles%\\Qt\\5.15.2\\mingw81_64\\bin"; \
+		set "PATH=%QTPATH%;%PATH%"; \
+		echo "[INFO] lrelease.exe должен быть доступен: %QTPATH%"; \
+	fi
 
 create-version:
 	@echo "Creating version.txt from git tag or commit..."
@@ -136,6 +147,7 @@ clean:
 	rm -f translations/*.qm
 
 compile-translations:
+	@command -v lrelease >/dev/null 2>&1 || { echo "[ERROR] lrelease not found! Please install Qt Linguist tools (lrelease)."; exit 1; }
 	@echo "Compiling translations with lrelease..."
 	@for ts in translations/*.ts; do \
 	  lrelease "$$ts" -qm "translations/$$(basename $$ts .ts).qm"; \
