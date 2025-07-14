@@ -18,6 +18,7 @@
 - [Ассоциации файлов и интеграция с ОС](docs/FILE_ASSOCIATION_GUIDE.md)
 - [Сборка и требования](docs/BUILD.md)
 - [Локализация](docs/LOCALIZATION_README.md)
+- [CI/CD с Make](docs/CI_MAKE_GUIDE.md)
 - [Конвенция коммитов](docs/COMMIT_CONVENTION.md)
 
 ## Лицензия

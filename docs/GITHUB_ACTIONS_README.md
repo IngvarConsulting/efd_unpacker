@@ -24,7 +24,7 @@ Workflow находится в `.github/workflows/build-and-release.yml` и со
   - Установка Python 3.11
   - Установка системных зависимостей (zip, unzip)
   - Установка Python пакетов
-  - Запуск `build_linux.sh`
+  - Запуск `make build-linux`
   - Загрузка артефактов
 
 #### 2. build-windows
@@ -32,7 +32,7 @@ Workflow находится в `.github/workflows/build-and-release.yml` и со
 - **Действия**:
   - Установка Python 3.11
   - Установка Python пакетов
-  - Запуск `build_windows.ps1`
+  - Запуск `make build-windows`
   - Загрузка артефактов
 
 #### 3. build-macos
@@ -41,7 +41,7 @@ Workflow находится в `.github/workflows/build-and-release.yml` и со
   - Установка Python 3.11
   - Установка Homebrew зависимостей (create-dmg)
   - Установка Python пакетов
-  - Запуск `build_macos.sh`
+  - Запуск `make build-macos`
   - Загрузка артефактов
 
 #### 4. create-release

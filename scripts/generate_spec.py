@@ -18,10 +18,41 @@ def read_version() -> str:
         print("Error: version.txt not found")
         exit(1)
 
+def verify_translations(project_root: str) -> None:
+    """Проверяет наличие папки translations и .qm файлов"""
+    translations_dir = os.path.join(project_root, 'translations')
+    
+    if not os.path.exists(translations_dir):
+        print("Error: translations directory not found")
+        print(f"Expected path: {translations_dir}")
+        exit(1)
+    
+    ru_qm = os.path.join(translations_dir, 'ru.qm')
+    if not os.path.exists(ru_qm):
+        print("Warning: translations/ru.qm not found")
+        print("Please compile ru.ts to ru.qm using lrelease")
+        print("Example: lrelease translations/ru.ts")
+        exit(1)
+    
+    print(f"✓ Translations verified: {translations_dir}")
+    print(f"  - ru.qm: {os.path.getsize(ru_qm)} bytes")
+
 def generate_spec(version: str) -> None:
     """Генерирует spec файл с указанной версией"""
     # Получаем путь к корню проекта
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Проверяем translations перед генерацией spec
+    verify_translations(project_root)
+    
+    # Находим все .qm файлы в папке translations
+    translations_dir = os.path.join(project_root, 'translations')
+    qm_files = []
+    for file in os.listdir(translations_dir):
+        if file.endswith('.qm'):
+            qm_files.append(f"('{os.path.join(translations_dir, file)}', 'translations')")
+    
+    datas_section = ',\n        '.join(qm_files) if qm_files else "('translations', 'translations')"
     
     spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 
@@ -32,7 +63,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('{os.path.join(project_root, "translations")}', 'translations'),
+        {datas_section},
     ],
     hiddenimports=[],
     hookspath=[],
@@ -131,6 +162,7 @@ app = BUNDLE(
         f.write(spec_content)
     
     print(f"Generated EFDUnpacker.spec with version {version}")
+    print(f"Included .qm files: {[f.split('/')[-1] for f in qm_files]}")
 
 if __name__ == '__main__':
     version = read_version()

@@ -22,33 +22,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
+      - name: Setup CI environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y zip unzip libxcb-xinerama0 libxcb-shape0 libxkbcommon-x11-0 libxcb-keysyms1 libxcb-icccm4 libxcb-xkb1 libxcb-image0 libxcb-render-util0 dpkg-dev rpm
+          make setup-ci
 
-      - name: Install appimagetool
-        run: |
-          wget -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-          chmod +x appimagetool
-          sudo mv appimagetool /usr/local/bin/
-
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Create version.txt from tag
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          if [ -z "$VERSION" ]; then VERSION="dev"; fi
-          echo "$VERSION" > version.txt
-          echo "Created version.txt with version: $VERSION"
       - name: Build Linux version
         run: |
-          chmod +x build_linux.sh
-          ./build_linux.sh
+          make build-linux
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -72,44 +52,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install WiX Toolset
+      - name: Setup CI environment
         run: |
-          # Проверяем, установлен ли уже WiX
-          if (Get-Command candle -ErrorAction SilentlyContinue) {
-            Write-Host "WiX Toolset уже установлен и доступен в PATH" -ForegroundColor Green
-            candle -version
-            light -version
-          } else {
-            Write-Host "Устанавливаем WiX Toolset..." -ForegroundColor Yellow
-            choco install wixtoolset --yes
-            # Обновляем PATH для текущей сессии
-            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
-            # Проверяем установку
-            candle -version
-            light -version
-          }
-          
-          # Запускаем детальную проверку WiX
-          Write-Host "Запускаем детальную проверку WiX..." -ForegroundColor Yellow
-          .\scripts\check_wix.ps1 -Verbose
+          make setup-ci
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Create version.txt from tag
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF -replace 'refs/tags/v',''
-          if (-not $version) { $version = 'dev' }
-          Set-Content -Path version.txt -Value $version
-          Write-Host "Created version.txt with version: $version"
       - name: Build Windows version
         run: |
-          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-          .\build_windows.ps1
+          make build-windows
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -130,27 +79,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Homebrew dependencies
+      - name: Setup CI environment
         run: |
-          brew install create-dmg
+          make setup-ci
 
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Create version.txt from tag
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF -replace 'refs/tags/v',''
-          if (-not $version) { $version = 'dev' }
-          Set-Content -Path version.txt -Value $version
-          Write-Host "Created version.txt with version: $version"
       - name: Build macOS version
         run: |
-          chmod +x build_macos.sh
-          ./build_macos.sh
+          make build-macos
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -175,28 +110,16 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract version from tag
-        id: get_version
-        run: |
-          # Извлекаем версию из тега (убираем префикс 'v')
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Using version from tag: $VERSION"
-
-      - name: Create version.txt from tag
-        run: |
-          echo "${{ steps.get_version.outputs.VERSION }}" > version.txt
-          echo "Created version.txt with version: ${{ steps.get_version.outputs.VERSION }}"
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Generate release notes
+      - name: Create version and generate release notes
         id: release_notes
         run: |
-          python scripts/generate_release_notes.py > release_notes.md
+          make create-version
+          make generate-release-notes
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
           cat release_notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -205,7 +128,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          name: EFD Unpacker ${{ steps.get_version.outputs.VERSION }}
+          name: EFD Unpacker $(cat version.txt)
           body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
           draft: false
           prerelease: false

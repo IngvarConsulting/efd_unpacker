@@ -22,7 +22,7 @@
 
 ### Сборка
 ```bash
-./build_macos.sh
+make build_macos
 ```
 
 ### Результаты
@@ -43,7 +43,7 @@
 
 ### Сборка
 ```bash
-./build_linux.sh
+make build-linux
 ```
 
 ### Результаты
@@ -62,21 +62,30 @@
 - Python 3
 - PyInstaller (устанавливается автоматически)
 - WiX Toolset (опционально, для MSI)
-- PowerShell (для запуска скрипта)
 
 ### Сборка
-```powershell
-.\build_windows.ps1
+```bash
+make build-windows
 ```
 
-### Опции
-- `-SkipMsi` — сборка без MSI установщика
-- `-Verbose` — подробный вывод
-
 ### Результаты
-- **EFDUnpacker/** — исполняемая папка
+- **EFDUnpacker.exe** — исполняемый файл
 - **efd-unpacker-<версия>-windows-portable.zip** — портативная версия
 - **efd-unpacker-<версия>-windows.msi** — установщик Windows (если доступен WiX Toolset)
+
+---
+
+## Сборка Docker-образа (Linux)
+
+Для сборки полностью воспроизводимого Linux-образа с артефактами используйте Docker:
+
+```bash
+docker build -f Dockerfile.linux-build -t efd-linux-build .
+```
+
+- Артефакты сборки будут находиться внутри контейнера в папке `/build-out`.
+- Все зависимости и сборка выполняются через Makefile, как в CI.
+- Такой подход гарантирует чистую среду и воспроизводимость результата.
 
 ---
 

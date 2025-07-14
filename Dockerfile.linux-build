@@ -1,0 +1,30 @@
+# Dockerfile для сборки EFD Unpacker (Linux)
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Установить базовые системные зависимости (python, pip, build tools, qt, etc.)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv python3-dev \
+        build-essential make && \
+    rm -rf /var/lib/apt/lists/*
+
+# Скопировать проект
+COPY . /app
+WORKDIR /app
+
+# Установить переменную DOCKER для Makefile
+ENV DOCKER=1
+
+# Установить все зависимости через make
+RUN make setup-ci
+
+# Собрать проект
+RUN make build-linux
+
+# Копировать артефакты наружу
+RUN mkdir -p /build-out && cp -r dist/* /build-out/
+
+# По умолчанию просто выводить содержимое папки с артефактами
+CMD ["ls", "-l", "/build-out"] 
