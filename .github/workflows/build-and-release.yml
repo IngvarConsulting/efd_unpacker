@@ -108,6 +108,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+      - name: List dist contents
+        run: ls -la dist || true
       - name: Test DEB
         run: |
           sudo apt-get install -y $(find . -name '*.deb')
@@ -117,12 +119,14 @@ jobs:
 
   test-rpm:
     needs: build-linux
-    runs-on: centos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+      - name: List dist contents
+        run: ls -la dist || true
       - name: Test RPM
         run: |
           sudo dnf install -y $(find . -name '*.rpm')
@@ -138,6 +142,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+      - name: List dist contents
+        run: ls -la dist || true
       - name: Unpack portable ZIP
         run: |
           unzip $(find dist -name '*-linux-portable.zip') -d dist/test-portable
@@ -155,6 +161,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-builds
+      - name: List dist contents
+        run: |
+          dir dist || echo dist not found
       - name: Move MSI to root
         run: |
           mv dist/*.msi ./efd_unpacker.msi
@@ -173,6 +182,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-builds
+      - name: List dist contents
+        run: |
+          dir dist || echo dist not found
       - name: Unpack portable ZIP
         run: |
           powershell -Command "Expand-Archive -Path (Get-ChildItem -Recurse -Filter *-windows-portable.zip | Select-Object -First 1 -ExpandProperty FullName) -DestinationPath dist/test-portable"
@@ -190,6 +202,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-builds
+      - name: List dist contents
+        run: ls -la dist || true
       - name: Move DMG to root
         run: |
           mv dist/*.dmg ./efd_unpacker.dmg
@@ -211,6 +225,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-builds
+      - name: List dist contents
+        run: ls -la dist || true
       - name: Unpack portable ZIP
         run: |
           unzip $(find dist -name '*-macos-portable.zip') -d dist/test-portable
