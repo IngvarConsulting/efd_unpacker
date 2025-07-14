@@ -22,19 +22,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile and archive translations
-        run: |
-          make compile-translations-artifact
-
-      - name: Upload translations artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: translations_qm
-          path: translations_qm.zip
-
       - name: Setup CI environment
         run: |
-          make setup-ci
+          make install-deps
 
       - name: Build Linux version
         run: |
@@ -52,29 +42,18 @@ jobs:
             dist/efd-unpacker-*-linux*.rpm
 
   build-windows:
-    needs: build-linux
     runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Download translations artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: translations_qm
-
-      - name: Extract translations
-        run: |
-          make extract-translations-artifact
-
       - name: Setup CI environment
         run: |
-          make setup-ci
+          make install-deps
 
       - name: Build Windows version
         run: |
@@ -101,7 +80,7 @@ jobs:
 
       - name: Setup CI environment
         run: |
-          make setup-ci
+          make install-deps
 
       - name: Build macOS version
         run: |
@@ -115,44 +94,44 @@ jobs:
             dist/efd-unpacker-*-macos-portable.zip
             dist/efd-unpacker-*-macos.dmg
 
-  create-release:
-    needs: [build-linux, build-windows, build-macos]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Нужно для получения истории коммитов
+  # create-release:
+  #   needs: [build-linux, build-windows, build-macos]
+  #   runs-on: ubuntu-latest
+  #   if: startsWith(github.ref, 'refs/tags/')
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0  # Нужно для получения истории коммитов
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+  #     - name: Download all artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         path: artifacts
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: '3.11'
 
-      - name: Create version and generate release notes
-        id: release_notes
-        run: |
-          make create-version
-          make generate-release-notes
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+  #     - name: Create version and generate release notes
+  #       id: release_notes
+  #       run: |
+  #         make create-version
+  #         make generate-release-notes
+  #         echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+  #         cat release_notes.md >> $GITHUB_OUTPUT
+  #         echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: EFD Unpacker $(cat version.txt)
-          body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/linux-builds/*
-            artifacts/windows-builds/*
-            artifacts/macos-builds/*
+  #     - name: Create Release
+  #       uses: softprops/action-gh-release@v1
+  #       with:
+  #         tag_name: ${{ github.ref_name }}
+  #         name: EFD Unpacker $(cat version.txt)
+  #         body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+  #         draft: false
+  #         prerelease: false
+  #         files: |
+  #           artifacts/linux-builds/*
+  #           artifacts/windows-builds/*
+  #           artifacts/macos-builds/*

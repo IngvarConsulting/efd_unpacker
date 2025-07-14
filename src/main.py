@@ -2,8 +2,8 @@ import sys
 import os
 import urllib.parse
 from ui import MainWindow
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QEvent, QTimer
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QEvent, QTimer
 from file_validator import FileValidator
 from language_manager import LanguageManager
 from cli_processor import CLIProcessor
