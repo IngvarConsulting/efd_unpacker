@@ -22,6 +22,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Compile and archive translations
+        run: |
+          make compile-translations-artifact
+
+      - name: Upload translations artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: translations_qm
+          path: translations_qm.zip
+
       - name: Setup CI environment
         run: |
           make setup-ci
@@ -42,6 +52,7 @@ jobs:
             dist/efd-unpacker-*-linux*.rpm
 
   build-windows:
+    needs: build-linux
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -51,6 +62,15 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Download translations artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: translations_qm
+
+      - name: Extract translations
+        run: |
+          make extract-translations-artifact
 
       - name: Setup CI environment
         run: |

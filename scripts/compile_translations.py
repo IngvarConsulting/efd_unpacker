@@ -83,6 +83,19 @@ def main():
         print(f"Error: {translations_dir} directory not found")
         return 1
     
+    # Проверяем, есть ли все .qm для .ts
+    ts_files = list(Path(translations_dir).glob("*.ts"))
+    missing_qm = []
+    for ts_file in ts_files:
+        qm_file = ts_file.with_suffix('.qm')
+        if not qm_file.exists():
+            missing_qm.append(ts_file.name)
+    if not missing_qm:
+        print("✓ All .qm files already exist, no need to run lrelease.")
+        return 0
+    else:
+        print(f"Following .qm files are missing and will be compiled: {missing_qm}")
+    
     # Ищем lrelease
     lrelease_path = find_lrelease()
     if not lrelease_path:
@@ -97,21 +110,17 @@ def main():
     print(f"\nCompiling translations in {translations_dir}...")
     if compile_translations(translations_dir, lrelease_path):
         print("\n✓ All translations compiled successfully!")
-        
         # Показываем результат
         print("\nCompiled files (will be included in builds):")
         for qm_file in Path(translations_dir).glob("*.qm"):
             size = qm_file.stat().st_size
             print(f"  - {qm_file.name}: {size} bytes")
-        
         # Показываем файлы, которые НЕ будут включены
-        ts_files = list(Path(translations_dir).glob("*.ts"))
         if ts_files:
             print("\nSource files (NOT included in builds):")
             for ts_file in ts_files:
                 size = ts_file.stat().st_size
                 print(f"  - {ts_file.name}: {size} bytes")
-        
         return 0
     else:
         print("\n✗ Some translations failed to compile!")

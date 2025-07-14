@@ -23,9 +23,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup CI environment
+      - name: Installing development dependencies...
         run: |
-          make setup-ci
+          make install-deps
 
       - name: Run tests with make
         env:
