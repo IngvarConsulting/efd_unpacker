@@ -184,12 +184,12 @@ jobs:
       - name: Test DMG
         run: |
           hdiutil attach $(find . -name '*.dmg')
-          ls -l /Volumes/EFDUnpacker/
-          cp -R /Volumes/EFDUnpacker/EFDUnpacker.app /tmp/
+          ls -l "/Volumes/EFD Unpacker/"
+          cp -R "/Volumes/EFD Unpacker/EFDUnpacker.app" /tmp/
           ls -l /tmp/EFDUnpacker.app/Contents/MacOS/
           /tmp/EFDUnpacker.app/Contents/MacOS/efd_unpacker --help
           /tmp/EFDUnpacker.app/Contents/MacOS/efd_unpacker unpack tests/data/1cv8.efd
-          hdiutil detach /Volumes/EFDUnpacker
+          hdiutil detach "/Volumes/EFD Unpacker"
 
   test-macos-portable:
     needs: build-macos
