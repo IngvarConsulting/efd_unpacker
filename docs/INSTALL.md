@@ -140,7 +140,7 @@ sudo dnf install efd-unpacker-*.rpm
 ### Требования
 
 - Python 3.9+
-- PyQt6
+- PyQt5
 - PyInstaller (для сборки)
 
 ### Установка
@@ -183,7 +183,7 @@ make build-windows
 
 ### Linux
 - **"Permission denied"**: `chmod +x EFDUnpacker`
-- **"Library not found"**: Установите зависимости Qt: `sudo apt install libqt6core6 libqt6gui6 libqt6widgets6`
+- **"Library not found"**: Установите зависимости Qt: `sudo apt install libqt5core5 libqt5gui5 libqt5widgets5`
 
 ---
 
