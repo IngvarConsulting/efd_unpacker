@@ -6,7 +6,7 @@
 
 ## Общие требования
 - **Python 3.9+**
-- **PyQt6** (см. requirements.txt)
+- **PyQt5** (см. requirements.txt)
 - **onec_dtools** (см. requirements.txt)
 - **Git** (для клонирования репозитория)
 
