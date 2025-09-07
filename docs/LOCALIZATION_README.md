@@ -37,7 +37,7 @@ self.label.setText(self.tr('%1').replace('%1', file_path))
 
 ### В сервисах
 ```python
-from PyQt6.QtCore import QCoreApplication
+from PyQt5.QtCore import QCoreApplication
 
 # Простая строка
 message = QCoreApplication.translate('UnpackService', 'File not found')

@@ -96,13 +96,13 @@ make create-version   # Создание version.txt
 #### Linux (Ubuntu)
 ```bash
 sudo apt-get update
-sudo apt-get install -y qttools6-dev-tools
+sudo apt-get install -y qttools5-dev-tools
 sudo apt-get install -y zip unzip libxcb-xinerama0 libxcb-shape0 libxkbcommon-x11-0 libxcb-keysyms1 libxcb-icccm4 libxcb-xkb1 libxcb-image0 libxcb-render-util0 dpkg-dev rpm
 ```
 
 #### macOS
 ```bash
-brew install qt6 create-dmg
+brew install qt5 create-dmg
 ```
 
 #### Windows
