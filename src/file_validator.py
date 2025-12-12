@@ -5,6 +5,17 @@ from tr import tr
 
 class FileValidator:
     """Класс для валидации файлов EFD"""
+
+    @staticmethod
+    def normalize_path(path: str) -> str:
+        """Раскрывает ~ и приводит путь к абсолютному виду."""
+        if not path:
+            return path
+        try:
+            expanded = os.path.expanduser(path)
+            return os.path.abspath(expanded)
+        except (TypeError, ValueError):
+            return path
     
     @staticmethod
     def validate_efd_file(file_path: str) -> Tuple[bool, str]:
@@ -19,25 +30,27 @@ class FileValidator:
             - is_valid: True если файл валиден, False иначе
             - error_message: Сообщение об ошибке (пустая строка если файл валиден)
         """
+        normalized_path = FileValidator.normalize_path(file_path)
+
         # Проверяем существование файла
-        if not os.path.exists(file_path):
+        if not os.path.exists(normalized_path):
             return False, tr('FileValidator', 'File does not exist')
         
         # Проверяем, что это файл, а не директория
-        if not os.path.isfile(file_path):
+        if not os.path.isfile(normalized_path):
             return False, tr('FileValidator', 'Path is not a file')
         
         # Проверяем расширение файла
-        if not file_path.lower().endswith('.efd'):
+        if not normalized_path.lower().endswith('.efd'):
             return False, tr('FileValidator', 'Invalid file format. Expected .efd file')
         
         # Проверяем права на чтение
-        if not os.access(file_path, os.R_OK):
+        if not os.access(normalized_path, os.R_OK):
             return False, tr('FileValidator', 'No permission to read file')
         
         # Проверяем размер файла (не должен быть пустым)
         try:
-            file_size = os.path.getsize(file_path)
+            file_size = os.path.getsize(normalized_path)
             if file_size == 0:
                 return False, tr('FileValidator', 'File is empty')
         except OSError:
@@ -62,21 +75,32 @@ class FileValidator:
         if not output_dir or not output_dir.strip():
             return False, tr('FileValidator', 'Output directory path is empty')
         
+        normalized_dir = FileValidator.normalize_path(output_dir)
+
         # Проверяем существование директории
-        if os.path.exists(output_dir):
+        if os.path.exists(normalized_dir):
             # Если существует, проверяем что это директория
-            if not os.path.isdir(output_dir):
+            if not os.path.isdir(normalized_dir):
                 return False, tr('FileValidator', 'Output path exists but is not a directory')
             
             # Проверяем права на запись
-            if not os.access(output_dir, os.W_OK):
+            if not os.access(normalized_dir, os.W_OK):
                 return False, tr('FileValidator', 'No permission to write to output directory')
         else:
             # Если директория не существует, проверяем возможность создания
             try:
-                # Проверяем права на создание в родительской директории
-                parent_dir = os.path.dirname(output_dir)
-                if parent_dir and not os.access(parent_dir, os.W_OK):
+                parent_dir = os.path.dirname(normalized_dir)
+                if not parent_dir:
+                    parent_dir = os.getcwd()
+                while parent_dir and not os.path.exists(parent_dir):
+                    new_parent = os.path.dirname(parent_dir)
+                    if new_parent == parent_dir:
+                        parent_dir = ''
+                        break
+                    parent_dir = new_parent
+                if not parent_dir:
+                    parent_dir = os.getcwd()
+                if not os.access(parent_dir, os.W_OK):
                     return False, tr('FileValidator', 'No permission to create output directory')
             except OSError:
                 return False, tr('FileValidator', 'Invalid output directory path')
@@ -101,10 +125,12 @@ class FileValidator:
         if not is_valid:
             return False, error_message
         
+        normalized_dir = FileValidator.normalize_path(output_dir)
+        
         # Если директория не существует, создаем её
-        if not os.path.exists(output_dir):
+        if not os.path.exists(normalized_dir):
             try:
-                os.makedirs(output_dir, exist_ok=True)
+                os.makedirs(normalized_dir, exist_ok=True)
             except OSError as e:
                 return False, tr('FileValidator', 'Failed to create output directory: %1').replace('%1', str(e))
         
@@ -121,14 +147,15 @@ class FileValidator:
         Returns:
             Optional[dict]: Информация о файле или None если файл недоступен
         """
+        normalized_path = FileValidator.normalize_path(file_path)
         try:
-            stat = os.stat(file_path)
+            stat = os.stat(normalized_path)
             return {
                 'size': stat.st_size,
                 'modified': stat.st_mtime,
                 'created': stat.st_ctime,
-                'readable': os.access(file_path, os.R_OK),
-                'writable': os.access(file_path, os.W_OK)
+                'readable': os.access(normalized_path, os.R_OK),
+                'writable': os.access(normalized_path, os.W_OK)
             }
         except OSError:
-            return None 
+            return None

@@ -141,6 +141,17 @@ class TestFileValidator(unittest.TestCase):
         self.assertTrue(os.path.exists(output_dir))
         self.assertTrue(os.path.isdir(output_dir))
 
+    def test_create_output_directory_expands_user_path(self):
+        """Тест создания выходной директории с путями содержащими ~"""
+        tilde_dir = os.path.join('~', 'efd_unpacker', 'output')
+        resolved_dir = os.path.join(self.temp_dir, 'tilde_output')
+        with patch('file_validator.os.path.expanduser', return_value=resolved_dir):
+            success, error_message = FileValidator.create_output_directory(tilde_dir)
+        
+        self.assertTrue(success)
+        self.assertEqual(error_message, "")
+        self.assertTrue(os.path.isdir(resolved_dir))
+
     def test_create_output_directory_already_exists(self):
         """Тест создания директории которая уже существует"""
         # Создаем директорию заранее
@@ -172,6 +183,18 @@ class TestFileValidator(unittest.TestCase):
         file_info = FileValidator.get_file_info(self.non_existent_file)
         
         self.assertIsNone(file_info)
+
+    def test_validate_efd_file_expands_user_path(self):
+        """Тест расширения ~ при проверке EFD файла"""
+        with open(self.valid_efd_file, 'w') as f:
+            f.write("EFD test content")
+        
+        tilde_path = os.path.join('~', 'valid.efd')
+        with patch('file_validator.os.path.expanduser', return_value=self.valid_efd_file):
+            is_valid, error_message = FileValidator.validate_efd_file(tilde_path)
+        
+        self.assertTrue(is_valid)
+        self.assertEqual(error_message, "")
 
 
 if __name__ == '__main__':
