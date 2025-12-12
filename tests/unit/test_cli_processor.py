@@ -111,6 +111,26 @@ class TestCLIProcessor(unittest.TestCase):
         
         self.assertFalse(result)
 
+    @patch('cli_processor.FileValidator.normalize_path')
+    @patch('cli_processor.FileValidator.validate_efd_file')
+    @patch('cli_processor.FileValidator.create_output_directory')
+    @patch('cli_processor.UnpackService.unpack')
+    def test_process_cli_unpack_uses_normalized_paths(self, mock_unpack, mock_create_dir, mock_validate, mock_normalize):
+        """Тест использования нормализованных путей при распаковке"""
+        mock_validate.return_value = (True, "")
+        mock_create_dir.return_value = (True, "")
+        mock_unpack.return_value = (True, "Success")
+        def normalize_side_effect(path):
+            return f"/abs/{os.path.basename(path)}"
+        mock_normalize.side_effect = normalize_side_effect
+
+        result = CLIProcessor.process_cli_unpack('~/test.efd', '~/output')
+
+        self.assertTrue(result)
+        mock_validate.assert_called_once_with('/abs/test.efd')
+        mock_create_dir.assert_called_once_with('/abs/output')
+        mock_unpack.assert_called_once_with('/abs/test.efd', '/abs/output')
+
     @patch('cli_processor.FileValidator.validate_efd_file')
     @patch('cli_processor.FileValidator.create_output_directory')
     @patch('cli_processor.UnpackService.unpack')

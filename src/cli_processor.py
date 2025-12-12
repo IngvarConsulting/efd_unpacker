@@ -36,20 +36,23 @@ class CLIProcessor:
         Returns:
             bool: True если распаковка успешна, False иначе
         """
+        normalized_input = FileValidator.normalize_path(input_file)
+        normalized_output = FileValidator.normalize_path(output_dir)
+
         # Валидируем входной файл
-        is_valid, error_message = FileValidator.validate_efd_file(input_file)
+        is_valid, error_message = FileValidator.validate_efd_file(normalized_input)
         if not is_valid:
             print(f"[ERROR] {error_message}")
             return False
         
         # Валидируем и создаем выходную директорию
-        success, error_message = FileValidator.create_output_directory(output_dir)
+        success, error_message = FileValidator.create_output_directory(normalized_output)
         if not success:
             print(f"[ERROR] {error_message}")
             return False
         
         # Выполняем распаковку
-        success, message = UnpackService.unpack(input_file, output_dir)
+        success, message = UnpackService.unpack(normalized_input, normalized_output)
         if success:
             print(f"[OK] {message}")
             return True
