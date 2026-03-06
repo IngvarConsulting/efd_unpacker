@@ -88,12 +88,12 @@ def install_cli_launcher() -> bool:
 def resolve_cli_launcher_target() -> Path | None:
     """Return the stable executable path that should back the CLI launcher."""
     if sys.platform == "darwin":
-        executable = Path(sys.executable).resolve(strict=False)
-        executable_str = _normalized_path_text(executable)
+        executable = Path(sys.executable)
+        executable_str = str(executable).replace("\\", "/")
         if executable_str.startswith("/Volumes/"):
             return None
         if ".app/Contents/MacOS/" in executable_str:
-            return executable
+            return executable.resolve(strict=False)
         return None
 
     if sys.platform.startswith("linux"):
