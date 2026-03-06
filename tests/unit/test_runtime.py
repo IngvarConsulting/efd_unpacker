@@ -136,6 +136,16 @@ def test_get_shell_profile_path_uses_login_shell_when_env_is_missing(monkeypatch
     assert runtime.get_shell_profile_path() == home / ".zprofile"
 
 
+def test_get_shell_profile_path_falls_back_when_pwd_is_unavailable(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.setattr(runtime, "pwd", None)
+
+    assert runtime.get_shell_profile_path() == home / ".profile"
+
+
 def test_install_cli_launcher_removes_legacy_profile_and_launcher(monkeypatch, tmp_path):
     home = tmp_path / "home"
     legacy_bin = home / ".local" / "bin"

@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import locale
 import os
-import pwd
 import re
 import shlex
 import sys
 from pathlib import Path
+
+try:
+    import pwd
+except ImportError:  # pragma: no cover - unavailable on Windows
+    pwd = None  # type: ignore[assignment]
 
 try:
     from PyQt5.QtCore import QLocale
@@ -106,7 +110,10 @@ def get_shell_profile_path() -> Path:
     home = Path.home()
     shell_path = os.environ.get("SHELL", "")
     if not shell_path:
-        shell_path = pwd.getpwuid(os.getuid()).pw_shell
+        if pwd is not None and hasattr(os, "getuid"):
+            shell_path = pwd.getpwuid(os.getuid()).pw_shell
+        else:
+            return home / ".profile"
     shell_name = Path(shell_path).name
     if shell_name == "zsh":
         return home / ".zprofile"
