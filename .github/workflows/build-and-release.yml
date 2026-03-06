@@ -11,13 +11,37 @@ permissions:
   packages: write
 
 jobs:
+  test-suite:
+    name: Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15-intel, windows-2022]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Setup CI environment
+        run: |
+          make install-deps
+      - name: Run tests
+        env:
+          PYTHONPATH: src
+        run: |
+          make test
+
   build-linux:
+    needs: test-suite
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Setup CI environment
@@ -30,17 +54,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-builds
+          if-no-files-found: error
           path: |
             dist/efd-unpacker-*-linux.AppImage
             dist/efd-unpacker-*-linux*.deb
 
   build-windows:
+    needs: test-suite
     runs-on: windows-2022
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Setup CI environment
@@ -53,16 +79,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-builds
+          if-no-files-found: error
           path: |
             dist/efd-unpacker-*-windows-setup.exe
 
   build-macos:
+    needs: test-suite
     runs-on: macos-15-intel
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Setup CI environment
@@ -75,6 +103,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-builds
+          if-no-files-found: error
           path: |
             dist/efd-unpacker-*-macos.dmg
 
@@ -88,9 +117,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+          path: dist
       - name: Move AppImage to root
         run: |
-          mv dist/*.AppImage ./efd_unpacker.AppImage
+          APPIMAGE="$(find dist -type f -name '*.AppImage' | head -n 1)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "AppImage artifact not found under dist"
+            find dist -maxdepth 5 -print || true
+            exit 1
+          fi
+          mv "$APPIMAGE" ./efd_unpacker.AppImage
       - name: Test AppImage
         run: |
           chmod +x ./efd_unpacker.AppImage
@@ -108,8 +144,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-builds
+          path: dist
       - name: List dist contents
-        run: ls -la dist || true
+        run: find dist -maxdepth 5 -print || true
       - name: Test DEB
         run: |
           sudo apt-get install -y $(find . -name '*.deb')
@@ -128,12 +165,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-builds
+          path: dist
       - name: List dist contents
         run: |
-          dir dist || echo dist not found
+          Get-ChildItem -Path dist -Recurse -Force | Format-Table FullName
       - name: Move setup.exe to root
+        shell: pwsh
         run: |
-          mv dist/*-windows-setup.exe ./efd_unpacker_setup.exe
+          $setup = Get-ChildItem -Path dist -Recurse -File -Filter *-windows-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "Windows setup artifact not found under dist" }
+          Move-Item $setup.FullName .\efd_unpacker_setup.exe
       - name: Test Windows setup
         shell: pwsh
         run: |
@@ -161,11 +202,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-builds
+          path: dist
       - name: List dist contents
-        run: ls -la dist || true
+        run: find dist -maxdepth 5 -print || true
       - name: Move DMG to root
         run: |
-          mv dist/*.dmg ./efd_unpacker.dmg
+          DMG="$(find dist -type f -name '*.dmg' | head -n 1)"
+          if [ -z "$DMG" ]; then
+            echo "DMG artifact not found under dist"
+            find dist -maxdepth 5 -print || true
+            exit 1
+          fi
+          mv "$DMG" ./efd_unpacker.dmg
       - name: Test DMG
         run: |
           hdiutil attach ./efd_unpacker.dmg
@@ -178,7 +226,7 @@ jobs:
           hdiutil detach "/Volumes/EFD Unpacker"
 
   create-release:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [test-appimage, test-deb, test-windows-setup, test-dmg]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
