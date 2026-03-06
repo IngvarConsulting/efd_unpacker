@@ -8,7 +8,6 @@
     Manufacturer="Ingvar Consulting"
     UpgradeCode="9F4CE29E-8A3F-4B2A-A3D8-C9171E7D6F20"
     Compressed="yes"
-    PerMachine="yes"
     IconSourceFile="resources\icon.ico"
     DisableModify="yes">
     <BootstrapperApplicationRef

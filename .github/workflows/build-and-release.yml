@@ -131,8 +131,8 @@ jobs:
         run: |
           chmod +x ./efd_unpacker.AppImage
           mkdir -p "$RUNNER_TEMP/efd-out"
-          ./efd_unpacker.AppImage --help
-          ./efd_unpacker.AppImage unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
+          APPIMAGE_EXTRACT_AND_RUN=1 ./efd_unpacker.AppImage --help
+          APPIMAGE_EXTRACT_AND_RUN=1 ./efd_unpacker.AppImage unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
 
   test-deb:
     needs: build-linux
