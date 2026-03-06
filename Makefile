@@ -6,14 +6,17 @@
 ifeq ($(OS),Windows_NT)
     PLATFORM := windows
     PYTHON := python
+    PYI_DATASEP := ;
 else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Darwin)
         PLATFORM := macos
         PYTHON := python3
+        PYI_DATASEP := :
     else
         PLATFORM := linux
         PYTHON := python3
+        PYI_DATASEP := :
     endif
 endif
 
@@ -22,9 +25,9 @@ help:
 	@echo "  install-deps            - Установить зависимости для разработки"
 	@echo "  create-version          - Создать version.txt из git тега"
 	@echo "  clean                   - Очистить артефакты сборки"
-	@echo "  build-macos             - Собрать для macOS (portable .zip, .dmg)"
-	@echo "  build-linux             - Собрать для Linux (portable .zip/.tar.gz, AppImage, .deb, .rpm)"
-	@echo "  build-windows           - Собрать для Windows (portable .zip, .msi)"
+	@echo "  build-macos             - Собрать для macOS (.dmg)"
+	@echo "  build-linux             - Собрать для Linux (.AppImage, .deb)"
+	@echo "  build-windows           - Собрать для Windows (setup.exe)"
 	@echo "  test                    - Запустить тесты"
 	@echo "  generate-spec           - Сгенерировать PyInstaller spec файл"
 	@echo "  generate-release-notes  - Сгенерировать заметки о выпуске из истории git"
@@ -67,22 +70,19 @@ check:
 build-macos: clean create-version check generate-spec
 	@echo "Building for macOS..."
 	@$(MAKE) build-macos-app
-	@$(MAKE) create-macos-zip
 	@$(MAKE) create-macos-dmg
 
 build-linux: clean create-version check generate-spec
 	@echo "Building for Linux..."
 	@$(MAKE) build-linux-executable
-	@$(MAKE) create-linux-archives
 	@$(MAKE) create-linux-appimage
 	@$(MAKE) create-linux-deb
-	@$(MAKE) create-linux-rpm
 
 build-windows: clean create-version check generate-spec
 	@echo "Building for Windows..."
 	@$(MAKE) build-windows-executable
-	@$(MAKE) create-windows-zip
 	@$(MAKE) create-windows-msi
+	@$(MAKE) create-windows-setup
 
 test:
 	@echo "Running tests..."
@@ -130,6 +130,7 @@ install-deps:
 	fi
 	@if [ "$(PLATFORM)" = "windows" ]; then \
 		choco install zip -y; \
+		choco install wixtoolset -y; \
 	fi
 
 create-version:
@@ -161,24 +162,28 @@ clean:
 # Linux build commands
 build-linux-executable:
 	@echo "Building Linux executable with PyInstaller..."
-	pyinstaller --noconfirm EFDUnpacker.spec
-	@if [ ! -f "dist/EFDUnpacker/EFDUnpacker" ]; then \
-		echo "Error: EFDUnpacker executable not found in dist directory."; \
+	pyinstaller --noconfirm --onefile --name=efd_unpacker \
+		--paths src \
+		--add-data "translations$(PYI_DATASEP)translations" \
+		--add-data "resources$(PYI_DATASEP)resources" \
+		main.py
+	@if [ ! -f "dist/efd_unpacker" ]; then \
+		echo "Error: efd_unpacker executable not found in dist directory."; \
 		exit 1; \
 	fi
 	
 create-linux-appimage:
 	@echo "Creating Linux AppImage..."
-	@if command -v appimagetool >/dev/null 2>&1; then \
-		mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps; \
-		cp dist/EFDUnpacker/EFDUnpacker AppDir/usr/bin/efd_unpacker; \
-		if [ -f "resources/icon.png" ]; then \
-			cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
-			cp resources/icon.png AppDir/efd_unpacker.png; \
-		fi; \
-		cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/; \
-		cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
-		cp installer/linux/AppRun AppDir/; \
+		@if command -v appimagetool >/dev/null 2>&1; then \
+			mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps; \
+			cp dist/efd_unpacker AppDir/usr/bin/efd_unpacker; \
+			if [ -f "resources/icon.png" ]; then \
+				cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
+				cp resources/icon.png AppDir/efd_unpacker.png; \
+			fi; \
+			cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/; \
+			cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
+			cp installer/linux/AppRun AppDir/; \
 		chmod +x AppDir/AppRun; \
 		appimagetool AppDir dist/efd-unpacker-$$(cat version.txt)-linux.AppImage; \
 		rm -rf AppDir; \
@@ -188,15 +193,15 @@ create-linux-appimage:
 
 create-linux-deb:
 	@echo "Creating Linux DEB package..."
-	@if command -v dpkg-deb >/dev/null 2>&1; then \
-		mkdir -p debian/DEBIAN debian/usr/bin debian/usr/share/applications debian/usr/share/icons/hicolor/256x256/apps debian/usr/share/mime/packages; \
-		cp dist/EFDUnpacker/EFDUnpacker debian/usr/bin/efd_unpacker; \
-		if [ -f "resources/icon.png" ]; then \
-			cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
-		fi; \
-		cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
-		cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
-		cp installer/linux/control debian/DEBIAN/; \
+		@if command -v dpkg-deb >/dev/null 2>&1; then \
+			mkdir -p debian/DEBIAN debian/usr/bin debian/usr/share/applications debian/usr/share/icons/hicolor/256x256/apps debian/usr/share/mime/packages; \
+			cp dist/efd_unpacker debian/usr/bin/efd_unpacker; \
+			if [ -f "resources/icon.png" ]; then \
+				cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
+			fi; \
+			cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
+			cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
+			cp installer/linux/control debian/DEBIAN/; \
 		sed -i "s/VERSION_PLACEHOLDER/$$(cat version.txt)/g" debian/DEBIAN/control; \
 		cp installer/linux/postinst debian/DEBIAN/; \
 		cp installer/linux/prerm debian/DEBIAN/; \
@@ -212,10 +217,7 @@ create-linux-rpm:
 	@if command -v rpmbuild >/dev/null 2>&1; then \
 		mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS rpmbuild/SOURCES rpmbuild/SPECS; \
 		mkdir -p rpm_temp/usr/bin rpm_temp/usr/share/applications rpm_temp/usr/share/icons/hicolor/256x256/apps rpm_temp/usr/share/mime/packages; \
-		cp dist/EFDUnpacker/EFDUnpacker rpm_temp/usr/bin/efd_unpacker; \
-		if [ -d "dist/EFDUnpacker/translations" ]; then \
-			echo "Skip copying .qm files (no longer used)"; \
-		fi; \
+		cp dist/efd_unpacker rpm_temp/usr/bin/efd_unpacker; \
 		if [ -f "resources/icon.png" ]; then \
 			cp resources/icon.png rpm_temp/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
 		fi; \
@@ -233,13 +235,17 @@ create-linux-rpm:
 
 create-linux-archives:
 	@echo "Creating Linux portable archives..."
-	cd dist && zip -r efd-unpacker-$$(cat ../version.txt)-linux-portable.zip EFDUnpacker/
-	cd dist && tar -czf efd-unpacker-$$(cat ../version.txt)-linux-portable.tar.gz EFDUnpacker/
+	cd dist && zip -r efd-unpacker-$$(cat ../version.txt)-linux-portable.zip efd_unpacker
+	cd dist && tar -czf efd-unpacker-$$(cat ../version.txt)-linux-portable.tar.gz efd_unpacker
 	
 # Windows build commands
 build-windows-executable:
 	@echo "Building Windows executable with PyInstaller..."
-	pyinstaller --noconfirm --onefile --windowed $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) --name=EFDUnpacker main.py
+	pyinstaller --noconfirm --onefile --windowed $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) \
+		--paths src \
+		--add-data "translations$(PYI_DATASEP)translations" \
+		--add-data "resources$(PYI_DATASEP)resources" \
+		--name=EFDUnpacker main.py
 	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
 		echo "Error: EFDUnpacker.exe not found in dist directory."; \
 		exit 1; \
@@ -252,7 +258,7 @@ create-windows-zip:
 		exit 1; \
 	fi
 	@VERSION=$$(cat version.txt); \
-	cd dist && zip -r efd-unpacker-$$VERSION-windows-portable.zip EFDUnpacker.exe translations/ && cd ..
+	cd dist && zip -r efd-unpacker-$$VERSION-windows-portable.zip EFDUnpacker.exe && cd ..
 
 create-windows-msi:
 	@echo "Creating Windows MSI installer..."
@@ -262,7 +268,7 @@ create-windows-msi:
 		sed "s/VERSION_PLACEHOLDER/$$VERSION/g" installer/windows/installer.wxs > installer/windows/installer_temp.wxs; \
 		candle installer/windows/installer_temp.wxs -out installer/windows/installer.wixobj; \
 		if [ $$? -eq 0 ]; then \
-			light installer/windows/installer.wixobj -out dist/efd-unpacker-$$VERSION-windows.msi -ext WixUIExtension -loc installer/windows/installer_en.wxl -loc installer/windows/installer_ru.wxl; \
+			light installer/windows/installer.wixobj -out dist/efd-unpacker-$$VERSION-windows.msi; \
 			if [ $$? -eq 0 ]; then \
 				echo "MSI installer created successfully"; \
 			else \
@@ -280,10 +286,40 @@ create-windows-msi:
 		echo "Or install via Chocolatey: choco install wixtoolset"; \
 	fi
 
+create-windows-setup:
+	@echo "Creating Windows setup bundle..."
+	@if command -v candle >/dev/null 2>&1 && command -v light >/dev/null 2>&1; then \
+		echo "WiX Toolset found, creating setup.exe bundle..."; \
+		VERSION=$$(cat version.txt); \
+		if [ ! -f "dist/efd-unpacker-$$VERSION-windows.msi" ]; then \
+			echo "Error: Windows MSI not found. Run create-windows-msi first."; \
+			exit 1; \
+		fi; \
+		sed "s/VERSION_PLACEHOLDER/$$VERSION/g" installer/windows/bundle.wxs > installer/windows/bundle_temp.wxs; \
+		candle -ext WixBalExtension installer/windows/bundle_temp.wxs -out installer/windows/bundle.wixobj; \
+		if [ $$? -eq 0 ]; then \
+			light -ext WixBalExtension installer/windows/bundle.wixobj -out dist/efd-unpacker-$$VERSION-windows-setup.exe; \
+			if [ $$? -eq 0 ]; then \
+				echo "Windows setup bundle created successfully"; \
+			else \
+				echo "Error: WiX bundle linking failed."; \
+				exit 1; \
+			fi; \
+		else \
+			echo "Error: WiX bundle compilation failed."; \
+			exit 1; \
+		fi; \
+		rm -f installer/windows/bundle_temp.wxs installer/windows/bundle.wixobj; \
+	else \
+		echo "Warning: WiX Toolset not found. Skipping setup.exe creation."; \
+		echo "Download from: https://wixtoolset.org/releases/"; \
+		echo "Or install via Chocolatey: choco install wixtoolset"; \
+	fi
+
 # macOS build commands
 build-macos-app:
 	@echo "Building macOS app with PyInstaller..."
-	pyinstaller --noconfirm --windowed --name=EFDUnpacker --icon=resources/icon.icns main.py
+	pyinstaller --noconfirm EFDUnpacker.spec
 	@if [ ! -d "dist/EFDUnpacker.app" ]; then \
 		echo "Error: EFDUnpacker.app not found in dist directory."; \
 		exit 1; \
@@ -293,6 +329,7 @@ create-macos-dmg:
 	@echo "Creating DMG installer..."
 	@VERSION=$$(cat version.txt | tr -d ' \t\n\r'); \
 	create-dmg \
+		--sandbox-safe \
 		--volname "EFD Unpacker" \
 		--volicon "resources/icon.icns" \
 		--window-pos 200 120 \
@@ -307,4 +344,4 @@ create-macos-dmg:
 create-macos-zip:
 	@echo "Creating macOS portable ZIP archive..."
 	@VERSION=$$(cat version.txt); \
-	cd dist && zip -r efd-unpacker-$$VERSION-macos-portable.zip EFDUnpacker.app translations/ && cd ..
+	cd dist && zip -r efd-unpacker-$$VERSION-macos-portable.zip EFDUnpacker.app && cd ..

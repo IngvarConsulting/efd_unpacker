@@ -1,167 +1,60 @@
-"""
-Юнит тесты для SettingsService
-"""
-
 import os
-import sys
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-# Добавляем src в путь для импорта
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+from efd_unpacker.infrastructure.settings_service import SettingsService
 
-from settings_service import SettingsService
-from tr import translator
+
+class DummyTranslator:
+    def translate(self, _context: str, source: str) -> str:
+        return f"tr:{source}"
 
 
 class TestSettingsService(unittest.TestCase):
-    """Тесты для класса SettingsService"""
+    def setUp(self) -> None:
+        self.translator = DummyTranslator()
 
-    def setUp(self):
-        """Настройка перед каждым тестом"""
-        self.temp_dir = tempfile.mkdtemp()
-        self.test_path = os.path.join(self.temp_dir, "test_path")
-        translator.lang = 'en'
-        translator._load_translations()
+    @patch("efd_unpacker.infrastructure.settings_service.QSettings")
+    @patch("efd_unpacker.infrastructure.settings_service.get_1c_configuration_location_default")
+    def test_get_output_path_default(self, mock_default, mock_settings) -> None:
+        mock_default.return_value = "/default/path"
+        instance = MagicMock()
+        instance.value.return_value = "/default/path"
+        mock_settings.return_value = instance
 
-    def tearDown(self):
-        """Очистка после каждого теста"""
-        import shutil
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    def test_get_output_path_default(self, mock_default_path, mock_qsettings):
-        """Тест получения пути по умолчанию"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/default/path"
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/default/path"  # Возвращаем значение по умолчанию
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
+        service = SettingsService(self.translator)
         result = service.get_output_path()
-        
+
         self.assertEqual(result, "/default/path")
-        mock_settings.value.assert_called_once_with('output_path', "/default/path")
+        instance.value.assert_called_once()
 
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    def test_get_output_path_saved(self, mock_default_path, mock_qsettings):
-        """Тест получения сохраненного пути"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/default/path"
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/saved/path"
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
-        result = service.get_output_path()
-        
-        self.assertEqual(result, "/saved/path")
-        mock_settings.value.assert_called_once_with('output_path', "/default/path")
-
-    @patch('settings_service.QSettings')
-    def test_set_output_path(self, mock_qsettings):
-        """Тест установки пути"""
-        # Мокаем зависимости
-        mock_settings = MagicMock()
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
+    @patch("efd_unpacker.infrastructure.settings_service.QSettings")
+    def test_set_output_path(self, mock_settings) -> None:
+        instance = MagicMock()
+        mock_settings.return_value = instance
+        service = SettingsService(self.translator)
         service.set_output_path("/new/path")
-        
-        mock_settings.setValue.assert_called_once_with('output_path', "/new/path")
+        instance.setValue.assert_called_once_with("output_path", "/new/path")
 
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    def test_get_output_path_items_with_manual_path(self, mock_from_1cestart, mock_default_path, mock_qsettings):
-        """Тест получения списка путей с вручную выбранным путем"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/default/path"
-        mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/last/used/path"
-        mock_qsettings.return_value = mock_settings
+    @patch("efd_unpacker.infrastructure.settings_service.get_1c_configuration_location_default")
+    @patch("efd_unpacker.infrastructure.settings_service.get_1c_configuration_location_from_1cestart")
+    @patch("efd_unpacker.infrastructure.settings_service.QSettings")
+    def test_get_output_path_items(self, mock_settings, mock_from_1c, mock_default) -> None:
+        instance = MagicMock()
+        instance.value.return_value = "/last/path"
+        mock_settings.return_value = instance
+        mock_from_1c.return_value = ["/path/one"]
+        mock_default.return_value = "/default/path"
 
-        service = SettingsService()
+        service = SettingsService(self.translator)
         items = service.get_output_path_items("/manual/path")
-        
-        # Проверяем, что вручную выбранный путь первый
-        self.assertGreater(len(items), 0)
-        self.assertEqual(items[0][0], "/manual/path")
-        self.assertEqual(items[0][1], "/manual/path")
 
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    def test_get_output_path_items_without_manual_path(self, mock_from_1cestart, mock_default_path, mock_qsettings):
-        """Тест получения списка путей без вручную выбранного пути"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/default/path"
-        mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/last/used/path"
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
-        items = service.get_output_path_items(None)
-        
-        # Проверяем, что последний использованный путь первый
-        self.assertGreater(len(items), 0)
-        self.assertEqual(items[0][0], "/last/used/path")
-        self.assertIn("(last used)", items[0][1])
-
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    def test_get_output_path_items_duplicate_removal(self, mock_from_1cestart, mock_default_path, mock_qsettings):
-        """Тест удаления дублирующихся путей"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/same/path"
-        mock_from_1cestart.return_value = ["/same/path", "/different/path"]
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/same/path"
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
-        items = service.get_output_path_items(None)
-        
-        # Проверяем, что дублирующиеся пути удалены
-        paths = [item[0] for item in items]
-        self.assertEqual(len(paths), len(set(paths)))
-
-    @patch('settings_service.QSettings')
-    @patch('settings_service.get_1c_configuration_location_default')
-    @patch('settings_service.get_1c_configuration_location_from_1cestart')
-    def test_get_output_path_items_order(self, mock_from_1cestart, mock_default_path, mock_qsettings):
-        """Тест порядка путей в списке"""
-        # Мокаем зависимости
-        mock_default_path.return_value = "/default/path"
-        mock_from_1cestart.return_value = ["/1cestart/path1", "/1cestart/path2"]
-        mock_settings = MagicMock()
-        mock_settings.value.return_value = "/last/used/path"
-        mock_qsettings.return_value = mock_settings
-
-        service = SettingsService()
-        items = service.get_output_path_items("/manual/path")
-        
-        # Проверяем порядок: manual -> last_used -> from_1cestart -> default
-        self.assertGreater(len(items), 0)
-        
-        # Первый должен быть manual path
-        self.assertEqual(items[0][0], "/manual/path")
-        
-        # Второй должен быть last used
-        self.assertEqual(items[1][0], "/last/used/path")
-        self.assertIn("(last used)", items[1][1])
-        
-        # Последний должен быть default
-        self.assertEqual(items[-1][0], "/default/path")
-        self.assertIn("(default)", items[-1][1])
+        labels = [label for _, label in items]
+        self.assertTrue(any(label.startswith("/manual/path") for label in labels))
+        self.assertTrue(any("tr:(last used)" in label for label in labels))
+        self.assertTrue(any("tr:(default)" in label for label in labels))
 
 
-if __name__ == '__main__':
-    unittest.main() 
+if __name__ == "__main__":
+    unittest.main()

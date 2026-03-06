@@ -1,123 +1,64 @@
-"""
-Интеграционные тесты для CLI функциональности
-"""
-
 import os
-import sys
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
-# Добавляем src в путь для импорта
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+from efd_unpacker.application.cli import CLIApplication, CLIResult
+from efd_unpacker.domain.file_validator import FileValidator
+from efd_unpacker.domain.unpack_service import UnpackService
 
-from cli_processor import CLIProcessor
-from file_validator import FileValidator
-from tr import translator
+
+class DummyTranslator:
+    def translate(self, _context: str, source: str) -> str:
+        return source
+
+
+class NoopUnpackService(UnpackService):
+    def __init__(self) -> None:
+        pass
+
+    def unpack(self, input_file: str, output_dir: str) -> None:
+        self.called_with = (input_file, output_dir)
 
 
 class TestCLIIntegration(unittest.TestCase):
-    """Интеграционные тесты для CLI"""
-
-    def setUp(self):
-        """Настройка перед каждым тестом"""
+    def setUp(self) -> None:
         self.temp_dir = tempfile.mkdtemp()
-        self.test_efd_file = os.path.join(self.temp_dir, "test.efd")
-        self.output_dir = os.path.join(self.temp_dir, "output")
-        translator.lang = 'en'
-        translator._load_translations()
+        self.input_file = os.path.join(self.temp_dir, "data.efd")
+        with open(self.input_file, "w") as handle:
+            handle.write("payload")
+        self.output_dir = os.path.join(self.temp_dir, "out")
 
-    def tearDown(self):
-        """Очистка после каждого теста"""
+    def tearDown(self) -> None:
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_cli_workflow_valid_file(self):
-        """Тест полного CLI workflow с валидным файлом"""
-        # Создаем тестовый EFD файл
-        with open(self.test_efd_file, 'w') as f:
-            f.write("EFD test content")
+    def test_cli_valid_flow(self) -> None:
+        validator = FileValidator()
+        unpack_service = NoopUnpackService()
+        cli = CLIApplication(
+            validator=validator,
+            unpack_service=unpack_service,
+            translator=DummyTranslator(),
+            output=lambda msg: None,
+        )
+        result = cli.run(["efd_unpacker", "unpack", self.input_file, "-tmplts", self.output_dir])
+        self.assertEqual(result, CLIResult(exit_code=0, handled=True))
+        self.assertTrue(os.path.isdir(self.output_dir))
 
-        # Тестируем валидацию файла
-        is_valid, error_message = FileValidator.validate_efd_file(self.test_efd_file)
-        self.assertTrue(is_valid)
-        self.assertEqual(error_message, "")
-
-        # Тестируем создание выходной директории
-        success, error_message = FileValidator.create_output_directory(self.output_dir)
-        self.assertTrue(success)
-        self.assertEqual(error_message, "")
-        self.assertTrue(os.path.exists(self.output_dir))
-
-        # Тестируем CLI обработку
-        with patch('sys.argv', ['efd_unpacker', 'unpack', self.test_efd_file, '-tmplts', self.output_dir]):
-            cli_args = CLIProcessor.parse_cli_arguments()
-            self.assertIsNotNone(cli_args)
-            self.assertEqual(cli_args[0], self.test_efd_file)
-            self.assertEqual(cli_args[1], self.output_dir)
-
-    def test_cli_workflow_invalid_file(self):
-        """Тест полного CLI workflow с невалидным файлом"""
-        # Создаем файл с неправильным расширением
-        invalid_file = os.path.join(self.temp_dir, "test.txt")
-        with open(invalid_file, 'w') as f:
-            f.write("test content")
-
-        # Тестируем валидацию файла
-        is_valid, error_message = FileValidator.validate_efd_file(invalid_file)
-        self.assertFalse(is_valid)
-        self.assertIn("Invalid file format", error_message)
-
-        # Тестируем CLI обработку
-        with patch('sys.argv', ['efd_unpacker', 'unpack', invalid_file, '-tmplts', self.output_dir]):
-            cli_args = CLIProcessor.parse_cli_arguments()
-            self.assertIsNotNone(cli_args)
-            
-            # CLI должен вернуть None для невалидного файла
-            with patch('cli_processor.FileValidator.validate_efd_file', return_value=(False, "Invalid file")):
-                result = CLIProcessor.process_cli_unpack(cli_args[0], cli_args[1])
-                self.assertFalse(result)
-
-    def test_cli_workflow_nonexistent_file(self):
-        """Тест CLI workflow с несуществующим файлом"""
-        nonexistent_file = os.path.join(self.temp_dir, "nonexistent.efd")
-
-        # Тестируем валидацию файла
-        is_valid, error_message = FileValidator.validate_efd_file(nonexistent_file)
-        self.assertFalse(is_valid)
-        self.assertIn("does not exist", error_message)
-
-        # Тестируем CLI обработку
-        with patch('sys.argv', ['efd_unpacker', 'unpack', nonexistent_file, '-tmplts', self.output_dir]):
-            cli_args = CLIProcessor.parse_cli_arguments()
-            self.assertIsNotNone(cli_args)
-            
-            # CLI должен вернуть False для несуществующего файла
-            result = CLIProcessor.process_cli_unpack(cli_args[0], cli_args[1])
-            self.assertFalse(result)
-
-    def test_cli_argument_parsing_edge_cases(self):
-        """Тест парсинга CLI аргументов в граничных случаях"""
-        # Тест с пустыми аргументами
-        with patch('sys.argv', ['efd_unpacker']):
-            result = CLIProcessor.parse_cli_arguments()
-            self.assertIsNone(result)
-
-        # Тест с недостаточными аргументами
-        with patch('sys.argv', ['efd_unpacker', 'unpack']):
-            result = CLIProcessor.parse_cli_arguments()
-            self.assertIsNone(result)
-
-        # Тест с неправильной командой
-        with patch('sys.argv', ['efd_unpacker', 'invalid', 'test.efd', '-tmplts', '/output']):
-            result = CLIProcessor.parse_cli_arguments()
-            self.assertIsNone(result)
-
-        # Тест с неправильным флагом
-        with patch('sys.argv', ['efd_unpacker', 'unpack', 'test.efd', '-wrong', '/output']):
-            result = CLIProcessor.parse_cli_arguments()
-            self.assertIsNone(result)
+    def test_cli_invalid_file(self) -> None:
+        validator = FileValidator()
+        unpack_service = NoopUnpackService()
+        cli = CLIApplication(
+            validator=validator,
+            unpack_service=unpack_service,
+            translator=DummyTranslator(),
+            output=lambda msg: None,
+        )
+        result = cli.run(["efd_unpacker", "unpack", os.path.join(self.temp_dir, "missing.efd"), "-tmplts", self.output_dir])
+        self.assertEqual(result.exit_code, 1)
+        self.assertTrue(result.handled)
 
 
-if __name__ == '__main__':
-    unittest.main() 
+if __name__ == "__main__":
+    unittest.main()

@@ -1,12 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from glob import glob
+
 block_cipher = None
+
+datas = [(path, "translations") for path in glob("translations/*.ts")]
+datas += [(path, "resources") for path in glob("resources/*")]
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

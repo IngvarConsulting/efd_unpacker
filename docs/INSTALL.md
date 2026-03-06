@@ -1,195 +1,110 @@
 # Установка EFD Unpacker
 
-Инструкция по установке EFD Unpacker на разные операционные системы.
+Инструкция по установке официальных релизных артефактов.
 
-## 📥 Скачать
+## Скачать
 
-[Скачайте последний релиз](https://github.com/IngvarConsulting/efd_unpacker/releases)
+[Открыть страницу релизов](https://github.com/IngvarConsulting/efd_unpacker/releases)
 
-## 🔧 Системные требования
+## Что публикуется
 
-- **macOS**: 10.15 (Catalina) или новее
-- **Windows**: Windows 10 или новее
-- **Linux**: Ubuntu 20.04+, CentOS 8+, или совместимые дистрибутивы
-- **Python**: 3.9+ (для сборки из исходников)
+- **macOS**: `.dmg`
+- **Windows**: `setup.exe`
+- **Linux**: `.AppImage`, `.deb`
 
-## 📦 Доступные форматы
+Приложение по умолчанию стартует на английском языке. Если системная локаль русская, интерфейс и сообщения приложения переключаются на русский.
 
-- **macOS**: `.app` (приложение), `.dmg` (установщик), `.zip` (portable)
-- **Windows**: `.exe` (portable), `.msi` (установщик), `.zip` (portable)
-- **Linux**: `.AppImage` (portable), `.deb` (Ubuntu/Debian), `.rpm` (CentOS/RHEL), `.zip` (portable)
+## macOS
 
----
+### Установка через DMG
 
-## 🍎 macOS
+1. Скачайте `.dmg`.
+2. Откройте образ.
+3. Перетащите `EFDUnpacker.app` в `Applications`.
+4. Извлеките образ.
+5. Один раз запустите приложение из `Applications`, чтобы команда `efd_unpacker` автоматически зарегистрировалась в пользовательском `PATH`.
 
-### Установка через DMG (рекомендуется)
-
-1. Скачайте файл `.dmg` из релиза
-2. Дважды кликните по `.dmg` файлу для монтирования
-3. Перетащите `EFD Unpacker.app` в папку "Applications"
-4. Извлеките `.dmg` из Finder
-
-### Первый запуск (для всех вариантов)
-
-**Если приложение заблокировано Gatekeeper:**
-
-1. **Первый запуск:**
-
- - Кликните правой кнопкой мыши по `EFDUnpacker.app` → выберите `Открыть`.
- - В появившемся окне подтвердите запуск (кнопка "Открыть").
- - Если появится сообщение "Приложение не может быть открыто, так как оно не проверено", нажмите "Готово".
-  
-<img src="./assets/macos-1.png" width="200" alt="Первый запуск macOS">
-
-2. **Откройте "Системные настройки" → "Конфиденциальность и безопасность"**.
-   
-<img src="./assets/macos-2.png" width="600" alt="Системные настройки macOS">
-    
-
-- Внизу окна появится сообщение о блокировке приложения. Нажмите "Все равно открыть"
-  
-<img src="./assets/macos-3.png" width="200" alt="Подтверждение открытия macOS">
-    
-- Подтвердите действие
-  
-<img src="./assets/macos-4.png" width="200" alt="Завершение настройки macOS">
-
-3. После этого приложение будет запускаться обычным двойным кликом.
-
-### Portable версия
-
-1. Скачайте `.zip` архив
-2. Распакуйте в любую папку
-3. Запустите `EFDUnpacker.app` из распакованной папки
-
----
-
-## 🪟 Windows
-
-### Установка через MSI (рекомендуется)
-
-1. Скачайте файл `.msi` из релиза
-2. Дважды кликните по `.msi` файлу
-3. Следуйте инструкциям установщика
-4. Приложение будет установлено в `Program Files` и добавлено в меню "Пуск"
-
-### Portable версия
-
-1. Скачайте `.zip` архив или `.exe` файл
-2. Распакуйте `.zip` в любую папку (или используйте `.exe` напрямую)
-3. Запустите `EFDUnpacker.exe`
+После удаления `EFDUnpacker.app` новая shell-сессия больше не будет добавлять эту команду в `PATH`.
 
 ### Первый запуск
 
-**Если Windows SmartScreen блокирует запуск:**
+Если Gatekeeper блокирует приложение:
 
-1. Кликните правой кнопкой мыши по `EFDUnpacker.exe` → выберите "Запуск от имени администратора" (если требуется доступ к системным папкам).
-2. Если появится окно "Windows защитил ваш компьютер", нажмите "Подробнее", затем "Выполнить в любом случае".
-3. В диалоге "Защитник Windows" нажмите "Запустить в любом случае"
+1. Кликните правой кнопкой по `EFDUnpacker.app` и выберите `Открыть`.
+2. Подтвердите запуск.
+3. При необходимости разрешите запуск в системных настройках безопасности.
 
-### Запуск от имени администратора
+<img src="./assets/macos-1.png" width="200" alt="Первый запуск macOS">
+<img src="./assets/macos-2.png" width="600" alt="Системные настройки macOS">
+<img src="./assets/macos-3.png" width="200" alt="Подтверждение открытия macOS">
+<img src="./assets/macos-4.png" width="200" alt="Завершение настройки macOS">
 
-Для доступа к системным папкам или установки ассоциаций файлов:
-- Кликните правой кнопкой мыши по `EFDUnpacker.exe`
-- Выберите "Запуск от имени администратора"
+## Windows
 
----
+### Установка через setup.exe
 
-## 🐧 Linux
+1. Скачайте `setup.exe`.
+2. Запустите установщик.
+3. Следуйте шагам мастера установки.
+4. Установщик автоматически выберет английский язык по умолчанию и русский на системах с русской локалью.
 
-### AppImage (рекомендуется)
+### Первый запуск
 
-1. Скачайте файл `.AppImage` из релиза
-2. Сделайте файл исполняемым: `chmod +x efd-unpacker-*.AppImage`
-3. Запустите: `./efd-unpacker-*.AppImage`
+Если SmartScreen блокирует файл:
 
-### Установка через пакетный менеджер
+1. Нажмите `Подробнее`.
+2. Выберите `Выполнить в любом случае`.
 
-#### Ubuntu/Debian (.deb)
+## Linux
+
+### AppImage
+
+Подходит для быстрого запуска без системной установки.
+
+```bash
+chmod +x efd-unpacker-*.AppImage
+./efd-unpacker-*.AppImage
+```
+
+После первого запуска команда `efd_unpacker` автоматически регистрируется в пользовательском `PATH`. Если терминал уже был открыт, начните новую сессию. После удаления или перемещения `AppImage` новая shell-сессия больше не будет добавлять эту команду в `PATH`.
+
+### DEB
+
+Подходит для Debian/Ubuntu и производных.
+
 ```bash
 sudo dpkg -i efd-unpacker-*.deb
 sudo apt-get install -f
 ```
 
-#### CentOS/RHEL/Fedora (.rpm)
-```bash
-sudo rpm -i efd-unpacker-*.rpm
-# или
-sudo dnf install efd-unpacker-*.rpm
-```
+После установки бинарь доступен как `efd_unpacker`.
 
-### Portable версия
-
-1. Скачайте `.zip` архив
-2. Распакуйте: `unzip efd-unpacker-*.zip`
-3. Запустите: `./efd-unpacker`
-
-### Первый запуск
-
-**Если система блокирует запуск:**
-
-- **AppArmor**: `sudo aa-complain EFDUnpacker`
-- **SELinux**: `sudo setsebool -P domain_can_exec_anon_write 1`
-- **Права доступа**: `chmod +x EFDUnpacker`
-
----
-
-## 🔧 Сборка из исходников
-
-### Требования
-
-- Python 3.9+
-- PyQt5
-- PyInstaller (для сборки)
-
-### Установка
+## Сборка из исходников
 
 ```bash
 git clone https://github.com/IngvarConsulting/efd_unpacker.git
 cd efd_unpacker
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-### Сборка
+Для сборки пакетов см. [BUILD.md](BUILD.md).
 
-```bash
-# macOS
-make build-macos
-
-# Linux
-make build-linux
-
-# Windows
-make build-windows
-```
-
----
-
-## ❓ Устранение неполадок
-
-### Общие проблемы
-
-**Если система блокирует запуск** (macOS Gatekeeper, Windows SmartScreen, Linux AppArmor/SELinux), ищите опцию "Выполнить в любом случае" или "Разрешить запуск".
+## Устранение неполадок
 
 ### macOS
-- **"App is damaged"**: Выполните `xattr -cr /path/to/EFDUnpacker.app`
-- **Gatekeeper блокирует**: См. раздел "Первый запуск" выше
+- `App is damaged`: `xattr -cr /path/to/EFDUnpacker.app`
+- Приложение не открывается: проверьте настройки Gatekeeper
 
 ### Windows
-- **SmartScreen блокирует**: Добавьте исключение в Защитник Windows
-- **"Access denied"**: Запустите от имени администратора
+- SmartScreen блокирует запуск: разрешите выполнение вручную
+- `Access denied`: попробуйте запуск с повышенными правами
 
 ### Linux
-- **"Permission denied"**: `chmod +x EFDUnpacker`
-- **"Library not found"**: Установите зависимости Qt: `sudo apt install libqt5core5 libqt5gui5 libqt5widgets5`
+- `Permission denied` для AppImage: проверьте `chmod +x`
+- Проблемы с GUI-зависимостями: установите системные библиотеки Qt
 
----
-
-## 📚 Дополнительная информация
-
-- **CLI использование**: см. [CLI.md](CLI.md)
-- **Интеграция с PATH**: см. раздел "Интеграция с PATH" в [CLI.md](CLI.md)
-- **Ассоциация файлов**: см. [FILE_ASSOCIATION_GUIDE.md](FILE_ASSOCIATION_GUIDE.md)
-- **Сборка**: см. [BUILD.md](BUILD.md) 
+## См. также
+- [CLI.md](CLI.md) — режимы командной строки
+- [FILE_ASSOCIATION_GUIDE.md](FILE_ASSOCIATION_GUIDE.md) — файловые ассоциации
+- [BUILD.md](BUILD.md) — сборка и релизы

@@ -1,102 +1,83 @@
 # Сборка EFD Unpacker
 
-В этом документе описаны требования, инструкции и опции сборки EFD Unpacker для всех поддерживаемых платформ: Windows, Linux, macOS.
+Документ описывает актуальный build/release контур проекта и официальный набор артефактов.
 
----
+## Официальная матрица
 
-## Общие требования
-- **Python 3.9+**
-- **PyQt5** (см. requirements.txt)
-- **onec_dtools** (см. requirements.txt)
-- **Git** (для клонирования репозитория)
+| Платформа | CI runner | Основные артефакты |
+|-----------|-----------|--------------------|
+| macOS | `macos-15-intel` | `.dmg` |
+| Windows | `windows-2022` | `setup.exe` |
+| Linux | `ubuntu-22.04` | `.AppImage`, `.deb` |
 
----
+Именно этот набор публикуется и smoke-тестируется в GitHub Actions.
 
-## Сборка для macOS
+## Требования
 
-### Требования
-- Python 3
-- Homebrew (для установки create-dmg)
-- PyInstaller (устанавливается автоматически)
-- create-dmg (устанавливается через Homebrew)
+- Python 3.9+
+- зависимости из `requirements.txt`
+- PyInstaller
+- Git
 
-### Сборка
+Платформенные дополнения:
+- macOS: `create-dmg`
+- Windows: WiX Toolset для внутреннего `MSI` и итогового `setup.exe`
+- Linux: `appimagetool`, `dpkg-deb`
+
+## Локальная подготовка
+
 ```bash
-make build_macos
+make install-deps
+make create-version
 ```
 
-### Результаты
-- **EFDUnpacker.app** — приложение для macOS
-- **efd-unpacker-<версия>-macos.dmg** — установщик с иконками
-- **efd-unpacker-<версия>-macos-portable.zip** — портативная версия
+`make install-deps` ставит Python-зависимости и необходимые системные утилиты для текущей платформы.
 
----
+## Основные цели Makefile
 
-## Сборка для Linux
-
-### Требования
-- Python 3
-- PyInstaller (устанавливается автоматически)
-- appimagetool (опционально, для AppImage)
-- dpkg-deb (опционально, для DEB)
-- rpmbuild (опционально, для RPM)
-
-### Сборка
 ```bash
+# macOS
+make build-macos
+
+# Linux
 make build-linux
-```
 
-### Результаты
-- **EFDUnpacker/** — исполняемая папка
-- **efd-unpacker-<версия>-linux-portable.zip** — портативная версия
-- **efd-unpacker-<версия>-linux-portable.tar.gz** — альтернативная портативная версия
-- **efd-unpacker-<версия>-linux.AppImage** — универсальный пакет (если доступен appimagetool)
-- **efd-unpacker-<версия>-linux-amd64.deb** — пакет для Debian/Ubuntu (если доступен dpkg-deb)
-- **efd-unpacker-<версия>-linux.x86_64.rpm** — пакет для Red Hat/Fedora (если доступен rpmbuild)
-
----
-
-## Сборка для Windows
-
-### Требования
-- Python 3
-- PyInstaller (устанавливается автоматически)
-- WiX Toolset (опционально, для MSI)
-
-### Сборка
-```bash
+# Windows
 make build-windows
 ```
 
-### Результаты
-- **EFDUnpacker.exe** — исполняемый файл
-- **efd-unpacker-<версия>-windows-portable.zip** — портативная версия
-- **efd-unpacker-<версия>-windows.msi** — установщик Windows (если доступен WiX Toolset)
+## Что создаёт сборка
 
----
+### macOS
+- промежуточный `dist/EFDUnpacker.app`
+- основной артефакт `dist/efd-unpacker-<version>-macos.dmg`
 
-## Сборка Docker-образа (Linux)
+### Windows
+- промежуточный `dist/EFDUnpacker.exe`
+- промежуточный `dist/efd-unpacker-<version>-windows.msi`
+- основной артефакт `dist/efd-unpacker-<version>-windows-setup.exe`
 
-Для сборки полностью воспроизводимого Linux-образа с артефактами используйте Docker:
+### Linux
+- промежуточный `dist/efd_unpacker`
+- основные артефакты:
+  - `dist/efd-unpacker-<version>-linux.AppImage`
+  - `dist/efd-unpacker-<version>-linux-amd64.deb`
 
-```bash
-docker build --platform=linux/amd64 -f Dockerfile.linux-build -t efd-linux-build .
-```
+## CI и релизы
 
-- Артефакты сборки будут находиться внутри контейнера в папке `/build-out`.
-- Все зависимости и сборка выполняются через Makefile, как в CI.
-- Такой подход гарантирует чистую среду и воспроизводимость результата.
+Текущие workflow:
+- `.github/workflows/test.yml` — тесты на Windows, Linux и macOS
+- `.github/workflows/build-and-release.yml` — сборка и smoke-тест артефактов по тегу `v*`
 
----
+Важно:
+- tag workflow сейчас **собирает и проверяет** артефакты;
+- автоматическая публикация GitHub Release в workflow пока отключена и требует отдельного включения.
 
-## Примечания
-- Все скрипты сборки автоматически устанавливают необходимые Python-зависимости.
-- Для сборки рекомендуется использовать чистое виртуальное окружение Python.
-- Для CI/CD используйте соответствующие шаги в GitHub Actions (см. .github/workflows/).
+## Что не считать официальным путём
 
----
+В `Makefile` могут оставаться вспомогательные packaging-цели для локальных экспериментов. Если они не используются в текущих workflow и не перечислены выше, не стоит документировать их как поддерживаемый способ поставки.
 
 ## См. также
-- [README.md](../README.md) — быстрый старт и структура проекта
-- [docs/CLI.md](CLI.md) — CLI-режим
-- [docs/FILE_ASSOCIATION_GUIDE.md](FILE_ASSOCIATION_GUIDE.md) — ассоциации файлов 
+- [INSTALL.md](INSTALL.md) — установка и запуск
+- [CLI.md](CLI.md) — режимы командной строки
+- [LOCALIZATION_README.md](LOCALIZATION_README.md) — локализация приложения

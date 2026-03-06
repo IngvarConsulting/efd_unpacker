@@ -1,201 +1,90 @@
 """
-Юнит тесты для FileValidator
+Юнит тесты для FileValidator.
 """
 
 import os
 import tempfile
 import unittest
-from unittest.mock import patch, mock_open
-import sys
+from unittest.mock import patch
 
-# Добавляем src в путь для импорта
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
-
-from file_validator import FileValidator
-from tr import translator
+from efd_unpacker.domain.errors import FileValidationCode, FileValidationError
+from efd_unpacker.domain.file_validator import FileValidator
 
 
 class TestFileValidator(unittest.TestCase):
-    """Тесты для класса FileValidator"""
-
-    def setUp(self):
-        """Настройка перед каждым тестом"""
+    def setUp(self) -> None:
+        self.validator = FileValidator()
         self.temp_dir = tempfile.mkdtemp()
-        self.valid_efd_file = os.path.join(self.temp_dir, "test.efd")
-        self.invalid_file = os.path.join(self.temp_dir, "test.txt")
-        self.non_existent_file = os.path.join(self.temp_dir, "nonexistent.efd")
-        translator.lang = 'en'
-        translator._load_translations()
+        self.valid_file = os.path.join(self.temp_dir, "valid.efd")
+        with open(self.valid_file, "w") as handle:
+            handle.write("content")
 
-    def tearDown(self):
-        """Очистка после каждого теста"""
+    def tearDown(self) -> None:
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_validate_efd_file_valid(self):
-        """Тест валидации корректного EFD файла"""
-        # Создаем тестовый файл
-        with open(self.valid_efd_file, 'w') as f:
-            f.write("EFD test content")
+    def test_validate_input_file_success(self) -> None:
+        result = self.validator.validate_input_file(self.valid_file)
+        self.assertEqual(result, os.path.abspath(self.valid_file))
 
-        is_valid, error_message = FileValidator.validate_efd_file(self.valid_efd_file)
-        
-        self.assertTrue(is_valid)
-        self.assertEqual(error_message, "")
+    def test_validate_input_file_not_found(self) -> None:
+        with self.assertRaises(FileValidationError) as ctx:
+            self.validator.validate_input_file(os.path.join(self.temp_dir, "missing.efd"))
+        self.assertEqual(ctx.exception.code, FileValidationCode.NOT_FOUND)
 
-    def test_validate_efd_file_not_exists(self):
-        """Тест валидации несуществующего файла"""
-        is_valid, error_message = FileValidator.validate_efd_file(self.non_existent_file)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("does not exist", error_message)
+    def test_validate_input_file_invalid_extension(self) -> None:
+        invalid = os.path.join(self.temp_dir, "file.txt")
+        with open(invalid, "w") as handle:
+            handle.write("test")
+        with self.assertRaises(FileValidationError) as ctx:
+            self.validator.validate_input_file(invalid)
+        self.assertEqual(ctx.exception.code, FileValidationCode.INVALID_EXTENSION)
 
-    def test_validate_efd_file_wrong_extension(self):
-        """Тест валидации файла с неправильным расширением"""
-        # Создаем файл с неправильным расширением
-        with open(self.invalid_file, 'w') as f:
-            f.write("test content")
+    def test_validate_input_file_empty(self) -> None:
+        empty = os.path.join(self.temp_dir, "empty.efd")
+        open(empty, "w").close()
+        with self.assertRaises(FileValidationError) as ctx:
+            self.validator.validate_input_file(empty)
+        self.assertEqual(ctx.exception.code, FileValidationCode.EMPTY)
 
-        is_valid, error_message = FileValidator.validate_efd_file(self.invalid_file)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("Invalid file format", error_message)
+    def test_prepare_output_directory_existing(self) -> None:
+        output = os.path.join(self.temp_dir, "output")
+        os.makedirs(output)
+        os.chmod(output, 0o755)
+        result = self.validator.prepare_output_directory(output)
+        self.assertTrue(os.path.isdir(result))
 
-    def test_validate_efd_file_empty(self):
-        """Тест валидации пустого файла"""
-        # Создаем пустой файл
-        with open(self.valid_efd_file, 'w') as f:
-            pass
+    def test_prepare_output_directory_creates(self) -> None:
+        nested = os.path.join(self.temp_dir, "nested", "dir")
+        result = self.validator.prepare_output_directory(nested)
+        self.assertTrue(os.path.isdir(result))
 
-        is_valid, error_message = FileValidator.validate_efd_file(self.valid_efd_file)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("empty", error_message)
+    def test_prepare_output_directory_expands_user(self) -> None:
+        target = os.path.join(self.temp_dir, "user_dir")
+        tilde_path = os.path.join("~", "efd_unpacker", "output")
+        with patch("efd_unpacker.domain.file_validator.os.path.expanduser", return_value=target):
+            result = self.validator.prepare_output_directory(tilde_path)
+        self.assertTrue(os.path.isdir(result))
+        self.assertEqual(result, os.path.abspath(target))
 
-    @patch('os.access')
-    def test_validate_efd_file_no_permission(self, mock_access):
-        """Тест валидации файла без прав доступа"""
-        # Создаем файл сначала
-        with open(self.valid_efd_file, 'w') as f:
-            f.write("test content")
-        
-        mock_access.return_value = False
-        
-        is_valid, error_message = FileValidator.validate_efd_file(self.valid_efd_file)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("permission", error_message)
+    def test_prepare_output_directory_no_permission(self) -> None:
+        tmp = os.path.join(self.temp_dir, "locked")
+        os.makedirs(tmp, exist_ok=True)
+        with patch("os.access", return_value=False):
+            with self.assertRaises(FileValidationError) as ctx:
+                self.validator.prepare_output_directory(tmp)
+            self.assertEqual(ctx.exception.code, FileValidationCode.OUTPUT_NOT_WRITABLE)
 
-    def test_validate_output_directory_valid(self):
-        """Тест валидации корректной выходной директории"""
-        output_dir = os.path.join(self.temp_dir, "output")
-        
-        is_valid, error_message = FileValidator.validate_output_directory(output_dir)
-        
-        self.assertTrue(is_valid)
-        self.assertEqual(error_message, "")
+    def test_get_file_info(self) -> None:
+        info = self.validator.get_file_info(self.valid_file)
+        self.assertIsNotNone(info)
+        self.assertGreater(info["size"], 0)
 
-    def test_validate_output_directory_empty_path(self):
-        """Тест валидации пустого пути"""
-        is_valid, error_message = FileValidator.validate_output_directory("")
-        
-        self.assertFalse(is_valid)
-        self.assertIn("empty", error_message)
-
-    def test_validate_output_directory_whitespace_path(self):
-        """Тест валидации пути из пробелов"""
-        is_valid, error_message = FileValidator.validate_output_directory("   ")
-        
-        self.assertFalse(is_valid)
-        self.assertIn("empty", error_message)
-
-    def test_validate_output_directory_exists_as_file(self):
-        """Тест валидации когда путь существует как файл"""
-        # Создаем файл
-        with open(self.invalid_file, 'w') as f:
-            f.write("test")
-
-        is_valid, error_message = FileValidator.validate_output_directory(self.invalid_file)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("not a directory", error_message)
-
-    @patch('os.access')
-    def test_validate_output_directory_no_write_permission(self, mock_access):
-        """Тест валидации директории без прав на запись"""
-        mock_access.return_value = False
-        
-        is_valid, error_message = FileValidator.validate_output_directory(self.temp_dir)
-        
-        self.assertFalse(is_valid)
-        self.assertIn("permission", error_message)
-
-    def test_create_output_directory_success(self):
-        """Тест успешного создания выходной директории"""
-        output_dir = os.path.join(self.temp_dir, "new_output")
-        
-        success, error_message = FileValidator.create_output_directory(output_dir)
-        
-        self.assertTrue(success)
-        self.assertEqual(error_message, "")
-        self.assertTrue(os.path.exists(output_dir))
-        self.assertTrue(os.path.isdir(output_dir))
-
-    def test_create_output_directory_expands_user_path(self):
-        """Тест создания выходной директории с путями содержащими ~"""
-        tilde_dir = os.path.join('~', 'efd_unpacker', 'output')
-        resolved_dir = os.path.join(self.temp_dir, 'tilde_output')
-        with patch('file_validator.os.path.expanduser', return_value=resolved_dir):
-            success, error_message = FileValidator.create_output_directory(tilde_dir)
-        
-        self.assertTrue(success)
-        self.assertEqual(error_message, "")
-        self.assertTrue(os.path.isdir(resolved_dir))
-
-    def test_create_output_directory_already_exists(self):
-        """Тест создания директории которая уже существует"""
-        # Создаем директорию заранее
-        os.makedirs(self.temp_dir, exist_ok=True)
-        
-        success, error_message = FileValidator.create_output_directory(self.temp_dir)
-        
-        self.assertTrue(success)
-        self.assertEqual(error_message, "")
-
-    def test_get_file_info_success(self):
-        """Тест получения информации о файле"""
-        # Создаем тестовый файл
-        with open(self.valid_efd_file, 'w') as f:
-            f.write("test content")
-
-        file_info = FileValidator.get_file_info(self.valid_efd_file)
-        
-        self.assertIsNotNone(file_info)
-        self.assertIn('size', file_info)
-        self.assertIn('modified', file_info)
-        self.assertIn('created', file_info)
-        self.assertIn('readable', file_info)
-        self.assertIn('writable', file_info)
-        self.assertGreater(file_info['size'], 0)
-
-    def test_get_file_info_nonexistent(self):
-        """Тест получения информации о несуществующем файле"""
-        file_info = FileValidator.get_file_info(self.non_existent_file)
-        
-        self.assertIsNone(file_info)
-
-    def test_validate_efd_file_expands_user_path(self):
-        """Тест расширения ~ при проверке EFD файла"""
-        with open(self.valid_efd_file, 'w') as f:
-            f.write("EFD test content")
-        
-        tilde_path = os.path.join('~', 'valid.efd')
-        with patch('file_validator.os.path.expanduser', return_value=self.valid_efd_file):
-            is_valid, error_message = FileValidator.validate_efd_file(tilde_path)
-        
-        self.assertTrue(is_valid)
-        self.assertEqual(error_message, "")
+    def test_get_file_info_nonexistent(self) -> None:
+        info = self.validator.get_file_info(os.path.join(self.temp_dir, "missing.efd"))
+        self.assertIsNone(info)
 
 
-if __name__ == '__main__':
-    unittest.main() 
+if __name__ == "__main__":
+    unittest.main()

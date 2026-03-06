@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Точка входа в приложение EFD Unpacker
+Запуск efd_unpacker из исходников.
 """
 
+from pathlib import Path
 import sys
-import os
 
-# Добавляем src/ в PYTHONPATH
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-from main import main as efd_main
+from efd_unpacker.application.main import main as efd_main
 
 if __name__ == "__main__":
-    efd_main() 
+    efd_main()
