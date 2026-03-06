@@ -19,12 +19,6 @@
         SuppressRepair="yes" />
     </BootstrapperApplicationRef>
 
-    <Variable
-      Name="InstallFolder"
-      Type="formatted"
-      Value="[ProgramFilesFolder]EFD Unpacker"
-      bal:Overridable="yes" />
-
     <Chain>
       <MsiPackage
         Id="EFDUnpackerMsi"
@@ -33,7 +27,6 @@
         Visible="no">
         <MsiProperty Name="ADD_TO_PATH" Value="all" />
         <MsiProperty Name="ARPSYSTEMCOMPONENT" Value="1" />
-        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
       </MsiPackage>
     </Chain>
   </Bundle>

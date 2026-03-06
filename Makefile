@@ -45,7 +45,7 @@ check:
 	echo ""; \
 	echo "Зависимости:"; \
 	$(PYTHON) -c "import PyInstaller" 2>/dev/null && echo "✓ PyInstaller" || { echo "✗ PyInstaller"; FAILED=1; }; \
-	command -v python3 >/dev/null && echo "✓ Python" || { echo "✗ Python"; FAILED=1; }; \
+	command -v $(PYTHON) >/dev/null 2>&1 && echo "✓ Python" || { echo "✗ Python"; FAILED=1; }; \
 	if [ "$(PLATFORM)" = "macos" ]; then \
 	  command -v create-dmg >/dev/null 2>&1 && echo "✓ create-dmg" || { echo "✗ create-dmg"; FAILED=1; }; \
 	fi; \
@@ -55,10 +55,20 @@ check:
 	  command -v rpmbuild >/dev/null 2>&1 && echo "✓ rpmbuild" || { echo "✗ rpmbuild"; FAILED=1; }; \
 	  command -v zip >/dev/null 2>&1 && echo "✓ zip" || { echo "✗ zip"; FAILED=1; }; \
 	fi; \
+	if [ "$(PLATFORM)" = "windows" ]; then \
+	  command -v candle >/dev/null 2>&1 && echo "✓ candle" || { echo "✗ candle"; FAILED=1; }; \
+	  command -v light >/dev/null 2>&1 && echo "✓ light" || { echo "✗ light"; FAILED=1; }; \
+	  command -v sed >/dev/null 2>&1 && echo "✓ sed" || { echo "✗ sed"; FAILED=1; }; \
+	  command -v sh >/dev/null 2>&1 && echo "✓ sh" || { echo "✗ sh"; FAILED=1; }; \
+	fi; \
 	echo ""; \
 	echo "Файлы проекта:"; \
 	[ -f version.txt ] && echo "✓ Version file" || { echo "✗ Version file"; FAILED=1; }; \
 	[ -d translations ] && echo "✓ Translations dir" || { echo "✗ Translations dir"; FAILED=1; }; \
+	if [ "$(PLATFORM)" = "windows" ]; then \
+	  VERSION=$$(cat version.txt); \
+	  printf "%s" "$$VERSION" | grep -Eq "^[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9]+)?$$" && echo "✓ MSI/Burn version" || { echo "✗ MSI/Burn version ($$VERSION)"; FAILED=1; }; \
+	fi; \
 	echo ""; \
 	if [ $$FAILED -eq 1 ]; then \
 		echo "✗ Есть ошибки!"; \
