@@ -177,44 +177,45 @@ jobs:
           /tmp/EFDUnpacker.app/Contents/MacOS/EFDUnpacker unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
           hdiutil detach "/Volumes/EFD Unpacker"
 
-  # create-release:
-  #   needs: [build-linux, build-windows, build-macos]
-  #   runs-on: ubuntu-latest
-  #   if: startsWith(github.ref, 'refs/tags/')
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0  # Нужно для получения истории коммитов
+  create-release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Нужно для получения истории коммитов
 
-  #     - name: Download all artifacts
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         path: artifacts
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v4
-  #       with:
-  #         python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-  #     - name: Create version and generate release notes
-  #       id: release_notes
-  #       run: |
-  #         make create-version
-  #         make generate-release-notes
-  #         echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-  #         cat release_notes.md >> $GITHUB_OUTPUT
-  #         echo "EOF" >> $GITHUB_OUTPUT
+      - name: Create version and generate release notes
+        id: release_meta
+        run: |
+          make create-version
+          make generate-release-notes
+          echo "version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+          echo "release_notes<<EOF" >> "$GITHUB_OUTPUT"
+          cat release_notes.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
-  #     - name: Create Release
-  #       uses: softprops/action-gh-release@v1
-  #       with:
-  #         tag_name: ${{ github.ref_name }}
-  #         name: EFD Unpacker $(cat version.txt)
-  #         body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
-  #         draft: false
-  #         prerelease: false
-  #         files: |
-  #           artifacts/linux-builds/*
-  #           artifacts/windows-builds/*
-  #           artifacts/macos-builds/*
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EFD Unpacker ${{ steps.release_meta.outputs.version }}
+          body: ${{ steps.release_meta.outputs.release_notes }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/linux-builds/*
+            artifacts/windows-builds/*
+            artifacts/macos-builds/*

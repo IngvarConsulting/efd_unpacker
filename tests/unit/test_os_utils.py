@@ -18,3 +18,15 @@ def test_get_1c_configuration_location_default_unix(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     result = os_utils.get_1c_configuration_location_default()
     assert result.startswith(str(tmp_path))
+
+
+def test_open_folder_windows_uses_startfile(monkeypatch, tmp_path):
+    target = tmp_path / "tmplts"
+    target.mkdir()
+    startfile = mock.Mock()
+
+    monkeypatch.setattr(os_utils.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(os_utils.os, "startfile", startfile, raising=False)
+
+    assert os_utils.open_folder(str(target)) is True
+    startfile.assert_called_once_with(str(target))

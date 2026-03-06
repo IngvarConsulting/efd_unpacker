@@ -69,7 +69,7 @@ def open_folder(path: str) -> bool:
         return False
     try:
         if platform.system() == "Windows":
-            subprocess.run(["explorer", path])
+            os.startfile(path)  # type: ignore[attr-defined]
         elif platform.system() == "Darwin":  # macOS
             subprocess.run(["open", path])
         else:  # Linux

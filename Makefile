@@ -328,8 +328,16 @@ build-macos-app:
 create-macos-dmg:
 	@echo "Creating DMG installer..."
 	@VERSION=$$(cat version.txt | tr -d ' \t\n\r'); \
+	STAGING_DIR="build/dmg-root"; \
+	rm -rf "$$STAGING_DIR"; \
+	mkdir -p "$$STAGING_DIR"; \
+	ditto "dist/EFDUnpacker.app" "$$STAGING_DIR/EFDUnpacker.app"; \
+	SANDBOX_FLAG=""; \
+	if [ "$$CI" = "true" ]; then \
+		SANDBOX_FLAG="--sandbox-safe"; \
+	fi; \
 	create-dmg \
-		--sandbox-safe \
+		$$SANDBOX_FLAG \
 		--volname "EFD Unpacker" \
 		--volicon "resources/icon.icns" \
 		--window-pos 200 120 \
@@ -339,7 +347,7 @@ create-macos-dmg:
 		--hide-extension "EFDUnpacker.app" \
 		--app-drop-link 425 120 \
 		"dist/efd-unpacker-$${VERSION}-macos.dmg" \
-		"dist/EFDUnpacker.app"
+		"$$STAGING_DIR"
 
 create-macos-zip:
 	@echo "Creating macOS portable ZIP archive..."

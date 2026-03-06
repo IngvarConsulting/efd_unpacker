@@ -303,6 +303,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, self._t("MainWindow", "Error"), message)
             return
 
+        self.output_path = prepared_output
+
         self.set_ui_state(UIState.LOADING)
         self.btn_unpack.setEnabled(False)
         self.btn_browse.setEnabled(False)
@@ -318,7 +320,7 @@ class MainWindow(QMainWindow):
         self.combo_output_paths.setEnabled(True)
 
         if success:
-            self.settings_service.set_output_path(self.combo_output_paths.currentData())
+            self.settings_service.set_output_path(self.output_path)
             self.manual_selected_path = None
             self.update_output_paths_combobox()
             self.show_message(f"[OK] {message}", is_error=False)

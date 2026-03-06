@@ -51,3 +51,24 @@ def test_main_window_initializes(qtbot, initial_path, monkeypatch):
     )
     qtbot.addWidget(window)
     assert window.combo_output_paths.count() == 1
+
+
+def test_unpack_finished_persists_actual_output_path(qtbot, monkeypatch):
+    translator = DummyTranslator()
+    settings = DummySettingsService()
+    chosen_output = "/chosen/output"
+
+    window = MainWindow(
+        translator=translator,
+        settings_service=settings,
+        file_validator=FileValidator(),
+        unpack_service=DummyUnpackService(),
+    )
+    qtbot.addWidget(window)
+
+    window.output_path = chosen_output
+    monkeypatch.setattr(window, "show_message", lambda *args, **kwargs: None)
+
+    window.unpack_finished(True, "done")
+
+    assert settings.path == chosen_output
