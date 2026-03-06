@@ -26,7 +26,12 @@ from .messages import format_validation_error
 def process_file_argument(file_path: str, validator: FileValidator) -> Optional[str]:
     """Обработать аргумент файла, поддерживая URL схемы и относительные пути."""
     if file_path.startswith(URLSchemes.FILE):
-        file_path = urllib.parse.unquote(file_path[7:])
+        parsed = urllib.parse.urlparse(file_path)
+        file_path = urllib.parse.unquote(parsed.path)
+        if parsed.netloc and parsed.netloc != "localhost":
+            file_path = f"//{parsed.netloc}{file_path}"
+        if sys.platform.startswith("win") and len(file_path) >= 3 and file_path[0] == "/" and file_path[2] == ":":
+            file_path = file_path[1:]
     elif file_path.startswith(URLSchemes.EFD):
         parsed = urllib.parse.urlparse(file_path)
         file_path = parsed.path.lstrip("/")

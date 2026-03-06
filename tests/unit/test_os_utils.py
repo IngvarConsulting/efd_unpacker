@@ -15,7 +15,7 @@ def test_get_1c_configuration_location_default_windows(monkeypatch):
 
 def test_get_1c_configuration_location_default_unix(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(os_utils.os.path, "expanduser", lambda _path: str(tmp_path))
     result = os_utils.get_1c_configuration_location_default()
     assert result.startswith(str(tmp_path))
 

@@ -27,6 +27,11 @@ CLI_PROFILE_START = "# >>> EFD Unpacker PATH >>>"
 CLI_PROFILE_END = "# <<< EFD Unpacker PATH <<<"
 
 
+def _normalized_path_text(path: Path) -> str:
+    """Return a path string with normalized separators for platform checks."""
+    return str(path.resolve(strict=False)).replace("\\", "/")
+
+
 def detect_system_language(default: str = "en") -> str:
     """Return `ru` for Russian systems, otherwise the provided default."""
     if QLocale is not None and QLocale.system().language() == QLocale.Language.Russian:
@@ -84,7 +89,7 @@ def resolve_cli_launcher_target() -> Path | None:
     """Return the stable executable path that should back the CLI launcher."""
     if sys.platform == "darwin":
         executable = Path(sys.executable).resolve(strict=False)
-        executable_str = str(executable)
+        executable_str = _normalized_path_text(executable)
         if executable_str.startswith("/Volumes/"):
             return None
         if ".app/Contents/MacOS/" in executable_str:
