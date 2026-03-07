@@ -15,7 +15,7 @@
       bal:UseUILanguages="yes">
       <bal:WixStandardBootstrapperApplication
         LicenseFile="installer\windows\license.rtf"
-        LogoFile="resources\icon.png"
+        LogoFile="resources\windows-setup-logo.bmp"
         ShowVersion="yes"
         SuppressRepair="yes" />
     </BootstrapperApplicationRef>
