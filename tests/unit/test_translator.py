@@ -30,3 +30,9 @@ def test_translator_fallback(tmp_path):
     create_ts(tmp_path, "ru", "TestContext", "Hello", "Привет")
     translator = Translator(lang="ru", translations_dir=str(tmp_path))
     assert translator.translate("Other", "Unknown") == "Unknown"
+
+
+def test_translator_falls_back_for_empty_translation(tmp_path):
+    create_ts(tmp_path, "ru", "TestContext", "Hello", "")
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+    assert translator.translate("TestContext", "Hello") == "Hello"

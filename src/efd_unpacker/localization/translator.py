@@ -38,7 +38,8 @@ class Translator:
                 self._translations[(context_name, source)] = translation
 
     def translate(self, context: str, source: str) -> str:
-        return self._translations.get((context, source), source)
+        translation = self._translations.get((context, source))
+        return translation if translation else source
 
 
 def create_translator(lang: str) -> Translator:

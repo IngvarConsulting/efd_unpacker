@@ -192,4 +192,27 @@
         <translation>Не удалось создать папку вывода: %1</translation>
     </message>
 </context>
+<context>
+    <name>CLIHelp</name>
+    <message>
+        <source>EFD Unpacker - cross-platform EFD file unpacker</source>
+        <translation>EFD Unpacker - кроссплатформенный распаковщик файлов EFD</translation>
+    </message>
+    <message>
+        <source>CLI modes:</source>
+        <translation>Режимы CLI:</translation>
+    </message>
+    <message>
+        <source>1. GUI mode: open the window and preselect the input file</source>
+        <translation>1. Режим GUI: открыть окно и заранее выбрать входной файл</translation>
+    </message>
+    <message>
+        <source>2. Headless mode: unpack directly in the console</source>
+        <translation>2. Консольный режим: распаковать напрямую в консоли</translation>
+    </message>
+    <message>
+        <source>Usage:</source>
+        <translation>Использование:</translation>
+    </message>
+</context>
 </TS>

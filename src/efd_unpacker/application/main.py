@@ -42,6 +42,23 @@ def process_file_argument(file_path: str, validator: FileValidator) -> Optional[
         return None
 
 
+def format_help_text(translator) -> str:
+    """Return localized CLI help while preserving literal command syntax."""
+    lines = [
+        translator.translate("CLIHelp", "EFD Unpacker - cross-platform EFD file unpacker"),
+        "",
+        translator.translate("CLIHelp", "CLI modes:"),
+        f"  {translator.translate('CLIHelp', '1. GUI mode: open the window and preselect the input file')}",
+        f"  {translator.translate('CLIHelp', '2. Headless mode: unpack directly in the console')}",
+        "",
+        translator.translate("CLIHelp", "Usage:"),
+        "  efd_unpacker [--help|-h]",
+        "  efd_unpacker <input_file.efd>",
+        "  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>",
+    ]
+    return "\n".join(lines)
+
+
 class FileAssociationApp(QApplication):
     """Приложение с поддержкой Apple Events для файловых ассоциаций в macOS."""
 
@@ -92,26 +109,13 @@ class FileAssociationApp(QApplication):
 
 def main() -> None:  # pragma: no cover - интеграция с PyQt
     install_cli_launcher()
+    translator = create_translator(detect_system_language())
 
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
-        print(
-            """
-EFD Unpacker - cross-platform EFD file unpacker
-
-CLI modes:
-  1. GUI mode: open the window and preselect the input file
-  2. Headless mode: unpack directly in the console
-
-Usage:
-  efd_unpacker [--help|-h]
-  efd_unpacker <input_file.efd>
-  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>
-"""
-        )
+        print(format_help_text(translator))
         sys.exit(0)
 
     validator = FileValidator()
-    translator = create_translator(detect_system_language())
 
     cli_app = CLIApplication(validator, UnpackService(), translator)
     cli_result = cli_app.run(sys.argv)
