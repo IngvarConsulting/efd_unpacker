@@ -1,8 +1,10 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
+from efd_unpacker.domain import unpack_service
 from efd_unpacker.domain.unpack_service import UnpackService
 
 
@@ -38,6 +40,27 @@ class TestUnpackService(unittest.TestCase):
         with self.assertRaises(UnpackError) as ctx:
             service.unpack("missing.efd", "/tmp")
         self.assertEqual(ctx.exception.code, UnpackErrorCode.FILE_NOT_FOUND)
+
+
+def test_unpack_skips_unsupported_windows_timestamps(monkeypatch, tmp_path) -> None:
+    sample = Path(__file__).resolve().parents[1] / "data" / "1cv8.efd"
+    service = UnpackService()
+
+    original_utime = unpack_service.os.utime
+    utime_calls = []
+
+    def guarded_utime(path, times):
+        utime_calls.append(times)
+        assert times[0] >= 0
+        return original_utime(path, times)
+
+    monkeypatch.setattr(unpack_service.sys, "platform", "win32")
+    monkeypatch.setattr(unpack_service.os, "utime", guarded_utime)
+
+    service.unpack(str(sample), str(tmp_path))
+
+    assert (tmp_path / "IngvarConsulting" / "Test" / "1Cv8.dt").exists()
+    assert utime_calls == []
 
 
 if __name__ == "__main__":
