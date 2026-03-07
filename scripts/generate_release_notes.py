@@ -9,6 +9,7 @@ import subprocess
 import sys
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 # Маппинг типов коммитов на русские названия
@@ -35,6 +36,26 @@ SCOPE_MAPPING = {
     'windows': 'Windows',
     'macos': 'macOS'
 }
+
+LOG_FIELD_SEPARATOR = "\x1f"
+LOG_RECORD_SEPARATOR = "\x1e"
+SKIP_RELEASE_NOTES_MARKERS = (
+    "[skip-release-notes]",
+    "[no-release-notes]",
+)
+SKIP_RELEASE_NOTES_TRAILER = re.compile(
+    r"^\s*Release-Notes:\s*skip\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+@dataclass(frozen=True)
+class CommitEntry:
+    """Данные одного коммита из git log."""
+
+    commit_hash: str
+    subject: str
+    body: str
 
 def is_release_mode() -> bool:
     """Определяет, запущен ли скрипт в режиме выпуска релиза по наличию тега на текущем коммите."""
@@ -112,7 +133,44 @@ def get_target_version() -> str:
         except (subprocess.CalledProcessError, ValueError, IndexError):
             return "1.0.0"  # Fallback
 
-def get_commits_since_last_release(preview_mode: bool = False) -> List[str]:
+
+def parse_git_log_output(output: str) -> List[CommitEntry]:
+    """Преобразует вывод git log в список структурированных коммитов."""
+    commits = []
+    for raw_record in output.split(LOG_RECORD_SEPARATOR):
+        record = raw_record.strip()
+        if not record:
+            continue
+        parts = record.split(LOG_FIELD_SEPARATOR, 2)
+        if len(parts) != 3:
+            continue
+        commit_hash, subject, body = parts
+        commits.append(CommitEntry(
+            commit_hash=commit_hash.strip(),
+            subject=subject.strip(),
+            body=body.strip(),
+        ))
+    return commits
+
+
+def get_git_log_entries(*log_args: str) -> List[CommitEntry]:
+    """Возвращает структурированные коммиты из git log."""
+    result = subprocess.run(
+        ['git', 'log', *log_args, '--format=%H%x1f%s%x1f%B%x1e', '--no-merges'],
+        capture_output=True, text=True, check=True
+    )
+    return parse_git_log_output(result.stdout)
+
+
+def should_skip_release_notes(commit: CommitEntry) -> bool:
+    """Определяет, нужно ли скрыть коммит из релиз ноутс."""
+    full_message = f"{commit.subject}\n{commit.body}".lower()
+    if any(marker in full_message for marker in SKIP_RELEASE_NOTES_MARKERS):
+        return True
+    return bool(SKIP_RELEASE_NOTES_TRAILER.search(f"{commit.subject}\n{commit.body}"))
+
+
+def get_commits_since_last_release(preview_mode: bool = False) -> List[CommitEntry]:
     """
     Получает коммиты в зависимости от режима работы.
     
@@ -132,19 +190,9 @@ def get_commits_since_last_release(preview_mode: bool = False) -> List[str]:
         if preview_mode:
             # Режим предварительного просмотра: от последнего тега до HEAD
             if not tags:
-                result = subprocess.run(
-                    ['git', 'log', '--oneline', '--no-merges'],
-                    capture_output=True, text=True, check=True
-                )
-                all_commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
-                return filter_service_commits(all_commits)
+                return filter_service_commits(get_git_log_entries())
             last_tag = tags[0]
-            result = subprocess.run(
-                ['git', 'log', f'{last_tag}..HEAD', '--oneline', '--no-merges'],
-                capture_output=True, text=True, check=True
-            )
-            commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
-            return filter_service_commits(commits)
+            return filter_service_commits(get_git_log_entries(f'{last_tag}..HEAD'))
         else:
             # Режим выпуска релиза: от предыдущего тега до текущего тега
             current_tag = get_current_tag()
@@ -152,36 +200,22 @@ def get_commits_since_last_release(preview_mode: bool = False) -> List[str]:
                 print("Ошибка: HEAD не помечен тегом. Запустите в режиме выпуска релиза или используйте --preview")
                 return []
             if len(tags) < 2:
-                result = subprocess.run(
-                    ['git', 'log', current_tag, '-1', '--oneline', '--no-merges'],
-                    capture_output=True, text=True, check=True
-                )
-                commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
-                return filter_service_commits(commits)
+                return filter_service_commits(get_git_log_entries(current_tag, '-1'))
             previous_tag = tags[1] if tags[0] == current_tag else tags[0]
-            result = subprocess.run(
-                ['git', 'log', f'{previous_tag}..{current_tag}', '--oneline', '--no-merges'],
-                capture_output=True, text=True, check=True
-            )
-            commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
-            result = subprocess.run(
-                ['git', 'log', current_tag, '-1', '--oneline', '--no-merges'],
-                capture_output=True, text=True, check=True
-            )
-            current_tag_commit = result.stdout.strip()
-            if current_tag_commit and current_tag_commit not in commits:
-                commits.insert(0, current_tag_commit)
-            return filter_service_commits(commits)
+            return filter_service_commits(get_git_log_entries(f'{previous_tag}..{current_tag}'))
     except subprocess.CalledProcessError as e:
         print(f"Ошибка при получении коммитов: {e}")
         return []
 
-def filter_service_commits(commits: List[str]) -> List[str]:
+
+def filter_service_commits(commits: List[CommitEntry]) -> List[CommitEntry]:
     """Фильтрует служебные коммиты инициализации."""
     filtered_commits = []
     for commit in commits:
+        if should_skip_release_notes(commit):
+            continue
         # Исключаем коммиты инициализации и служебные коммиты
-        if any(keyword in commit.lower() for keyword in [
+        if any(keyword in commit.subject.lower() for keyword in [
             'init:', 'initial', 'новый git-репозиторий', 'reset', 'squash'
         ]):
             continue
@@ -235,12 +269,14 @@ def generate_release_notes(preview_mode: bool = False) -> str:
     grouped_commits = defaultdict(list)
     other_commits = []
     for commit in commits:
-        commit_type, scope, description, commit_hash = parse_commit(commit)
+        commit_type, scope, description, commit_hash = parse_commit(
+            f"{commit.commit_hash} {commit.subject}"
+        )
         if commit_type and commit_type in TYPE_MAPPING:
             formatted_desc = format_commit_description(description, scope)
             grouped_commits[commit_type].append(formatted_desc)
         else:
-            other_commits.append(description if description else commit)
+            other_commits.append(description if description else commit.subject)
     lines = ["## Изменения"]
     for commit_type in ['feat', 'fix', 'refactor', 'perf', 'build', 'ci', 'docs', 'style', 'test', 'chore']:
         if commit_type in grouped_commits:
@@ -275,6 +311,9 @@ def main():
             print("Опции:")
             print("  --preview  Режим предварительного просмотра: от последнего тега до HEAD")
             print("  --release  Режим выпуска релиза: от предыдущего тега до текущего тега")
+            print("")
+            print("Чтобы скрыть служебный коммит из релиз ноутс, добавьте в его текст")
+            print("маркер [skip-release-notes] или trailer 'Release-Notes: skip'.")
             print("")
             print("Если опция не указана, автоматически определяется по наличию тега:")
             print("- Если текущий коммит помечен тегом - используется --release")
