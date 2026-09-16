@@ -34,6 +34,10 @@ def format_unpack_result(translator: Translator, success: bool, error: UnpackErr
         key = "File not found"
     elif error.code is UnpackErrorCode.PERMISSION:
         key = "Permission error"
+    elif error.code is UnpackErrorCode.UNSAFE_ENTRY:
+        key = "Archive rejected: it tries to write outside the output folder"
+    elif error.code is UnpackErrorCode.TOO_LARGE:
+        key = "Archive rejected: unpacked size exceeds the allowed limit"
     else:
         key = "Unexpected error: %1"
 

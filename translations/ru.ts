@@ -125,6 +125,16 @@
         <translation>Ошибка доступа к файлу</translation>
     </message>
     <message>
+        <location filename="../unpack_service.py" line="18"/>
+        <source>Archive rejected: it tries to write outside the output folder</source>
+        <translation>Архив отклонён: он пытается записать файлы за пределы папки распаковки</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="20"/>
+        <source>Archive rejected: unpacked size exceeds the allowed limit</source>
+        <translation>Архив отклонён: объём распакованных данных превышает допустимый предел</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="17"/>
         <source>Unexpected error: %1</source>
         <translation>Неожиданная ошибка: %1</translation>
