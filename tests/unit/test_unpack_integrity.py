@@ -5,6 +5,7 @@
 а на диске оставался неполный каталог шаблона.
 """
 
+import os
 import stat
 import struct
 import zlib
@@ -173,6 +174,10 @@ def test_unpacked_files_are_readable(tmp_path):
             assert mode != 0o600, path
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows не хранит POSIX-права: chmod меняет только флаг read-only",
+)
 def test_existing_file_mode_is_preserved(tmp_path):
     """Перезапись существующего шаблона не должна менять его права."""
     output_dir = tmp_path / "out"
@@ -186,6 +191,20 @@ def test_existing_file_mode_is_preserved(tmp_path):
 
     assert victim.read_bytes() == b"new"
     assert stat.S_IMODE(victim.stat().st_mode) == 0o640
+
+
+def test_existing_file_is_replaced_and_stays_accessible(tmp_path):
+    """Кроссплатформенная часть контракта: содержимое обновилось, файл читаем."""
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    victim = output_dir / "a.txt"
+    victim.write_bytes(b"old")
+
+    source = _write(tmp_path / "ok.efd", _build_efd([("a.txt", b"new")]))
+    UnpackService().unpack(source, str(output_dir))
+
+    assert victim.read_bytes() == b"new"
+    assert stat.S_IMODE(victim.stat().st_mode) & stat.S_IRUSR
 
 
 def test_entry_colliding_with_directory_is_rejected(tmp_path):
