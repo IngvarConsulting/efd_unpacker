@@ -111,7 +111,7 @@ generate-release-notes:
 	
 install-deps:
 	@echo "Installing development dependencies..."
-	$(PYTHON) -m pip install --upgrade pip setuptools wheel PyInstaller
+	$(PYTHON) -m pip install --upgrade pip setuptools wheel "PyInstaller>=6.0"
 	$(PYTHON) -m pip install --only-binary=:all: -r requirements.txt
 	$(PYTHON) -m pip install --only-binary=:all: -r requirements-test.txt;
 	@if [ "$(PLATFORM)" = "linux" ]; then \
@@ -249,9 +249,15 @@ create-linux-archives:
 	cd dist && tar -czf efd-unpacker-$$(cat ../version.txt)-linux-portable.tar.gz efd_unpacker
 	
 # Windows build commands
+# --console + --hide-console hide-early вместо --windowed: у windowed-сборки нет
+# stdout, поэтому --help и [OK]/[ERROR] из CLI-режима уходили в никуда, хотя
+# docs/CLI.md их обещает, а установщик кладёт каталог в PATH. hide-early прячет
+# консоль, только когда процесс ей владеет (запуск из проводника, ярлыка или по
+# ассоциации .efd); при запуске из открытой консоли она остаётся, и вывод виден.
+# Опция требует PyInstaller >= 6.0 — он запинен в install-deps.
 build-windows-executable:
 	@echo "Building Windows executable with PyInstaller..."
-	pyinstaller --noconfirm --onefile --windowed $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) \
+	pyinstaller --noconfirm --onefile --console --hide-console hide-early $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) \
 		--paths src \
 		--add-data "translations$(PYI_DATASEP)translations" \
 		--add-data "resources$(PYI_DATASEP)resources" \
