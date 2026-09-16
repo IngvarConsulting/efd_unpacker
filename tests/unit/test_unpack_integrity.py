@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
-from efd_unpacker.domain.unpack_service import UnpackService
+from efd_unpacker.domain.unpack_service import SafeSupplyReader, UnpackService
 
 SAMPLE = Path(__file__).resolve().parents[1] / "data" / "1cv8.efd"
 FILETIME_2020 = 132223104000000000
@@ -248,3 +248,66 @@ def test_valid_archive_still_unpacks_completely(tmp_path):
         "IngvarConsulting/Test/1cv8.mft",
     ]
     assert all(p.stat().st_size > 0 for p in tmp_path.rglob("*") if p.is_file())
+
+
+def test_cancellation_is_polled_inside_a_large_entry(tmp_path, monkeypatch):
+    """
+    Одна запись бывает в сотни мегабайт. Если отмену опрашивать только между
+    записями, закрытие окна неизбежно упирается в QThread.terminate().
+    """
+    monkeypatch.setattr(SafeSupplyReader, "CHUNK_SIZE", 1024)
+    source = _write(tmp_path / "big.efd", _build_efd([("big.cf", b"x" * (32 * 1024))]))
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    calls = []
+
+    def probe():
+        calls.append(1)
+        return False
+
+    UnpackService().unpack(source, str(output_dir), cancel_check=probe)
+
+    assert len(calls) > 5, calls
+    assert (output_dir / "big.cf").stat().st_size == 32 * 1024
+
+
+def test_cancel_mid_entry_leaves_no_partial_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(SafeSupplyReader, "CHUNK_SIZE", 1024)
+    source = _write(tmp_path / "big.efd", _build_efd([("big.cf", b"x" * (32 * 1024))]))
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    state = {"calls": 0}
+
+    def probe():
+        state["calls"] += 1
+        return state["calls"] > 3
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService().unpack(source, str(output_dir), cancel_check=probe)
+
+    assert ctx.value.code is UnpackErrorCode.CANCELLED
+    # Ни готового файла, ни временного .part: _write_entry убирает за собой.
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cancel_keeps_already_written_entries(tmp_path, monkeypatch):
+    """Удалять уже распакованное нельзя — output_dir общий каталог шаблонов."""
+    monkeypatch.setattr(SafeSupplyReader, "CHUNK_SIZE", 1024)
+    source = _write(
+        tmp_path / "many.efd",
+        _build_efd([("a.txt", b"a" * 4096), ("b.txt", b"b" * 4096), ("c.txt", b"c" * 4096)]),
+    )
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    def probe():
+        return (output_dir / "a.txt").exists()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService().unpack(source, str(output_dir), cancel_check=probe)
+
+    assert ctx.value.code is UnpackErrorCode.CANCELLED
+    assert (output_dir / "a.txt").read_bytes() == b"a" * 4096
+    assert not list(output_dir.glob("*.part"))

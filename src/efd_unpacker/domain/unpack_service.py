@@ -208,6 +208,10 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
     def _cancelled(self) -> bool:
         return self._cancel_check is not None and self._cancel_check()
 
+    def _raise_if_cancelled(self, entry: str = "") -> None:
+        if self._cancelled():
+            raise UnpackError(UnpackErrorCode.CANCELLED, {"entry": entry} if entry else None)
+
     def unpack(self, output_dir: str) -> None:
         with tempfile.TemporaryFile() as buffer_file:
             self._inflate_to(buffer_file)
@@ -254,8 +258,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                 # ставится на место через os.replace, поэтому уже записанные
                 # файлы целые. Удалять их нельзя — output_dir это общий каталог
                 # шаблонов, где лежат и чужие.
-                if self._cancelled():
-                    raise UnpackError(UnpackErrorCode.CANCELLED, {"entry": src_path})
+                self._raise_if_cancelled(src_path)
 
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 self._write_entry(buffer_file, path, src_path, size)
@@ -277,6 +280,11 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             with os.fdopen(descriptor, "wb") as out_file:
                 written = 0
                 while written < size:
+                    # Одна запись бывает в сотни мегабайт: без опроса внутри
+                    # цикла отмена не успевала сработать и закрытие окна
+                    # неизбежно упиралось в terminate().
+                    self._raise_if_cancelled(src_path)
+
                     data = buffer_file.read(min(self.CHUNK_SIZE, size - written))
                     if not data:
                         # Объявленный размер больше, чем осталось в потоке.
@@ -302,6 +310,8 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
         total_out = 0
 
         while True:
+            self._raise_if_cancelled()
+
             chunk = self.file.read(self.CHUNK_SIZE)
             if not chunk:
                 break
