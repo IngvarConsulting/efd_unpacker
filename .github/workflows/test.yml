@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     name: Run tests on ${{ matrix.os }}
+    timeout-minutes: 15
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

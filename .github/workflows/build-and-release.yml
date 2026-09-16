@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   test-suite:
+    timeout-minutes: 15
     name: Test Suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -35,6 +36,7 @@ jobs:
           make test
 
   build-linux:
+    timeout-minutes: 30
     needs: test-suite
     runs-on: ubuntu-22.04
     steps:
@@ -60,6 +62,7 @@ jobs:
             dist/efd-unpacker-*-linux*.deb
 
   build-windows:
+    timeout-minutes: 30
     needs: test-suite
     runs-on: windows-2022
     steps:
@@ -84,6 +87,7 @@ jobs:
             dist/efd-unpacker-*-windows-setup.exe
 
   build-macos:
+    timeout-minutes: 45
     needs: test-suite
     runs-on: macos-15-intel
     steps:
@@ -108,6 +112,7 @@ jobs:
             dist/efd-unpacker-*-macos.dmg
 
   test-appimage:
+    timeout-minutes: 15
     needs: build-linux
     runs-on: ubuntu-22.04
     steps:
@@ -133,8 +138,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/efd-out"
           APPIMAGE_EXTRACT_AND_RUN=1 ./efd_unpacker.AppImage --help
           APPIMAGE_EXTRACT_AND_RUN=1 ./efd_unpacker.AppImage unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
+          [ -n "$(find "$RUNNER_TEMP/efd-out" -type f -print -quit)" ] || { echo "AppImage: nothing unpacked"; exit 1; }
 
   test-deb:
+    timeout-minutes: 15
     needs: build-linux
     runs-on: ubuntu-22.04
     steps:
@@ -154,8 +161,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/efd-out"
           efd_unpacker --help
           efd_unpacker unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
+          [ -n "$(find "$RUNNER_TEMP/efd-out" -type f -print -quit)" ] || { echo "DEB: nothing unpacked"; exit 1; }
 
   test-windows-setup:
+    timeout-minutes: 20
     needs: build-windows
     runs-on: windows-2022
     steps:
@@ -189,10 +198,47 @@ jobs:
           if (-not $exe) { throw "Installed executable not found" }
           $out = Join-Path $env:TEMP "efd-out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          & $exe --help
-          & $exe unpack tests/data/1cv8.efd -tmplts $out
+
+          function Invoke-Efd {
+            param([string[]]$EfdArgs, [string]$Label)
+            $stdout = Join-Path $env:TEMP "$Label-out.txt"
+            $stderr = Join-Path $env:TEMP "$Label-err.txt"
+            $p = Start-Process -FilePath $exe -ArgumentList $EfdArgs -PassThru `
+                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            if (-not $p.WaitForExit(120000)) {
+              $p.Kill()
+              throw "$Label timed out after 120s (fell through to GUI mode?)"
+            }
+            $text = (Get-Content $stdout -Raw -ErrorAction SilentlyContinue) + `
+                    (Get-Content $stderr -Raw -ErrorAction SilentlyContinue)
+            Write-Host "--- $Label (exit $($p.ExitCode)) ---"
+            Write-Host $text
+            return @{ ExitCode = $p.ExitCode; Output = $text }
+          }
+
+          $help = Invoke-Efd -EfdArgs @("--help") -Label "help"
+          if ($help.ExitCode -ne 0) { throw "--help exited with $($help.ExitCode)" }
+          if ($help.Output -notmatch [regex]::Escape("efd_unpacker unpack <input_file.efd> -tmplts <output_dir>")) {
+            throw "--help produced no usage line; windowed build swallows stdout?"
+          }
+
+          $unpack = Invoke-Efd -EfdArgs @("unpack", "tests/data/1cv8.efd", "-tmplts", $out) -Label "unpack"
+          if ($unpack.ExitCode -ne 0) { throw "unpack exited with $($unpack.ExitCode)" }
+          if (-not (Get-ChildItem -Path $out -Recurse -File)) { throw "unpack produced no files" }
+
+          # Повреждённый архив должен давать ненулевой код и сообщение об ошибке,
+          # иначе регрессия в распаковке снова пройдёт gate незамеченной.
+          $broken = Join-Path $env:TEMP "broken.efd"
+          $bytes = [System.IO.File]::ReadAllBytes("tests/data/1cv8.efd")
+          [System.IO.File]::WriteAllBytes($broken, $bytes[0..499])
+          $brokenOut = Join-Path $env:TEMP "efd-broken-out"
+          New-Item -ItemType Directory -Force -Path $brokenOut | Out-Null
+          $bad = Invoke-Efd -EfdArgs @("unpack", $broken, "-tmplts", $brokenOut) -Label "broken"
+          if ($bad.ExitCode -eq 0) { throw "damaged archive reported success" }
+          if ($bad.Output -notmatch "\[ERROR\]") { throw "damaged archive printed no [ERROR] line" }
 
   test-dmg:
+    timeout-minutes: 20
     needs: build-macos
     runs-on: macos-15-intel
     steps:
@@ -223,9 +269,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/efd-out"
           /tmp/EFDUnpacker.app/Contents/MacOS/EFDUnpacker --help
           /tmp/EFDUnpacker.app/Contents/MacOS/EFDUnpacker unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
+          [ -n "$(find "$RUNNER_TEMP/efd-out" -type f -print -quit)" ] || { echo "DMG: nothing unpacked"; exit 1; }
           hdiutil detach "/Volumes/EFD Unpacker"
 
   create-release:
+    timeout-minutes: 15
     needs: [test-appimage, test-deb, test-windows-setup, test-dmg]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
