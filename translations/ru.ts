@@ -55,6 +55,16 @@
     </message>
     <message>
         <location filename="../ui.py" line="238"/>
+        <source>Unpacking in progress</source>
+        <translation>Распаковка не завершена</translation>
+    </message>
+    <message>
+        <location filename="../ui.py" line="0"/>
+        <source>Unpacking is not finished. Stop it and close the window?</source>
+        <translation>Распаковка ещё идёт. Остановить её и закрыть окно?</translation>
+    </message>
+    <message>
+        <location filename="../ui.py" line="0"/>
         <source>Drop file to upload</source>
         <translation>Отпустите файл для загрузки</translation>
     </message>
@@ -168,6 +178,11 @@
         <location filename="../unpack_service.py" line="34"/>
         <source>a file name in the archive conflicts with a folder name</source>
         <translation>имя файла в архиве конфликтует с именем папки</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="36"/>
+        <source>Unpacking was stopped, some files were not extracted</source>
+        <translation>Распаковка остановлена, часть файлов не извлечена</translation>
     </message>
     <message>
         <location filename="../unpack_service.py" line="17"/>

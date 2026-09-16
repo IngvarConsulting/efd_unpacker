@@ -34,7 +34,10 @@ from ..runtime import resource_path
 
 
 class UnpackThread(QThread):
-    finished = pyqtSignal(bool, str)
+    # Именно completed, а не finished: одноимённый сигнал затенял бы встроенный
+    # QThread.finished, и повесить на него deleteLater было бы нельзя — кастомный
+    # сигнал эмитится ещё до фактического выхода из потока.
+    completed = pyqtSignal(bool, str)
 
     def __init__(self, unpack_service: UnpackService, translator: Translator, input_file: str, output_dir: str) -> None:
         super().__init__()
@@ -42,15 +45,24 @@ class UnpackThread(QThread):
         self.translator = translator
         self.input_file = input_file
         self.output_dir = output_dir
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Просит распаковку остановиться на ближайшей границе между файлами."""
+        self._cancelled = True
 
     def run(self) -> None:  # pragma: no cover - потоковая логика
         try:
-            self.unpack_service.unpack(self.input_file, self.output_dir)
+            self.unpack_service.unpack(
+                self.input_file,
+                self.output_dir,
+                cancel_check=lambda: self._cancelled,
+            )
             message = format_unpack_result(self.translator, success=True)
-            self.finished.emit(True, message)
+            self.completed.emit(True, message)
         except UnpackError as exc:
             message = format_unpack_result(self.translator, success=False, error=exc)
-            self.finished.emit(False, message)
+            self.completed.emit(False, message)
 
 
 class MainWindow(QMainWindow):
@@ -70,7 +82,7 @@ class MainWindow(QMainWindow):
         self.output_path = self.settings_service.get_output_path()
         self.manual_selected_path: Optional[str] = None
         self.input_file: Optional[str] = None
-        self.thread: Optional[UnpackThread] = None
+        self._unpack_thread: Optional[UnpackThread] = None
 
         self._init_window_properties()
         self._init_ui_elements()
@@ -292,6 +304,11 @@ class MainWindow(QMainWindow):
             self.set_input_file(file_path)
 
     def unpack_file(self) -> None:
+        if self._unpack_thread is not None and self._unpack_thread.isRunning():
+            # Пока предыдущая распаковка жива, поле перезаписывать нельзя:
+            # ссылка на QThread потеряется, и он будет разрушен на ходу.
+            return
+
         if not self.input_file:
             QMessageBox.warning(self, self._t("MainWindow", "Error"), self._t("MainWindow", "No .efd file selected"))
             return
@@ -310,9 +327,14 @@ class MainWindow(QMainWindow):
         self.btn_browse.setEnabled(False)
         self.combo_output_paths.setEnabled(False)
 
-        self.thread = UnpackThread(self.unpack_service, self.translator, self.input_file, prepared_output)
-        self.thread.finished.connect(self.unpack_finished)
-        self.thread.start()
+        thread = UnpackThread(self.unpack_service, self.translator, self.input_file, prepared_output)
+        thread.completed.connect(self.unpack_finished)
+        # Настоящий QThread.finished, а не наш completed: он приходит после
+        # фактического выхода из run(), когда объект уже можно удалять.
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._forget_unpack_thread)
+        self._unpack_thread = thread
+        thread.start()
 
     def unpack_finished(self, success: bool, message: str) -> None:
         self.btn_unpack.setEnabled(True)
@@ -326,6 +348,43 @@ class MainWindow(QMainWindow):
             self.show_message(f"[OK] {message}", is_error=False)
         else:
             self.show_message(f"[ERROR] {message}", is_error=True)
+
+    def _forget_unpack_thread(self) -> None:
+        self._unpack_thread = None
+
+    def closeEvent(self, event) -> None:
+        """
+        Не даёт закрыть окно молча посреди распаковки.
+
+        Раньше окно закрывалось сразу, поток продолжал писать в уже
+        разрушаемом приложении, и пользователь получал каталог шаблона,
+        в котором часть файлов отсутствует.
+        """
+        thread = self._unpack_thread
+        if thread is None or not thread.isRunning():
+            event.accept()
+            return
+
+        answer = QMessageBox.question(
+            self,
+            self._t("MainWindow", "Unpacking in progress"),
+            self._t("MainWindow", "Unpacking is not finished. Stop it and close the window?"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            event.ignore()
+            return
+
+        thread.cancel()
+        if not thread.wait(UIConstants.THREAD_STOP_TIMEOUT_MS):
+            # Крайняя мера: распаковка застряла на одном большом файле.
+            # Уже записанные файлы при этом целы — каждый ставится на место
+            # через os.replace, — а незавершённый остаётся временным .part.
+            thread.terminate()
+            thread.wait()
+
+        event.accept()
 
     def open_output_folder(self) -> None:
         if self.output_path:
