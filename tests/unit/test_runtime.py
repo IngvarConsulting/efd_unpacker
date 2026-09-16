@@ -55,6 +55,7 @@ def test_detect_system_language_prefers_qt_locale(monkeypatch):
 
 def test_resolve_cli_launcher_target_skips_macos_dmg_volume(monkeypatch):
     monkeypatch.setattr(runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
     monkeypatch.setattr(
         runtime.sys,
         "executable",
@@ -69,6 +70,7 @@ def test_install_cli_launcher_registers_macos_bundle(monkeypatch, tmp_path):
     home.mkdir()
     _patch_runtime_home(monkeypatch, home)
     monkeypatch.setattr(runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
     monkeypatch.setattr(
         runtime.sys,
         "executable",
@@ -90,7 +92,7 @@ def test_install_cli_launcher_registers_macos_bundle(monkeypatch, tmp_path):
     assert launcher_path.exists()
     assert str(expected_target) in launcher_path.read_text(encoding="utf-8")
     assert runtime.CLI_PROFILE_START in profile_text
-    assert 'EFD_UNPACKER_BIN="$HOME/.local/share/efd_unpacker/bin"' in profile_text
+    assert 'EFD_UNPACKER_BIN="$HOME"/.local/share/efd_unpacker/bin' in profile_text
     assert f"EFD_UNPACKER_TARGET={shlex.quote(str(expected_target))}" in profile_text
     assert 'if [ -x "$EFD_UNPACKER_BIN/efd_unpacker" ] && [ -x "$EFD_UNPACKER_TARGET" ]; then' in profile_text
 
@@ -118,7 +120,7 @@ def test_install_cli_launcher_registers_appimage(monkeypatch, tmp_path):
     assert launcher_path.exists()
     assert f"TARGET={shlex.quote(str(expected_target))}" in launcher_path.read_text(encoding="utf-8")
     assert f"EFD_UNPACKER_TARGET={shlex.quote(str(expected_target))}" in profile_text
-    assert 'EFD_UNPACKER_BIN="$HOME/.local/share/efd_unpacker/bin"' in profile_text
+    assert 'EFD_UNPACKER_BIN="$HOME"/.local/share/efd_unpacker/bin' in profile_text
 
 
 def test_install_cli_launcher_does_not_override_unmanaged_launcher(monkeypatch, tmp_path):
