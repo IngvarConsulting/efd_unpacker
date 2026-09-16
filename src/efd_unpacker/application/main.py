@@ -108,7 +108,12 @@ class FileAssociationApp(QApplication):
 
 
 def main() -> None:  # pragma: no cover - интеграция с PyQt
-    install_cli_launcher()
+    try:
+        install_cli_launcher()
+    except Exception:
+        # Регистрация команды в PATH — удобство, а не условие запуска.
+        pass
+
     translator = create_translator(detect_system_language())
 
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
