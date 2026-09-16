@@ -224,3 +224,57 @@ def test_unfrozen_interpreter_is_not_registered_on_macos(monkeypatch):
     )
 
     assert runtime.resolve_cli_launcher_target() is None
+
+
+def test_read_only_profile_is_left_untouched(monkeypatch, tmp_path):
+    """
+    os.replace проверяет права на каталог, а не на файл, поэтому профиль,
+    намеренно оставленный только для чтения, переписывался бы молча.
+    """
+    home = _setup_linux_appimage(monkeypatch, tmp_path)
+    profile = home / ".profile"
+    profile.write_text("export EDITOR=vim\n", encoding="utf-8")
+    profile.chmod(0o444)
+    before = profile.read_text(encoding="utf-8")
+
+    runtime.install_cli_launcher()
+
+    assert profile.read_text(encoding="utf-8") == before
+    assert stat.S_IMODE(profile.stat().st_mode) == 0o444
+    assert not (home / (".profile" + runtime.PROFILE_BACKUP_SUFFIX)).exists()
+
+
+def test_read_only_profile_does_not_block_the_other_file(monkeypatch, tmp_path):
+    """Недоступный login-профиль не должен отменять запись в rc-файл."""
+    home = _setup_linux_appimage(monkeypatch, tmp_path, shell="/bin/bash")
+    profile = home / ".profile"
+    profile.write_text("export EDITOR=vim\n", encoding="utf-8")
+    profile.chmod(0o444)
+
+    runtime.install_cli_launcher()
+
+    assert runtime.CLI_PROFILE_START not in profile.read_text(encoding="utf-8")
+    assert runtime.CLI_PROFILE_START in (home / ".bashrc").read_text(encoding="utf-8")
+
+
+def test_hard_linked_profile_keeps_its_inode(monkeypatch, tmp_path):
+    """os.replace создал бы новый inode и молча разорвал связь с dotfiles."""
+    home = _setup_linux_appimage(monkeypatch, tmp_path)
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    shared = dotfiles / "profile"
+    shared.write_text("export EDITOR=vim\n", encoding="utf-8")
+
+    profile = home / ".profile"
+    os.link(shared, profile)
+    inode_before = profile.stat().st_ino
+
+    runtime.install_cli_launcher()
+
+    assert profile.stat().st_ino == inode_before
+    assert profile.stat().st_nlink == 2
+    assert shared.stat().st_ino == inode_before
+    # Правка видна через обе ссылки, а пользовательская строка на месте.
+    text = shared.read_text(encoding="utf-8")
+    assert runtime.CLI_PROFILE_START in text
+    assert "export EDITOR=vim" in text

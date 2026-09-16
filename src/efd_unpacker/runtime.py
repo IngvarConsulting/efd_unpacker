@@ -171,17 +171,46 @@ def get_shell_profile_path() -> Path:
     return get_shell_profile_paths()[0]
 
 
+def _is_profile_modifiable(real_path: Path) -> bool:
+    """
+    Можно ли трогать этот профиль.
+
+    os.replace проверяет права на каталог, а не на сам файл, поэтому профиль,
+    намеренно оставленный только для чтения, он переписал бы молча. Прежний
+    write_text в этом случае падал с PermissionError, и регистрация тихо
+    пропускалась — сохраняем то же поведение.
+    """
+    if not real_path.exists():
+        return True
+    return os.access(real_path, os.W_OK)
+
+
 def _write_profile_text(profile_path: Path, text: str) -> None:
     """
-    Записывает профиль атомарно: временный файл рядом плюс os.replace.
+    Записывает профиль, не ломая его связей с другими файлами.
 
     Прежний write_text обрезал файл до нуля перед записью, поэтому вторая
     копия приложения, стартовавшая в этот момент, читала пустой профиль и
-    затирала его целиком. Путь резолвится намеренно: os.replace по симлинку
-    заменил бы сам симлинк обычным файлом и отцепил профиль от dotfiles.
+    затирала его целиком. Обычный случай пишется атомарно через временный
+    файл и os.replace; путь резолвится намеренно, иначе os.replace заменил бы
+    сам симлинк обычным файлом и отцепил профиль от dotfiles-репозитория.
     """
     real_path = profile_path.resolve(strict=False)
     real_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if real_path.exists() and real_path.stat().st_nlink > 1:
+        # Профиль — жёсткая ссылка (dotfiles-репозиторий, общий файл для
+        # нескольких шеллов). os.replace создал бы новый inode и молча разорвал
+        # связь: правки через вторую ссылку перестали бы доходить до активного
+        # профиля. Пишем на месте; порядок write -> truncate оставляет файл
+        # непустым в любой момент, в отличие от прежнего write_text.
+        with open(real_path, "r+", encoding="utf-8") as handle:
+            handle.seek(0)
+            handle.write(text)
+            handle.truncate()
+            handle.flush()
+            os.fsync(handle.fileno())
+        return
 
     descriptor, temporary = tempfile.mkstemp(dir=str(real_path.parent), prefix=".efd-profile-")
     try:
@@ -223,6 +252,9 @@ def _backup_profile_once(profile_path: Path) -> None:
 
 def _ensure_shell_profile_exports_path(profile_path: Path, bin_dir: Path, target: Path) -> bool:
     real_path = profile_path.resolve(strict=False)
+    if not _is_profile_modifiable(real_path):
+        return False
+
     profile_text = real_path.read_text(encoding="utf-8") if real_path.is_file() else ""
     export_block = _shell_profile_export_block(bin_dir, target)
     sanitized_text = _remove_legacy_profile_block(_remove_managed_profile_block(profile_text))
@@ -326,7 +358,7 @@ def _remove_legacy_launcher() -> bool:
 
 def _cleanup_legacy_profile_block(profile_path: Path) -> bool:
     real_path = profile_path.resolve(strict=False)
-    if not real_path.is_file():
+    if not real_path.is_file() or not _is_profile_modifiable(real_path):
         return False
 
     profile_text = real_path.read_text(encoding="utf-8")
