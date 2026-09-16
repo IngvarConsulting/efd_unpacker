@@ -135,6 +135,41 @@
         <translation>Архив отклонён: объём распакованных данных превышает допустимый предел</translation>
     </message>
     <message>
+        <location filename="../unpack_service.py" line="22"/>
+        <source>Archive is damaged or incomplete: %1</source>
+        <translation>Архив повреждён или неполон: %1</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="24"/>
+        <source>the file is incomplete, most likely the download was interrupted</source>
+        <translation>файл неполный, скорее всего загрузка оборвалась</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="26"/>
+        <source>the file is too short to be an EFD archive</source>
+        <translation>файл слишком короткий для архива EFD</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="28"/>
+        <source>unsupported format version</source>
+        <translation>неподдерживаемая версия формата</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="30"/>
+        <source>a file inside the archive is shorter than declared</source>
+        <translation>файл внутри архива короче заявленного размера</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="32"/>
+        <source>the archive contains two files with the same name</source>
+        <translation>в архиве два файла с одинаковым именем</translation>
+    </message>
+    <message>
+        <location filename="../unpack_service.py" line="34"/>
+        <source>a file name in the archive conflicts with a folder name</source>
+        <translation>имя файла в архиве конфликтует с именем папки</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="17"/>
         <source>Unexpected error: %1</source>
         <translation>Неожиданная ошибка: %1</translation>

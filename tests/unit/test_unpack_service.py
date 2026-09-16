@@ -42,7 +42,8 @@ class TestUnpackService(unittest.TestCase):
         self.assertEqual(ctx.exception.code, UnpackErrorCode.FILE_NOT_FOUND)
 
 
-def test_unpack_skips_unsupported_windows_timestamps(monkeypatch, tmp_path) -> None:
+def test_unpack_skips_unrepresentable_timestamps(monkeypatch, tmp_path) -> None:
+    """Даты до 1678 года пропускаются на всех платформах, а не только на Windows."""
     sample = Path(__file__).resolve().parents[1] / "data" / "1cv8.efd"
     service = UnpackService()
 
@@ -54,13 +55,27 @@ def test_unpack_skips_unsupported_windows_timestamps(monkeypatch, tmp_path) -> N
         assert times[0] >= 0
         return original_utime(path, times)
 
-    monkeypatch.setattr(unpack_service.sys, "platform", "win32")
     monkeypatch.setattr(unpack_service.os, "utime", guarded_utime)
 
     service.unpack(str(sample), str(tmp_path))
 
     assert (tmp_path / "IngvarConsulting" / "Test" / "1Cv8.dt").exists()
     assert utime_calls == []
+
+
+def test_unpack_leaves_representable_mtime_on_every_platform(tmp_path) -> None:
+    """
+    Регресс на INT64_MIN: guard был привязан к Windows, поэтому на macOS и Linux
+    древние FILETIME уезжали в os.utime и давали st_mtime_ns = -2**63.
+    """
+    sample = Path(__file__).resolve().parents[1] / "data" / "1cv8.efd"
+
+    UnpackService().unpack(str(sample), str(tmp_path))
+
+    unpacked = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert len(unpacked) == 4
+    for path in unpacked:
+        assert path.stat().st_mtime_ns != -(2 ** 63), path
 
 
 if __name__ == "__main__":
