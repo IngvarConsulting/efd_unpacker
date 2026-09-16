@@ -31,6 +31,7 @@ class UnpackErrorCode(Enum):
     PERMISSION = "unpack_permission"
     UNSAFE_ENTRY = "unpack_unsafe_entry"
     TOO_LARGE = "unpack_too_large"
+    CORRUPTED_ARCHIVE = "unpack_corrupted_archive"
     UNEXPECTED = "unpack_unexpected"
 
 

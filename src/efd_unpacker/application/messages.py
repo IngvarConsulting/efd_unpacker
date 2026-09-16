@@ -38,10 +38,35 @@ def format_unpack_result(translator: Translator, success: bool, error: UnpackErr
         key = "Archive rejected: it tries to write outside the output folder"
     elif error.code is UnpackErrorCode.TOO_LARGE:
         key = "Archive rejected: unpacked size exceeds the allowed limit"
+    elif error.code is UnpackErrorCode.CORRUPTED_ARCHIVE:
+        key = "Archive is damaged or incomplete: %1"
     else:
         key = "Unexpected error: %1"
 
     message = translator.translate("UnpackService", key)
-    if error.code is UnpackErrorCode.UNEXPECTED and error.details:
-        return message.replace("%1", error.details.get("error", ""))
-    return message
+    if "%1" not in message:
+        return message
+
+    # Подстановка привязана к самому сообщению, а не к конкретному коду ошибки,
+    # иначе новый код с плейсхолдером молча покажет пользователю «%1».
+    detail = _error_detail(translator, error)
+    return message.replace("%1", detail) if detail else message.replace(": %1", "")
+
+
+CORRUPTED_ARCHIVE_REASONS = {
+    "truncated_stream": "the file is incomplete, most likely the download was interrupted",
+    "truncated_header": "the file is too short to be an EFD archive",
+    "unsupported_header": "unsupported format version",
+    "truncated_entry": "a file inside the archive is shorter than declared",
+    "duplicate_entry": "the archive contains two files with the same name",
+    "entry_is_also_directory": "a file name in the archive conflicts with a folder name",
+}
+
+
+def _error_detail(translator: Translator, error: UnpackError) -> str:
+    """Короткое пояснение к ошибке распаковки для подстановки вместо %1."""
+    details = error.details or {}
+    if error.code is UnpackErrorCode.CORRUPTED_ARCHIVE:
+        reason = CORRUPTED_ARCHIVE_REASONS.get(details.get("reason"))
+        return translator.translate("UnpackService", reason) if reason else ""
+    return str(details.get("error", ""))
