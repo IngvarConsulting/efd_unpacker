@@ -1,18 +1,18 @@
 #!/bin/bash
 set -e
 
-# Update desktop database
 if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database /usr/share/applications
+    update-desktop-database /usr/share/applications || true
 fi
 
-# Update mime database
 if command -v update-mime-database >/dev/null 2>&1; then
-    update-mime-database /usr/share/mime
+    update-mime-database /usr/share/mime || true
 fi
 
-# Set executable permissions
-chmod +x /usr/bin/efd_unpacker
+# chmod здесь не нужен: права выставлены при сборке пакета.
+if [ "$1" = "configure" ]; then
+    echo "EFD Unpacker installed successfully!"
+    echo "You can now associate .efd files with EFD Unpacker in your file manager."
+fi
 
-echo "EFD Unpacker installed successfully!"
-echo "You can now associate .efd files with EFD Unpacker in your file manager." 
+exit 0

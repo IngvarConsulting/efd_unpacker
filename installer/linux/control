@@ -3,15 +3,16 @@ Version: VERSION_PLACEHOLDER
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: libc6 (>= 2.17), libstdc++6 (>= 4.8.1)
-Maintainer: Ingvar Consulting, LLC
-Description: EFD Unpacker
- A tool for unpacking EFD (Enterprise File Distribution) files.
- EFD files are archives used by 1C:Enterprise platform.
+Depends: libc6 (>= 2.17), libstdc++6 (>= 4.8.1), libgl1, libegl1, libglib2.0-0, libfontconfig1, libdbus-1-3, libxkbcommon0, libxkbcommon-x11-0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1
+Maintainer: Ingvar Consulting LLC <i@ingvar.pro>
+Homepage: https://github.com/IngvarConsulting/efd_unpacker
+Description: unpacker for 1C:Enterprise EFD distribution files
+ EFD Unpacker extracts the contents of .efd supply files used by the
+ 1C:Enterprise platform to distribute configuration templates.
  .
  Features:
   * Unpack EFD files to local directories
   * Support for both GUI and command line interfaces
   * Automatic file association with .efd files
   * Cross-platform compatibility
-  * Localization support (English and Russian) 
+  * Localization support (English and Russian)

@@ -152,16 +152,61 @@ jobs:
         with:
           name: linux-builds
           path: dist
-      - name: List dist contents
-        run: find dist -maxdepth 5 -print || true
-      - name: Test DEB
+      - name: Locate DEB
         run: |
-          sudo apt-get install -y $(find . -name '*.deb')
-          ls -l /usr/bin /usr/local/bin || true
+          DEB="$(find dist -type f -name '*.deb' | head -n 1)"
+          [ -n "$DEB" ] || { echo "DEB artifact not found under dist"; find dist -maxdepth 5 -print; exit 1; }
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+      - name: Inspect package metadata
+        run: |
+          # Владелец всех членов архива должен быть root/root: без fakeroot
+          # сюда уезжал uid сборщика CI.
+          if dpkg-deb -c "$DEB" | grep -vE '(^|[[:space:]])root/root([[:space:]]|$)'; then
+            echo "DEB: найдены члены архива не с root/root"; exit 1
+          fi
+          dpkg-deb -c "$DEB" | grep -q './usr/share/doc/efd-unpacker/copyright' \
+            || { echo "DEB: нет copyright"; exit 1; }
+          dpkg-deb -c "$DEB" | grep -q './usr/share/doc/efd-unpacker/changelog.gz' \
+            || { echo "DEB: нет changelog"; exit 1; }
+      - name: Lintian
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lintian
+          lintian --fail-on error,warning \
+            --suppress-tags no-manual-page,statically-linked-binary,embedded-library,extended-description-is-probably-too-short \
+            "$DEB" || { echo "lintian нашёл проблемы"; exit 1; }
+      - name: Test DEB on the runner
+        run: |
+          sudo apt-get install -y "./$DEB"
+          test "$(stat -c %u:%g /usr/bin/efd_unpacker)" = "0:0" \
+            || { echo "DEB: /usr/bin/efd_unpacker принадлежит не root"; exit 1; }
+          dpkg -L efd-unpacker | grep -q '/usr/share/doc/efd-unpacker/copyright' \
+            || { echo "DEB: copyright не установлен"; exit 1; }
           mkdir -p "$RUNNER_TEMP/efd-out"
           efd_unpacker --help
           efd_unpacker unpack tests/data/1cv8.efd -tmplts "$RUNNER_TEMP/efd-out"
           [ -n "$(find "$RUNNER_TEMP/efd-out" -type f -print -quit)" ] || { echo "DEB: nothing unpacked"; exit 1; }
+      - name: Reinstall keeps the desktop entry
+        run: |
+          # Прежний prerm удалял .desktop, принадлежащий пакету, и после
+          # переустановки ассоциации пропадали.
+          sudo apt-get install -y --reinstall "./$DEB"
+          test -f /usr/share/applications/efd_unpacker.desktop \
+            || { echo "DEB: .desktop пропал после переустановки"; exit 1; }
+      - name: Test DEB on a clean Debian
+        run: |
+          # Раннер уже несёт десктопные библиотеки, поэтому нехватку Depends
+          # на нём не увидеть. Чистый образ — единственная честная проверка.
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/w" -w /w debian:12-slim bash -eux -c '
+              apt-get update
+              apt-get install -y ./'"$DEB"'
+              test "$(stat -c %u:%g /usr/bin/efd_unpacker)" = "0:0"
+              efd_unpacker --help
+              mkdir -p /tmp/o
+              efd_unpacker unpack tests/data/1cv8.efd -tmplts /tmp/o
+              test -n "$(find /tmp/o -type f -print -quit)"
+            '
 
   test-windows-setup:
     timeout-minutes: 20

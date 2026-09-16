@@ -52,6 +52,7 @@ check:
 	if [ "$(PLATFORM)" = "linux" ]; then \
 	  command -v appimagetool >/dev/null 2>&1 && echo "✓ appimagetool" || { echo "✗ appimagetool"; FAILED=1; }; \
 	  command -v dpkg-deb >/dev/null 2>&1 && echo "✓ dpkg-deb" || { echo "✗ dpkg-deb"; FAILED=1; }; \
+	  command -v fakeroot >/dev/null 2>&1 && echo "✓ fakeroot" || { echo "✗ fakeroot"; FAILED=1; }; \
 	  command -v rpmbuild >/dev/null 2>&1 && echo "✓ rpmbuild" || { echo "✗ rpmbuild"; FAILED=1; }; \
 	  command -v zip >/dev/null 2>&1 && echo "✓ zip" || { echo "✗ zip"; FAILED=1; }; \
 	fi; \
@@ -185,15 +186,17 @@ build-linux-executable:
 create-linux-appimage:
 	@echo "Creating Linux AppImage..."
 		@if command -v appimagetool >/dev/null 2>&1; then \
-			mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps; \
+			mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/1024x1024/apps; \
 			cp dist/efd_unpacker AppDir/usr/bin/efd_unpacker; \
 			if [ -f "resources/icon.png" ]; then \
-				cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
+				cp resources/icon.png AppDir/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
 				cp resources/icon.png AppDir/efd_unpacker.png; \
 			fi; \
 			cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/; \
 			cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
 			cp installer/linux/AppRun AppDir/; \
+			mkdir -p AppDir/usr/share/doc/efd-unpacker; \
+			cp installer/linux/copyright AppDir/usr/share/doc/efd-unpacker/copyright; \
 		chmod +x AppDir/AppRun; \
 		appimagetool AppDir dist/efd-unpacker-$$(cat version.txt)-linux.AppImage; \
 		rm -rf AppDir; \
@@ -203,36 +206,49 @@ create-linux-appimage:
 
 create-linux-deb:
 	@echo "Creating Linux DEB package..."
-		@if command -v dpkg-deb >/dev/null 2>&1; then \
-			mkdir -p debian/DEBIAN debian/usr/bin debian/usr/share/applications debian/usr/share/icons/hicolor/256x256/apps debian/usr/share/mime/packages; \
-			cp dist/efd_unpacker debian/usr/bin/efd_unpacker; \
-			if [ -f "resources/icon.png" ]; then \
-				cp resources/icon.png debian/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
-			fi; \
-			cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
-			cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
-			cp installer/linux/control debian/DEBIAN/; \
-		sed -i "s/VERSION_PLACEHOLDER/$$(cat version.txt)/g" debian/DEBIAN/control; \
-		cp installer/linux/postinst debian/DEBIAN/; \
-		cp installer/linux/prerm debian/DEBIAN/; \
-		chmod +x debian/DEBIAN/postinst debian/DEBIAN/prerm; \
-		dpkg-deb --build debian dist/efd-unpacker-$$(cat version.txt)-linux-amd64.deb; \
-		rm -rf debian; \
-	else \
-		echo "Warning: dpkg-deb not found. Skipping DEB package creation."; \
-	fi
+	@set -e; \
+	if ! command -v dpkg-deb >/dev/null 2>&1; then \
+		echo "Error: dpkg-deb not found."; exit 1; \
+	fi; \
+	VERSION=$$(cat version.txt); \
+	DOCDIR=debian/usr/share/doc/efd-unpacker; \
+	rm -rf debian; \
+	mkdir -p debian/DEBIAN debian/usr/bin debian/usr/share/applications \
+		debian/usr/share/icons/hicolor/1024x1024/apps debian/usr/share/mime/packages "$$DOCDIR"; \
+	cp dist/efd_unpacker debian/usr/bin/efd_unpacker; \
+	if [ -f "resources/icon.png" ]; then \
+		cp resources/icon.png debian/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
+	fi; \
+	cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
+	cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
+	cp installer/linux/copyright "$$DOCDIR/copyright"; \
+	printf 'efd-unpacker (%s) unstable; urgency=medium\n\n  * See https://github.com/IngvarConsulting/efd_unpacker/releases\n\n -- Ingvar Consulting LLC <i@ingvar.pro>  %s\n' \
+		"$$VERSION" "$$(date -R)" > "$$DOCDIR/changelog"; \
+	gzip -9n "$$DOCDIR/changelog"; \
+	cp installer/linux/control debian/DEBIAN/; \
+	sed -i "s/VERSION_PLACEHOLDER/$$VERSION/g" debian/DEBIAN/control; \
+	cp installer/linux/postinst installer/linux/postrm debian/DEBIAN/; \
+	chmod 0755 debian/DEBIAN/postinst debian/DEBIAN/postrm; \
+	chmod 0755 debian/usr/bin/efd_unpacker; \
+	find debian/usr/share -type f -exec chmod 0644 {} +; \
+	find debian/usr -type d -exec chmod 0755 {} +; \
+	fakeroot dpkg-deb --build debian "dist/efd-unpacker-$$VERSION-linux-amd64.deb"; \
+	rm -rf debian; \
+	test -f "dist/efd-unpacker-$$VERSION-linux-amd64.deb"
 
 create-linux-rpm:
 	@echo "Creating Linux RPM package..."
 	@if command -v rpmbuild >/dev/null 2>&1; then \
 		mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS rpmbuild/SOURCES rpmbuild/SPECS; \
-		mkdir -p rpm_temp/usr/bin rpm_temp/usr/share/applications rpm_temp/usr/share/icons/hicolor/256x256/apps rpm_temp/usr/share/mime/packages; \
+		mkdir -p rpm_temp/usr/bin rpm_temp/usr/share/applications rpm_temp/usr/share/icons/hicolor/1024x1024/apps rpm_temp/usr/share/mime/packages; \
 		cp dist/efd_unpacker rpm_temp/usr/bin/efd_unpacker; \
 		if [ -f "resources/icon.png" ]; then \
-			cp resources/icon.png rpm_temp/usr/share/icons/hicolor/256x256/apps/efd_unpacker.png; \
+			cp resources/icon.png rpm_temp/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
 		fi; \
 		cp installer/linux/efd_unpacker.desktop rpm_temp/usr/share/applications/; \
 		cp installer/linux/mime-info.xml rpm_temp/usr/share/mime/packages/; \
+		mkdir -p rpm_temp/usr/share/doc/efd-unpacker; \
+		cp installer/linux/copyright rpm_temp/usr/share/doc/efd-unpacker/copyright; \
 		cp installer/linux/efd-unpacker.spec.in rpmbuild/SPECS/efd-unpacker.spec; \
 		sed -i "s/VERSION_PLACEHOLDER/$$(cat version.txt)/g" rpmbuild/SPECS/efd-unpacker.spec; \
 		tar -czf rpmbuild/SOURCES/efd-unpacker-$$(cat version.txt).tar.gz -C rpm_temp .; \
