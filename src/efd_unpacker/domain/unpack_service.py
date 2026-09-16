@@ -8,6 +8,7 @@ import datetime as dt
 import ntpath
 import os
 import posixpath
+import stat
 import tempfile
 import zlib
 from struct import unpack
@@ -32,6 +33,14 @@ POSIX_EPOCH = dt.datetime(1970, 1, 1)
 MIN_REPRESENTABLE_MTIME = dt.datetime(1678, 1, 1)
 # Единственная версия заголовка, встречавшаяся в исследованных файлах поставки.
 SUPPORTED_HEADER = 1
+
+# Права на вновь созданных файлах. mkstemp даёт 0600, и os.replace переносит
+# этот режим на цель, поэтому его нужно выставлять явно — иначе распакованные
+# шаблоны становятся доступны только владельцу. umask читаем один раз на
+# импорте: процесс в этот момент однопоточный.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+DEFAULT_FILE_MODE = 0o644 & ~_UMASK
 
 # Порция, которую zlib отдаёт за один вызов. Ограничивает пиковую память:
 # без max_length один чанк входа может развернуться в гигабайты одним объектом.
@@ -75,7 +84,7 @@ def _safe_relative_parts(src_path: str) -> List[str]:
     return parts
 
 
-def _resolve_entry_path(output_root: str, src_path: str) -> str:
+def _resolve_entry_path(output_root: str, src_path: str, parts: List[str]) -> str:
     """
     Возвращает путь записи внутри output_root или поднимает UnpackError.
 
@@ -83,7 +92,7 @@ def _resolve_entry_path(output_root: str, src_path: str) -> str:
     считает `/tmp/out2` находящимся внутри `/tmp/out`. realpath дополнительно
     закрывает случай, когда промежуточный каталог оказался симлинком наружу.
     """
-    target = os.path.join(output_root, *_safe_relative_parts(src_path))
+    target = os.path.join(output_root, *parts)
 
     try:
         if os.path.commonpath([output_root, os.path.realpath(target)]) != output_root:
@@ -103,17 +112,22 @@ def _check_decompression_budget(total_out: int, total_in: int) -> None:
         raise UnpackError(UnpackErrorCode.TOO_LARGE, {"unpacked": total_out, "packed": total_in})
 
 
-def _reject_conflicting_entries(src_paths: List[str]) -> None:
+def _reject_conflicting_entries(src_paths: List[str], parts_list: List[List[str]]) -> None:
     """
     Отвергает архив, в котором записи затирают друг друга.
 
     Без этой проверки дубль имени молча терял первую запись, а имя, совпадающее
     с каталогом соседней записи, роняло распаковку на середине с FileExistsError
     из недр os.makedirs — то есть с сообщением «Неожиданная ошибка».
+
+    Ключи строятся из тех же компонентов, что и целевой путь, а не из сырого
+    имени: иначе `a.txt` и `./a.txt` считались бы разными записями и вторая
+    молча перезаписала бы первую.
+
     Сравнение регистронезависимое: на APFS и NTFS `README.txt` и `readme.txt` —
     один и тот же файл.
     """
-    keys = [path.replace("\\", "/").casefold() for path in src_paths]
+    keys = ["/".join(parts).casefold() for parts in parts_list]
 
     seen = set()
     for key, src_path in zip(keys, src_paths):
@@ -132,6 +146,30 @@ def _reject_conflicting_entries(src_paths: List[str]) -> None:
                     UnpackErrorCode.CORRUPTED_ARCHIVE,
                     {"reason": "entry_is_also_directory", "entry": src_path},
                 )
+
+
+def _apply_file_mode(temporary: str, path: str) -> None:
+    """
+    Выставляет режим временному файлу перед подстановкой на место цели.
+
+    mkstemp создаёт файл с 0600, и os.replace переносит этот режим на цель.
+    Если цель уже существует обычным файлом — сохраняем её режим, как делала
+    прежняя запись поверх; иначе берём обычные права для новых файлов.
+    lstat, а не stat: у симлинка режим брать нельзя.
+    """
+    mode = DEFAULT_FILE_MODE
+    try:
+        existing = os.lstat(path)
+        if stat.S_ISREG(existing.st_mode):
+            mode = stat.S_IMODE(existing.st_mode)
+    except OSError:
+        pass
+
+    try:
+        os.chmod(temporary, mode)
+    except OSError:
+        # На Windows chmod умеет немногое; права — не повод валить распаковку.
+        pass
 
 
 def _apply_file_mtime(path: str, modified_at: dt.datetime) -> None:
@@ -193,8 +231,12 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             # Сначала проверяем все имена, и только потом пишем: отклонить
             # архив на середине значит оставить пользователю половину файлов.
             src_paths = [entry[0] for entry in self.included_files]
-            _reject_conflicting_entries(src_paths)
-            paths = [_resolve_entry_path(output_root, src_path) for src_path in src_paths]
+            parts_list = [_safe_relative_parts(src_path) for src_path in src_paths]
+            _reject_conflicting_entries(src_paths, parts_list)
+            paths = [
+                _resolve_entry_path(output_root, src_path, parts)
+                for src_path, parts in zip(src_paths, parts_list)
+            ]
 
             for (src_path, modified_at, size), path in zip(self.included_files, paths):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -226,6 +268,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                              "expected": size, "actual": written},
                         )
                     written += out_file.write(data)
+            _apply_file_mode(temporary, path)
             os.replace(temporary, path)
         except BaseException:
             try:

@@ -5,6 +5,7 @@
 а на диске оставался неполный каталог шаблона.
 """
 
+import stat
 import struct
 import zlib
 from pathlib import Path
@@ -110,6 +111,81 @@ def test_case_insensitive_duplicate_entries_are_rejected(tmp_path):
         UnpackService().unpack(source, str(output_dir))
 
     assert ctx.value.details["reason"] == "duplicate_entry"
+
+
+@pytest.mark.parametrize(
+    "second_name",
+    [".\\a.txt", ".\\.\\a.txt", "a.txt"],
+    ids=["dot-prefix", "repeated-dot", "identical"],
+)
+def test_duplicates_are_detected_after_canonicalization(second_name, tmp_path):
+    """
+    Ключи конфликтов строятся из тех же компонентов, что и целевой путь.
+    Раньше `./a.txt` считался другой записью и молча затирал `a.txt`.
+    """
+    source = _write(tmp_path / "dot.efd", _build_efd([("a.txt", b"FIRST"), (second_name, b"SECOND")]))
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService().unpack(source, str(output_dir))
+
+    assert ctx.value.details["reason"] == "duplicate_entry"
+    assert list(output_dir.rglob("*")) == []
+
+
+def test_repeated_separator_duplicate_is_detected(tmp_path):
+    """Пустые компоненты отбрасываются, поэтому `sub\\\\f.txt` — та же запись, что `sub\\f.txt`."""
+    source = _write(
+        tmp_path / "sep.efd",
+        _build_efd([("sub\\f.txt", b"FIRST"), ("sub\\\\f.txt", b"SECOND")]),
+    )
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService().unpack(source, str(output_dir))
+
+    assert ctx.value.details["reason"] == "duplicate_entry"
+
+
+def test_directory_conflict_is_detected_after_canonicalization(tmp_path):
+    """`a` и `./a/b.txt` раньше проваливались в FileExistsError уже после записи `a`."""
+    source = _write(tmp_path / "dotclash.efd", _build_efd([("a", b"FILE"), (".\\a\\b.txt", b"NESTED")]))
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService().unpack(source, str(output_dir))
+
+    assert ctx.value.details["reason"] == "entry_is_also_directory"
+    assert list(output_dir.rglob("*")) == []
+
+
+def test_unpacked_files_are_readable(tmp_path):
+    """mkstemp даёт 0600, и os.replace переносит режим на цель — выставляем явно."""
+    UnpackService().unpack(str(SAMPLE), str(tmp_path))
+
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            mode = stat.S_IMODE(path.stat().st_mode)
+            assert mode & stat.S_IRUSR, path
+            assert mode != 0o600, path
+
+
+def test_existing_file_mode_is_preserved(tmp_path):
+    """Перезапись существующего шаблона не должна менять его права."""
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    victim = output_dir / "a.txt"
+    victim.write_bytes(b"old")
+    victim.chmod(0o640)
+
+    source = _write(tmp_path / "ok.efd", _build_efd([("a.txt", b"new")]))
+    UnpackService().unpack(source, str(output_dir))
+
+    assert victim.read_bytes() == b"new"
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o640
 
 
 def test_entry_colliding_with_directory_is_rejected(tmp_path):
