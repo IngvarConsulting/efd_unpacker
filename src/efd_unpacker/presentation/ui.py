@@ -263,19 +263,21 @@ class MainWindow(QMainWindow):
             self.label_input.setText(self._t("MainWindow", "Drag .efd file here or click to choose"))
             self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
 
-    def set_input_file(self, file_path: str) -> None:
+    def set_input_file(self, file_path: str) -> bool:
+        """Принимает файл. Возвращает False, показав причину отказа пользователю."""
         try:
             normalized = self.file_validator.validate_input_file(file_path)
         except FileValidationError as exc:
             message = format_validation_error(self.translator, exc)
             QMessageBox.warning(self, self._t("MainWindow", "Error"), message)
             self.btn_unpack.setEnabled(False)
-            return
+            return False
 
         self.input_file = normalized
         self.label_input.setText(normalized)
         self.label_input.setStyleSheet(Styles.INPUT_SUCCESS)
         self.btn_unpack.setEnabled(True)
+        return True
 
     def browse_output_path(self) -> None:
         directory = QFileDialog.getExistingDirectory(

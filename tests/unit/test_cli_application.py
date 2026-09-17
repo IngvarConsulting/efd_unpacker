@@ -1,7 +1,9 @@
 import unittest
 from typing import List
 
-from efd_unpacker.application.cli import CLIApplication, CLIResult
+import pytest
+
+from efd_unpacker.application.cli import CLIApplication, CLIResult, wants_help
 from efd_unpacker.domain.errors import FileValidationError, FileValidationCode, UnpackError, UnpackErrorCode
 from efd_unpacker.domain.file_validator import FileValidator
 from efd_unpacker.domain.unpack_service import UnpackService
@@ -101,3 +103,107 @@ class TestCLIApplication(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- строгий разбор команды unpack (#15) -------------------------------------
+
+
+class _Recorder:
+    """Собирает вывод CLI, чтобы проверить, что пользователь что-то увидел."""
+
+    def __init__(self):
+        self.lines = []
+
+    def __call__(self, message):
+        self.lines.append(message)
+
+    @property
+    def text(self):
+        return "\n".join(self.lines)
+
+
+def _cli_with_output(output):
+    return CLIApplication(
+        validator=FileValidator(),
+        unpack_service=UnpackService(),
+        translator=DummyTranslator(),
+        output=output,
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["efd_unpacker", "unpack", "a.efd", "--tmplts", "out"],
+        ["efd_unpacker", "unpack", "-tmplts", "out", "a.efd"],
+        ["efd_unpacker", "UNPACK", "a.efd", "-tmplts", "out"],
+        ["efd_unpacker", "unpack", "a.efd"],
+        ["efd_unpacker", "unpack"],
+        ["efd_unpacker", "unpack", "a.efd", "-tmplts", "out", "EXTRA"],
+        ["efd_unpacker", "unpack", "a.efd", "-t", "out"],
+        ["efd_unpacker", "unpack", "a.efd", "-tmp", "out"],
+        ["efd_unpacker", "unpack", "a.efd", "-tmplts", ""],
+    ],
+    ids=[
+        "--tmplts", "перепутан порядок", "верхний регистр", "без флага",
+        "только команда", "лишний хвост", "сокращение -t", "сокращение -tmp",
+        "пустой каталог",
+    ],
+)
+def test_malformed_unpack_prints_usage_instead_of_opening_the_gui(argv):
+    """
+    Регресс #15: любой неверный хвост возвращал handled=False, процесс
+    проваливался в Qt event loop и висел до убийства — ни сообщения, ни кода.
+
+    Сокращения проверяются отдельно: allow_abbrev=False в argparse отключает
+    их только для --опций, и `-t out` он принял бы как -tmplts.
+    """
+    output = _Recorder()
+
+    result = _cli_with_output(output).run(argv)
+
+    assert result.handled is True
+    assert result.exit_code == 2
+    assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in output.text
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_after_the_command_prints_help(flag):
+    """`unpack --help` — именно то, что наберёт забывший синтаксис."""
+    output = _Recorder()
+
+    result = _cli_with_output(output).run(["efd_unpacker", "unpack", flag])
+
+    assert result == CLIResult(exit_code=0, handled=True)
+    assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in output.text
+
+
+def test_help_wins_over_a_malformed_tail():
+    output = _Recorder()
+
+    result = _cli_with_output(output).run(["efd_unpacker", "unpack", "a.efd", "--help", "x"])
+
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["efd_unpacker"],
+        ["efd_unpacker", "/path/file.efd"],
+        ["efd_unpacker", "-platform", "offscreen"],
+        ["efd_unpacker", "unpacked.efd"],
+    ],
+    ids=["без аргументов", "файл для GUI", "флаг Qt", "имя, похожее на команду"],
+)
+def test_non_unpack_arguments_still_go_to_the_gui(argv):
+    """GUI-режим трогать нельзя: без команды unpack CLI обязан отдать управление."""
+    result = _cli_with_output(_Recorder()).run(argv)
+
+    assert result == CLIResult(exit_code=0, handled=False)
+
+
+def test_wants_help_scans_every_position():
+    assert wants_help(["unpack", "a.efd", "--help"]) is True
+    assert wants_help(["-h"]) is True
+    assert wants_help(["unpack", "a.efd", "-tmplts", "out"]) is False

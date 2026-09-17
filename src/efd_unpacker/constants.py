@@ -42,6 +42,10 @@ class CLICommands:
     """Команды командной строки"""
     UNPACK = "unpack"
     OUTPUT_FLAG = "-tmplts"
+    HELP_FLAGS = ("--help", "-h")
+    # Код 2 для ошибки синтаксиса — соглашение getopt и argparse; 1 остаётся
+    # за содержательным отказом (файл не найден, архив повреждён).
+    EXIT_USAGE = 2
 
 
 class FileExtensions:
