@@ -8,6 +8,8 @@
 import os
 import stat
 import struct
+import subprocess
+import sys
 import zlib
 from pathlib import Path
 
@@ -311,3 +313,28 @@ def test_cancel_keeps_already_written_entries(tmp_path, monkeypatch):
     assert ctx.value.code is UnpackErrorCode.CANCELLED
     assert (output_dir / "a.txt").read_bytes() == b"a" * 4096
     assert not list(output_dir.glob("*.part"))
+
+
+def test_header_check_survives_python_optimize(tmp_path):
+    """
+    Регресс #13: проверка заголовка была `assert header == 1` и вырезалась
+    под `python -O`. Сам pytest под -O бесполезен — там вырезаются и assert'ы
+    тестов, — поэтому проверка гоняется отдельным процессом.
+    """
+    source = _write(tmp_path / "bad.efd", _build_efd([("a.txt", b"x")], header=2))
+    script = (
+        "from efd_unpacker.domain.unpack_service import UnpackService\n"
+        "from efd_unpacker.domain.errors import UnpackError\n"
+        "try:\n"
+        f"    UnpackService().unpack({source!r}, {str(tmp_path / 'out')!r})\n"
+        "    print('NO ERROR', __debug__)\n"
+        "except UnpackError as exc:\n"
+        "    print(exc.details['reason'], __debug__)\n"
+    )
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", script], capture_output=True, text=True, env=env, check=True
+    )
+
+    assert result.stdout.strip() == "unsupported_header False"

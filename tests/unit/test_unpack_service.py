@@ -149,3 +149,42 @@ def test_apply_file_mtime_survives_oserror(tmp_path, monkeypatch):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_unexpected_error_keeps_the_exception_type_when_str_is_empty(tmp_path):
+    """
+    Регресс #13: str(AssertionError()) и str(MemoryError()) пусты, и пользователь
+    получал «Неожиданная ошибка» вообще без признака того, что сломалось.
+    """
+    sample = tmp_path / "x.efd"
+    sample.write_bytes(b"data")
+
+    class Boom:
+        def __init__(self, _handle):
+            pass
+
+        def unpack(self, _output_dir):
+            raise MemoryError()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService(reader_factory=Boom).unpack(str(sample), str(tmp_path / "out"))
+
+    assert ctx.value.code is UnpackErrorCode.UNEXPECTED
+    assert ctx.value.details["error"] == "MemoryError"
+
+
+def test_unexpected_error_prefers_the_exception_text_when_there_is_one(tmp_path):
+    sample = tmp_path / "x.efd"
+    sample.write_bytes(b"data")
+
+    class Boom:
+        def __init__(self, _handle):
+            pass
+
+        def unpack(self, _output_dir):
+            raise RuntimeError("что-то конкретное")
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService(reader_factory=Boom).unpack(str(sample), str(tmp_path / "out"))
+
+    assert ctx.value.details["error"] == "что-то конкретное"

@@ -22,6 +22,8 @@ class FileValidationCode(Enum):
     OUTPUT_NOT_DIRECTORY = "output_not_directory"
     OUTPUT_NOT_WRITABLE = "output_not_writable"
     OUTPUT_CANNOT_CREATE = "output_cannot_create"
+    OUTPUT_CREATE_FAILED = "output_create_failed"
+    OUTPUT_PATH_INVALID = "output_path_invalid"
 
 
 class UnpackErrorCode(Enum):
@@ -36,12 +38,21 @@ class UnpackErrorCode(Enum):
     UNEXPECTED = "unpack_unexpected"
 
 
-@dataclass
+# eq=False возвращает наследуемый от Exception __hash__: сгенерированный
+# dataclass'ом __eq__ ставит __hash__ = None, и ошибку нельзя положить
+# ни в set, ни в ключ словаря. На сравнение ошибок по значению код
+# нигде не опирается — везде сравнивается error.code.
+@dataclass(eq=False)
 class DomainError(Exception):
     """Базовое доменное исключение."""
 
     code: Enum
     details: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        # dataclass не вызывает Exception.__init__, поэтому при именованном
+        # вызове args оставался пустым, и traceback терял код ошибки.
+        super().__init__(self.code, self.details)
 
     def __str__(self) -> str:
         base = self.code.value if isinstance(self.code, Enum) else str(self.code)

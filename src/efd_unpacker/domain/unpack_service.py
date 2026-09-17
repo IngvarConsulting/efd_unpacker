@@ -378,5 +378,10 @@ class UnpackService:
             raise UnpackError(UnpackErrorCode.FILE_NOT_FOUND) from exc
         except PermissionError as exc:
             raise UnpackError(UnpackErrorCode.PERMISSION) from exc
-        except Exception as exc:  # pragma: no cover - неожиданные ошибки
-            raise UnpackError(UnpackErrorCode.UNEXPECTED, {"error": str(exc)}) from exc
+        except Exception as exc:
+            # str(AssertionError()) и str(MemoryError()) пусты — без запасного
+            # варианта пользователь и автор issue получали «Неожиданная ошибка»
+            # вообще без признака того, что именно сломалось.
+            raise UnpackError(
+                UnpackErrorCode.UNEXPECTED, {"error": str(exc) or type(exc).__name__}
+            ) from exc
