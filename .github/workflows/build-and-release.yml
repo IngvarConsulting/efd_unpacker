@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - 'v*'
+  # Пробный прогон без публикации: собирает и смоук-тестирует всё то же самое,
+  # но create-release пропускается — он условен по refs/tags/. Нужен потому,
+  # что иначе первый прогон изменений в этом файле совпадал бы с первым релизом.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия пробной сборки. Формат X.Y.Z обязателен: WiX не примет суффикс от git describe.'
+        required: false
+        default: '0.0.0'
+        type: string
+
+env:
+  # На пуше тега пусто, и Makefile берёт версию из git describe, как раньше.
+  EFD_VERSION: ${{ inputs.version }}
 
 # Минимум по умолчанию; право на запись выдаётся только job'у, который
 # действительно публикует релиз.
@@ -49,9 +63,16 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build Linux version
         run: |
-          make build-linux
+          make build-linux VERSION="$EFD_VERSION"
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -75,9 +96,18 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build Windows version
         run: |
-          make build-windows
+          # $env:, а не $: шаг исполняется PowerShell, где $EFD_VERSION —
+          # необъявленная переменная, а не окружение.
+          make build-windows VERSION="$env:EFD_VERSION"
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -114,9 +144,16 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build macOS version
         run: |
-          make build-macos
+          make build-macos VERSION="$EFD_VERSION"
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
