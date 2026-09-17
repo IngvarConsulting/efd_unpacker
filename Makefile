@@ -13,6 +13,10 @@ else
         PLATFORM := macos
         PYTHON := python3
         PYI_DATASEP := :
+        # PyInstaller не кросс-компилирует: архитектура раннера и есть
+        # архитектура бинаря. Кладём её в имя артефакта, чтобы сборки с
+        # arm64- и intel-раннеров не перезаписывали друг друга.
+        MACOS_ARCH := $(shell uname -m)
     else
         PLATFORM := linux
         PYTHON := python3
@@ -361,6 +365,13 @@ build-macos-app:
 		echo "Error: EFDUnpacker.app not found in dist directory."; \
 		exit 1; \
 	fi
+	@BUILT=$$(lipo -archs "dist/EFDUnpacker.app/Contents/MacOS/EFDUnpacker"); \
+	if [ "$$BUILT" != "$(MACOS_ARCH)" ]; then \
+		echo "Error: built $$BUILT, expected $(MACOS_ARCH). PyInstaller не кросс-компилирует —"; \
+		echo "       проверьте, что python и колёса совпадают с архитектурой машины."; \
+		exit 1; \
+	fi; \
+	echo "Built for $$BUILT"
 
 create-macos-dmg:
 	@echo "Creating DMG installer..."
@@ -383,7 +394,7 @@ create-macos-dmg:
 		--icon "EFDUnpacker.app" 175 120 \
 		--hide-extension "EFDUnpacker.app" \
 		--app-drop-link 425 120 \
-		"dist/efd-unpacker-$${VERSION}-macos.dmg" \
+		"dist/efd-unpacker-$${VERSION}-macos-$(MACOS_ARCH).dmg" \
 		"$$STAGING_DIR"
 
 create-macos-zip:
