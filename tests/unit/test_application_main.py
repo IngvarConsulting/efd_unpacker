@@ -6,7 +6,7 @@ process_file_argument больше не валидирует: он привод�
 терялась вместе с кодом ошибки, и GUI открывался пустым.
 """
 
-import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +15,19 @@ from efd_unpacker.application.main import (
     process_file_argument,
 )
 from efd_unpacker.application.help_text import format_help_text
+
+
+def assert_same_path(result: str, expected: Path) -> None:
+    """
+    Сравнение через Path, а не строкой.
+
+    URL всегда несёт прямые слэши, а str(Path) на Windows — обратные:
+    C:/Users/x/a.efd и C:\\Users\\x\\a.efd указывают на один файл, но как
+    строки не равны. Разделители приводит к системным os.path.abspath уже
+    внутри валидатора, поэтому на поведение это не влияет — влияло только
+    на строгость самого теста.
+    """
+    assert Path(result) == expected
 
 
 class StubTranslator:
@@ -34,13 +47,13 @@ def test_plain_path_is_returned_unchanged(tmp_path):
 def test_file_url_becomes_an_absolute_path(tmp_path):
     input_file = tmp_path / "input.efd"
 
-    assert process_file_argument(input_file.as_uri()) == str(input_file)
+    assert_same_path(process_file_argument(input_file.as_uri()), input_file)
 
 
 def test_file_url_decodes_percent_encoding(tmp_path):
     input_file = tmp_path / "файл с пробелом.efd"
 
-    assert process_file_argument(input_file.as_uri()) == str(input_file)
+    assert_same_path(process_file_argument(input_file.as_uri()), input_file)
 
 
 # --- схема efd:// ------------------------------------------------------------
@@ -59,10 +72,21 @@ def test_efd_scheme_matches_the_file_scheme(tmp_path, name):
     """Критерий #15: efd:// обязан давать ровно то же, что эквивалентный file://."""
     input_file = tmp_path / name
     file_url = input_file.as_uri()
-    efd_url = "efd://" + file_url[len("file://"):]
+    efd_url = _efd_uri(input_file)
 
     assert process_file_argument(efd_url) == process_file_argument(file_url)
-    assert process_file_argument(efd_url) == str(input_file)
+    assert_same_path(process_file_argument(efd_url), input_file)
+
+
+def _efd_uri(path: Path) -> str:
+    """
+    efd://-форма того же файла: три слэша, как в документации.
+
+    Собираем из as_uri(), а не из as_posix(): на Windows as_posix() начинается
+    с буквы диска, и склейка дала бы efd://C:/... — форму с authority, то есть
+    другую ветку разбора, чем на Linux и macOS.
+    """
+    return "efd://" + path.as_uri()[len("file://"):]
 
 
 def test_efd_scheme_from_the_documentation(tmp_path, monkeypatch):
@@ -70,16 +94,20 @@ def test_efd_scheme_from_the_documentation(tmp_path, monkeypatch):
     input_file = tmp_path / "sample.efd"
     monkeypatch.chdir(tmp_path.parent)
 
-    result = process_file_argument("efd://" + input_file.as_posix())
+    result = process_file_argument(_efd_uri(input_file))
 
-    assert result == str(input_file)
+    assert result.count("/") >= 1
+    assert_same_path(result, input_file)
 
 
 def test_efd_scheme_decodes_percent_encoding(tmp_path):
     input_file = tmp_path / "файл.efd"
-    quoted = urllib.parse.quote(input_file.as_posix())
+    # as_uri() уже даёт percent-encoding для не-ASCII; quote поверх него
+    # экранировал бы сами знаки % и проверял бы не то.
+    url = _efd_uri(input_file)
 
-    assert process_file_argument("efd://" + quoted) == str(input_file)
+    assert "%D1%84" in url, "иначе тест не проверяет декодирование"
+    assert_same_path(process_file_argument(url), input_file)
 
 
 @pytest.mark.parametrize("scheme", ["file", "efd"], ids=["file", "efd"])
@@ -95,8 +123,11 @@ def test_windows_drive_letter_is_not_treated_as_a_host(scheme):
 
 def test_localhost_host_is_dropped(tmp_path):
     input_file = tmp_path / "a.efd"
+    # Вставляем хост в готовый file://-URL: склейка с as_posix() даёт на
+    # Windows "file://localhostC:/..." — netloc "localhostC:" вместо localhost.
+    with_localhost = input_file.as_uri().replace("file://", "file://localhost", 1)
 
-    assert process_file_argument("file://localhost" + input_file.as_posix()) == str(input_file)
+    assert_same_path(process_file_argument(with_localhost), input_file)
 
 
 # --- отбор аргументов, похожих на ввод ---------------------------------------
