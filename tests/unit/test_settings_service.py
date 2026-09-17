@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from PyQt5.QtCore import QSettings
+
+from efd_unpacker.infrastructure import settings_service as settings_service_module
 from efd_unpacker.infrastructure.settings_service import SettingsService
 
 
@@ -56,3 +59,47 @@ class TestSettingsService(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_non_string_setting_falls_back_to_default(tmp_path, monkeypatch):
+    """
+    Регресс #18: QSettings отдаёт то, что лежит в файле. Конфиг, правленный
+    извне, даёт list, а os.path.normpath дальше роняет запуск ещё до
+    window.show() — без окна и без сообщения.
+    """
+    ini = tmp_path / "settings.ini"
+    ini.write_text("[General]\noutput_path=/home/u/Templates, old/tmplts\n", encoding="utf-8")
+    settings = QSettings(str(ini), QSettings.IniFormat)
+    assert not isinstance(settings.value("output_path"), str), "иначе тест проверяет не то"
+
+    monkeypatch.setattr(
+        settings_service_module, "get_1c_configuration_location_default", lambda: "/default/tmplts"
+    )
+    monkeypatch.setattr(
+        settings_service_module, "get_1c_configuration_location_from_1cestart", lambda: []
+    )
+    service = SettingsService(translator=_DummyTranslator(), settings=settings)
+
+    assert service.get_output_path() == "/default/tmplts"
+    # Метка именно (last used): откат отдаёт тот же путь, что и default, ветка
+    # last_used срабатывает первой и занимает его. Это существующее поведение
+    # разметки, а не следствие отката — трогать его здесь незачем.
+    assert service.get_output_path_items() == [("/default/tmplts", "/default/tmplts (last used)")]
+
+
+def test_string_setting_is_used_as_is(tmp_path, monkeypatch):
+    ini = tmp_path / "settings.ini"
+    ini.write_text("[General]\noutput_path=/home/u/Templates\n", encoding="utf-8")
+    settings = QSettings(str(ini), QSettings.IniFormat)
+
+    monkeypatch.setattr(
+        settings_service_module, "get_1c_configuration_location_default", lambda: "/default/tmplts"
+    )
+    service = SettingsService(translator=_DummyTranslator(), settings=settings)
+
+    assert service.get_output_path() == "/home/u/Templates"
+
+
+class _DummyTranslator:
+    def translate(self, _context, source):
+        return source
