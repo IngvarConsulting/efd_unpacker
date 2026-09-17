@@ -204,6 +204,11 @@ create-linux-appimage:
 		echo "Warning: appimagetool not found. Skipping AppImage creation."; \
 	fi
 
+# dpkg-deb собирается с -Zxz: на ubuntu-22.04 умолчание — zstd, а это
+# ubuntu-специфичное расширение. lintian считает такой архив malformed, и
+# старый инструментарий его не разбирает; xz понимают все.
+# Комментарии внутрь рецепта не ставить: он склеен обратными слэшами в одну
+# логическую строку, и '#' закомментирует весь её остаток.
 create-linux-deb:
 	@echo "Creating Linux DEB package..."
 	@set -e; \
@@ -232,7 +237,7 @@ create-linux-deb:
 	chmod 0755 debian/usr/bin/efd_unpacker; \
 	find debian/usr/share -type f -exec chmod 0644 {} +; \
 	find debian/usr -type d -exec chmod 0755 {} +; \
-	fakeroot dpkg-deb --build debian "dist/efd-unpacker-$$VERSION-linux-amd64.deb"; \
+	fakeroot dpkg-deb -Zxz --build debian "dist/efd-unpacker-$$VERSION-linux-amd64.deb"; \
 	rm -rf debian; \
 	test -f "dist/efd-unpacker-$$VERSION-linux-amd64.deb"
 
