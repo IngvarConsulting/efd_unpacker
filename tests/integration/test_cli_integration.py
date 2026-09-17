@@ -122,9 +122,28 @@ def test_cli_creates_the_output_directory(tmp_path):
     assert unpacked_tree(output_dir)
 
 
-def test_cli_does_not_handle_incomplete_command(tmp_path):
-    """Без -tmplts это не headless-режим: CLI обязан отдать управление GUI."""
-    result = _cli().run(["efd_unpacker", "unpack", SAMPLE])
+def test_cli_reports_an_incomplete_command_instead_of_opening_the_gui(tmp_path):
+    """
+    Контракт изменён намеренно (#15).
+
+    Раньше `unpack <файл>` без -tmplts возвращал handled=False, и процесс
+    проваливался в Qt event loop: из терминала поднималось окно, а под
+    QT_QPA_PLATFORM без дисплея команда висела до убийства — ни сообщения,
+    ни кода возврата. docs/CLI.md называл эту форму «не headless-режимом»,
+    но GUI не обещал. Теперь unpack всегда обрабатывается CLI: код 2 и usage.
+    """
+    messages = []
+
+    result = _cli(messages.append).run(["efd_unpacker", "unpack", SAMPLE])
+
+    assert result.handled is True
+    assert result.exit_code == 2
+    assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in "\n".join(messages)
+
+
+def test_cli_still_leaves_a_bare_file_to_the_gui(tmp_path):
+    """GUI-режим из docs/CLI.md не тронут: файл без команды unpack уходит в окно."""
+    result = _cli().run(["efd_unpacker", SAMPLE])
 
     assert result.handled is False
     assert result.exit_code == 0

@@ -11,52 +11,69 @@ from typing import Optional
 from PyQt5.QtCore import QEvent, QTimer
 from PyQt5.QtWidgets import QApplication
 
-from ..constants import URLSchemes
-from ..domain.errors import FileValidationError
+from ..constants import FileExtensions, URLSchemes
 from ..domain.file_validator import FileValidator
 from ..domain.unpack_service import UnpackService
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import create_translator
 from ..presentation.ui import MainWindow
 from ..runtime import detect_system_language, install_cli_launcher
-from .cli import CLIApplication
-from .messages import format_validation_error
+from .cli import CLIApplication, wants_help
+from .help_text import format_help_text
 
 
-def process_file_argument(file_path: str, validator: FileValidator) -> Optional[str]:
-    """Обработать аргумент файла, поддерживая URL схемы и относительные пути."""
-    if file_path.startswith(URLSchemes.FILE):
-        parsed = urllib.parse.urlparse(file_path)
-        file_path = urllib.parse.unquote(parsed.path)
-        if parsed.netloc and parsed.netloc != "localhost":
-            file_path = f"//{parsed.netloc}{file_path}"
-        if sys.platform.startswith("win") and len(file_path) >= 3 and file_path[0] == "/" and file_path[2] == ":":
-            file_path = file_path[1:]
-    elif file_path.startswith(URLSchemes.EFD):
-        parsed = urllib.parse.urlparse(file_path)
-        file_path = parsed.path.lstrip("/")
+def looks_like_input(argument: str) -> bool:
+    """
+    Похож ли аргумент на файл или ссылку, которую пользователь хотел открыть.
 
-    try:
-        return validator.validate_input_file(file_path)
-    except FileValidationError:
-        return None
+    Нужен, чтобы посторонние флаги запуска Qt (-platform, -style и прочие)
+    не порождали сообщение «файл не существует»: main намеренно пропускает
+    нераспознанные аргументы в Qt, а не завершается на них.
+    """
+    lowered = argument.lower()
+    return (
+        lowered.endswith(FileExtensions.EFD)
+        or lowered.startswith(URLSchemes.FILE)
+        or lowered.startswith(URLSchemes.EFD)
+    )
 
 
-def format_help_text(translator) -> str:
-    """Return localized CLI help while preserving literal command syntax."""
-    lines = [
-        translator.translate("CLIHelp", "EFD Unpacker - cross-platform EFD file unpacker"),
-        "",
-        translator.translate("CLIHelp", "CLI modes:"),
-        f"  {translator.translate('CLIHelp', '1. GUI mode: open the window and preselect the input file')}",
-        f"  {translator.translate('CLIHelp', '2. Headless mode: unpack directly in the console')}",
-        "",
-        translator.translate("CLIHelp", "Usage:"),
-        "  efd_unpacker [--help|-h]",
-        "  efd_unpacker <input_file.efd>",
-        "  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>",
-    ]
-    return "\n".join(lines)
+def process_file_argument(file_path: str) -> str:
+    """
+    Приводит аргумент к пути на диске: URL-схемы, percent-encoding, буква диска.
+
+    Валидации здесь больше нет. Раньше функция ловила FileValidationError и
+    возвращала None, теряя код ошибки, а обе ветки показа причины в main()
+    были мертвы: MainWindow.set_input_file сам ловит исключение и сам
+    показывает локализованный QMessageBox.
+    """
+    for scheme in (URLSchemes.FILE, URLSchemes.EFD):
+        if file_path.startswith(scheme):
+            return _path_from_url(file_path)
+    return file_path
+
+
+def _path_from_url(url: str) -> str:
+    """
+    Общий разбор для file:// и efd://.
+
+    Раньше ветка efd:// делала parsed.path.lstrip("/") — абсолютный путь
+    становился относительным, netloc терялся вместе с буквой диска, а
+    percent-encoding не раскрывался вовсе. Работала только форма
+    efd:///относительный/путь, которой нет ни в одном документе.
+    """
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path)
+    netloc = urllib.parse.unquote(parsed.netloc)
+
+    if netloc and netloc != "localhost":
+        # efd://C:/dir/f.efd — буква диска, а не UNC-хост: без этой ветки
+        # путь превратился бы в //C:/dir/f.efd.
+        path = f"{netloc}{path}" if netloc.endswith(":") else f"//{netloc}{path}"
+
+    if sys.platform.startswith("win") and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return path
 
 
 class FileAssociationApp(QApplication):
@@ -79,18 +96,22 @@ class FileAssociationApp(QApplication):
             self.process_pending_files()
 
     def process_file(self, file_path: str) -> bool:
-        processed_path = process_file_argument(file_path, self.validator)
-        if processed_path and self.window:
-            try:
-                self.window.set_input_file(processed_path)
-                return True
-            except Exception:
-                return False
-        return False
+        if not self.window:
+            return False
+        try:
+            # Признак успеха — результат set_input_file, а не истинность пути:
+            # путь непустой и для несуществующего файла.
+            return bool(self.window.set_input_file(process_file_argument(file_path)))
+        except Exception:
+            # Исключение из eventFilter убивает процесс по SIGABRT, поэтому
+            # наружу отсюда не выпускаем ничего.
+            return False
 
     def eventFilter(self, obj, event) -> bool:  # pragma: no cover - Qt binding
         if event.type() == QEvent.Type.FileOpen:
-            file_path = event.url().toLocalFile()
+            # Для не-file схемы toLocalFile() пуст, и событие раньше гасилось
+            # без следа: клик по efd://-ссылке на macOS не доходил до разбора.
+            file_path = event.url().toLocalFile() or event.url().toString()
             if file_path:
                 if self.window:
                     self.process_file(file_path)
@@ -116,7 +137,11 @@ def main() -> None:  # pragma: no cover - интеграция с PyQt
 
     translator = create_translator(detect_system_language())
 
-    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+    # Помощь ищется по всему argv, а не только в argv[1]: `unpack --help`
+    # раньше поднимал пустое окно. Полный argparse тут не подходит — main
+    # намеренно пропускает нераспознанные аргументы в Qt и в обработку
+    # файловых ассоциаций, а argparse на неизвестном аргументе делает exit(2).
+    if wants_help(sys.argv[1:]):
         print(format_help_text(translator))
         sys.exit(0)
 
@@ -138,16 +163,12 @@ def main() -> None:  # pragma: no cover - интеграция с PyQt
     app.set_window(window)
 
     qt_args = app.arguments()
-    if len(qt_args) > 1:
-        for arg in qt_args[1:]:
-            file_path = process_file_argument(arg, validator)
-            if file_path:
-                try:
-                    window.set_input_file(file_path)
-                    break
-                except FileValidationError as exc:
-                    error_message = format_validation_error(translator, exc)
-                    window.show_message(error_message, is_error=True)
+    for arg in qt_args[1:]:
+        # set_input_file сам валидирует и сам показывает локализованный
+        # QMessageBox с причиной — прежние ветки показа ошибки здесь были
+        # недостижимы, потому что исключение до них не доходило.
+        if looks_like_input(arg) and window.set_input_file(process_file_argument(arg)):
+            break
 
     window.show()
     sys.exit(app.exec())
