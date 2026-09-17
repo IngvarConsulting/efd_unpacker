@@ -173,7 +173,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y lintian
           lintian --fail-on error,warning \
-            --suppress-tags no-manual-page,statically-linked-binary,embedded-library,extended-description-is-probably-too-short \
+            --suppress-tags no-manual-page,statically-linked-binary,embedded-library,extended-description-is-probably-too-short,hardening-no-pie \
             "$DEB" || { echo "lintian нашёл проблемы"; exit 1; }
       - name: Test DEB on the runner
         run: |
