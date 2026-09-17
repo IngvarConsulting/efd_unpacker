@@ -186,3 +186,32 @@ def test_custom_signal_does_not_shadow_qthread_finished(qtbot):
     # Встроенный finished остался без аргументов, поэтому на него можно
     # безопасно вешать deleteLater.
     assert thread.metaObject().indexOfSignal("finished()") != -1
+
+
+def _plain_window(qtbot):
+    window = MainWindow(
+        translator=DummyTranslator(),
+        settings_service=DummySettingsService(),
+        file_validator=FileValidator(),
+        unpack_service=DummyUnpackService(),
+    )
+    qtbot.addWidget(window)
+    return window
+
+
+@pytest.mark.parametrize("success", [True, False], ids=["успех", "ошибка"])
+def test_window_shows_the_message_without_cli_markers(qtbot, success):
+    """
+    Регресс: в окно протекали префиксы текстового протокола CLI, и русский
+    пользователь видел «[OK] Распаковка завершена успешно». Состояние и так
+    передаётся цветом label и UIState, а docs/CLI.md фиксирует маркеры только
+    для консольного вывода.
+    """
+    window = _plain_window(qtbot)
+
+    window.unpack_finished(success, "Распаковка завершена успешно")
+
+    shown = window.label_message.text()
+    assert shown == "Распаковка завершена успешно"
+    assert "[OK]" not in shown
+    assert "[ERROR]" not in shown

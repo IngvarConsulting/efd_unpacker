@@ -46,6 +46,12 @@ help:
 	@echo "Текущая платформа: $(PLATFORM)"
 	@echo "Python: $(PYTHON)"
 
+# Две ловушки этого рецепта, обе уже стоили отладки:
+#   1. Тело целиком исполняется как sh -c '...', поэтому ОДИНАРНАЯ КАВЫЧКА
+#      внутри рвёт внешнее экранирование. Путь к файлу передаём аргументом,
+#      а не литералом в кавычках.
+#   2. Символ # внутри строки с продолжением через обратный слеш комментирует
+#      остаток всей логической строки, а не до конца физической.
 check:
 	@sh -c '\
 	FAILED=0; \
@@ -76,6 +82,7 @@ check:
 	echo "Файлы проекта:"; \
 	[ -f version.txt ] && echo "✓ Version file" || { echo "✗ Version file"; FAILED=1; }; \
 	[ -d translations ] && echo "✓ Translations dir" || { echo "✗ Translations dir"; FAILED=1; }; \
+	$(PYTHON) -c "import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])" translations/ru.ts 2>/dev/null && echo "✓ Translations XML" || { echo "✗ Translations XML"; FAILED=1; }; \
 	if [ "$(PLATFORM)" = "windows" ]; then \
 	  VERSION=$$(cat version.txt); \
 	  printf "%s" "$$VERSION" | grep -Eq "^[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9]+)?$$" && echo "✓ MSI/Burn version" || { echo "✗ MSI/Burn version ($$VERSION)"; FAILED=1; }; \
@@ -127,8 +134,7 @@ lint:
 generate-spec:
 	@echo "Generating EFDUnpacker.spec from template..."
 	@VERSION=$$(cat version.txt); \
-	sed -e "s#{{QM_FILES}}##" \
-	    -e "s#{{VERSION}}#$$VERSION#g" \
+	sed -e "s#{{VERSION}}#$$VERSION#g" \
 	    installer/EFDUnpacker.spec.in > EFDUnpacker.spec; \
 	
 generate-release-notes:

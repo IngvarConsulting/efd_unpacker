@@ -46,14 +46,6 @@
         <translation>Закрыть</translation>
     </message>
     <message>
-        <source>(last used)</source>
-        <translation type="vanished">(последний использованный)</translation>
-    </message>
-    <message>
-        <source>(default)</source>
-        <translation type="vanished">(по-умолчанию)</translation>
-    </message>
-    <message>
         <location filename="../ui.py" line="238"/>
         <source>Unpacking in progress</source>
         <translation>Распаковка не завершена</translation>
@@ -77,16 +69,6 @@
         <translation>Ошибка</translation>
     </message>
     <message>
-        <location filename="../ui.py" line="246"/>
-        <source>File does not exist</source>
-        <translation>Файл не существует</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="250"/>
-        <source>Invalid file format</source>
-        <translation>Неверный формат файла</translation>
-    </message>
-    <message>
         <location filename="../ui.py" line="259"/>
         <source>Select output folder</source>
         <translation>Выбрать папку для распаковки</translation>
@@ -105,16 +87,6 @@
         <location filename="../ui.py" line="279"/>
         <source>No .efd file selected</source>
         <translation>Не выбран файл .efd</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="286"/>
-        <source>Invalid output folder</source>
-        <translation>Неверная папка для распаковки</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="309"/>
-        <source>Unpack error: %1</source>
-        <translation>Ошибка при распаковке: %1</translation>
     </message>
 </context>
 <context>

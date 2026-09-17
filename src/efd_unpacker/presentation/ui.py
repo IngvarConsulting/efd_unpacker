@@ -344,9 +344,12 @@ class MainWindow(QMainWindow):
             self.settings_service.set_output_path(self.output_path)
             self.manual_selected_path = None
             self.update_output_paths_combobox()
-            self.show_message(f"[OK] {message}", is_error=False)
+            # Без маркера успеха: это часть текстового протокола CLI, который
+            # зафиксирован в docs/CLI.md. В окне состояние видно по цвету label
+            # и по UIState, а русскому пользователю латинский маркер ничего не даёт.
+            self.show_message(message, is_error=False)
         else:
-            self.show_message(f"[ERROR] {message}", is_error=True)
+            self.show_message(message, is_error=True)
 
     def _forget_unpack_thread(self) -> None:
         self._unpack_thread = None

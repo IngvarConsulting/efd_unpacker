@@ -109,7 +109,17 @@ gh workflow run build-and-release.yml --ref <ветка> -f version=0.0.0
 
 В `Makefile` могут оставаться вспомогательные packaging-цели для локальных экспериментов. Если они не используются в текущих workflow и не перечислены выше, не стоит документировать их как поддерживаемый способ поставки.
 
+## Локализация
+
+`translations/ru.ts` ведётся **вручную**. `lupdate` и `pylupdate5` к этому проекту неприменимы: приложение не использует Qt-идиомы (`QTranslator`, `self.tr`, `QCoreApplication.translate`), а зовёт собственный `Translator.translate()` и `MainWindow._t()`; часть ключей собирается в f-строках, а сообщения `FileValidator` и `UnpackService` лежат в словарях `application/messages.py` и выбираются по коду ошибки. Статический обход такой код почти не видит и пометит основную массу записей как `obsolete`, то есть обнулит каталог.
+
+`.qm` не собирается и не нужен — `.ts` читается напрямую при старте.
+
+Каталог сверяется с кодом в обе стороны тестами `tests/unit/test_translator.py`: строка в коде без перевода и запись в `ru.ts`, до которой нет ни одной ветки, одинаково роняют CI. Добавили `translate('MainWindow', 'New string')` — добавьте запись в `ru.ts` тем же коммитом.
+
+Записи с атрибутом `type` (`unfinished`, `obsolete`, `vanished`) загрузчик пропускает: черновик не должен доезжать до пользователя. Битый XML каталога не валит приложение — интерфейс откатывается на английский, а `make check` такой файл не пропустит.
+
 ## См. также
 - [INSTALL.md](INSTALL.md) — установка и запуск
 - [CLI.md](CLI.md) — режимы командной строки
-- [LOCALIZATION_README.md](LOCALIZATION_README.md) — локализация приложения
+- [FILE_ASSOCIATION_GUIDE.md](FILE_ASSOCIATION_GUIDE.md) — ассоциация с `.efd`
