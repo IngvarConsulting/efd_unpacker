@@ -28,6 +28,8 @@ TYPE_MAPPING = {
 
 # Маппинг областей на русские названия
 SCOPE_MAPPING = {
+    'cli': 'CLI',
+    'service': 'сервисы',
     'ui': 'интерфейс',
     'localization': 'локализация',
     'build': 'сборка',
@@ -134,6 +136,25 @@ def get_target_version() -> str:
             return "1.0.0"  # Fallback
 
 
+def get_previous_tag(current_tag: str) -> str:
+    """
+    Тег, предшествующий указанному по истории.
+
+    Раньше брался просто самый новый тег из отсортированного списка, поэтому
+    хотфикс к старой ветке получал заметки за весь диапазон до последнего
+    релиза. Для самого первого тега команда падает с кодом 128 — это штатный
+    случай, возвращаем None.
+    """
+    try:
+        result = subprocess.run(
+            ['git', 'describe', '--tags', '--abbrev=0', f'{current_tag}^'],
+            capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError:
+        return None
+    return result.stdout.strip() or None
+
+
 def parse_git_log_output(output: str) -> List[CommitEntry]:
     """Преобразует вывод git log в список структурированных коммитов."""
     commits = []
@@ -199,9 +220,10 @@ def get_commits_since_last_release(preview_mode: bool = False) -> List[CommitEnt
             if not current_tag:
                 print("Ошибка: HEAD не помечен тегом. Запустите в режиме выпуска релиза или используйте --preview")
                 return []
-            if len(tags) < 2:
+            previous_tag = get_previous_tag(current_tag)
+            if previous_tag is None:
+                # Самый первый тег: предыдущего нет, берём только его коммит.
                 return filter_service_commits(get_git_log_entries(current_tag, '-1'))
-            previous_tag = tags[1] if tags[0] == current_tag else tags[0]
             return filter_service_commits(get_git_log_entries(f'{previous_tag}..{current_tag}'))
     except subprocess.CalledProcessError as e:
         print(f"Ошибка при получении коммитов: {e}")
@@ -242,7 +264,9 @@ def parse_commit(commit_line: str) -> Tuple[str, str, str, str]:
     commit_hash, message = parts
     
     # Паттерн для Conventional Commits
-    pattern = r'^([a-z]+)(?:\(([a-z-]+)\))?:\s*(.+)$'
+    # '!' — маркер breaking change по Conventional Commits; область может
+    # содержать цифры, точки и слэши (macos-arm64, ui2, deps/pip).
+    pattern = r'^([a-z]+)(?:\(([a-z0-9._/-]+)\))?!?:\s*(.+)$'
     match = re.match(pattern, message)
     
     if not match:
@@ -329,8 +353,10 @@ def main():
         preview_mode = not is_release_mode()
     
     version = get_target_version()
-    print(f"Режим: {'предварительного просмотра' if preview_mode else 'выпуска релиза'}")
-    print(f"Версия: {version}")
+    # В stderr, а не в stdout: Makefile перенаправляет stdout в release_notes.md,
+    # и эти две строки открывали тело каждого GitHub Release.
+    print(f"Режим: {'предварительного просмотра' if preview_mode else 'выпуска релиза'}", file=sys.stderr)
+    print(f"Версия: {version}", file=sys.stderr)
     release_notes = generate_release_notes(preview_mode)
     print(release_notes)
 

@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def load_release_notes_module():
     script_path = Path(__file__).resolve().parents[2] / "scripts" / "generate_release_notes.py"
@@ -77,3 +79,79 @@ def test_filter_service_commits_skips_marked_and_service_entries():
     assert [commit.subject for commit in filtered] == [
         "fix: Исправлена обработка путей"
     ]
+
+
+@pytest.mark.parametrize(
+    "subject, expected_type, expected_scope",
+    [
+        ("feat: новая функция", "feat", None),
+        ("feat(ui): кнопка", "feat", "ui"),
+        # '!' — маркер breaking change, раньше такой коммит уезжал в «Прочие».
+        ("feat!: сломали совместимость", "feat", None),
+        ("feat(ui)!: сломали совместимость", "feat", "ui"),
+        ("fix(macos-arm64): дефис в области", "fix", "macos-arm64"),
+        ("build(deps/pip): слэш в области", "build", "deps/pip"),
+        ("ci(ui2): цифра в области", "ci", "ui2"),
+        ("chore(x.y): точка в области", "chore", "x.y"),
+    ],
+)
+def test_parse_commit_recognises_conventional_subjects(subject, expected_type, expected_scope):
+    module = load_release_notes_module()
+
+    commit_type, scope, description, commit_hash = module.parse_commit(f"abc1234 {subject}")
+
+    assert commit_type == expected_type
+    assert scope == expected_scope
+    assert commit_hash == "abc1234"
+    assert description
+
+
+def test_parse_commit_returns_none_type_for_free_form_subject():
+    module = load_release_notes_module()
+
+    commit_type, scope, description, commit_hash = module.parse_commit(
+        "abc1234 просто текст без конвенции"
+    )
+
+    assert commit_type is None
+    assert scope is None
+    assert description == "просто текст без конвенции"
+    assert commit_hash == "abc1234"
+
+
+@pytest.mark.parametrize(
+    "scope, expected",
+    [
+        ("cli", "описание (CLI)"),
+        ("service", "описание (сервисы)"),
+        ("ui", "описание (интерфейс)"),
+        ("localization", "описание (локализация)"),
+        ("macos", "описание (macOS)"),
+        # Неизвестная область не должна добавлять пустых скобок.
+        ("unknown-scope", "описание"),
+        (None, "описание"),
+    ],
+)
+def test_format_commit_description_maps_known_scopes(scope, expected):
+    module = load_release_notes_module()
+
+    assert module.format_commit_description("описание", scope) == expected
+
+
+def test_scope_mapping_covers_documented_scopes():
+    """Словарь областей должен совпадать с docs/COMMIT_CONVENTION.md."""
+    module = load_release_notes_module()
+
+    documented = {"cli", "ui", "localization", "service", "installer", "linux", "windows", "macos"}
+    missing = documented - set(module.SCOPE_MAPPING)
+    assert not missing, f"нет в SCOPE_MAPPING: {sorted(missing)}"
+
+
+def test_breaking_change_commit_lands_in_its_type_section():
+    """Регресс: без поддержки '!' коммит уезжал в «Прочие изменения»."""
+    module = load_release_notes_module()
+
+    commit_type, _, description, _ = module.parse_commit("abc1234 feat(cli)!: новый синтаксис")
+
+    assert commit_type in module.TYPE_MAPPING
+    assert module.format_commit_description(description, "cli") == "новый синтаксис (CLI)"

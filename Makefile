@@ -1,6 +1,6 @@
 # EFD Unpacker Makefile
 
-.PHONY: help clean compile-translations build-macos build-linux build-windows test install-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
+.PHONY: help clean build-macos build-linux build-windows test install-deps install-test-deps install-build-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
 
 # Определяем ОС
 ifeq ($(OS),Windows_NT)
@@ -23,6 +23,12 @@ else
         PYI_DATASEP := :
     endif
 endif
+
+# appimagetool берётся из continuous: единственный нумерованный релиз
+# AppImageKit — тег 13 от 2020 года, откат на него это деградация.
+# Хэш перепинивается осознанным коммитом при обновлении.
+APPIMAGETOOL_URL := https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+APPIMAGETOOL_SHA256 := b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2
 
 help:
 	@echo "EFD Unpacker - Доступные команды:"
@@ -114,39 +120,50 @@ generate-release-notes:
 	@echo "Generating release notes..."
 	$(PYTHON) scripts/generate_release_notes.py > release_notes.md
 	
-install-deps:
-	@echo "Installing development dependencies..."
-	$(PYTHON) -m pip install --upgrade pip setuptools wheel "PyInstaller>=6.0"
+# Зависимости разделены намеренно: test.yml незачем тянуть весь packaging-тулинг
+# (sudo apt-get, brew, choco), а разработчику на ноутбуке — тем более.
+install-test-deps:
+	@echo "Installing test dependencies..."
+	$(PYTHON) -m pip install --upgrade pip setuptools wheel
 	$(PYTHON) -m pip install --only-binary=:all: -r requirements.txt
-	$(PYTHON) -m pip install --only-binary=:all: -r requirements-test.txt;
-	@if [ "$(PLATFORM)" = "linux" ]; then \
+	$(PYTHON) -m pip install --only-binary=:all: -r requirements-test.txt
+	@set -e; \
+	if [ "$(PLATFORM)" = "linux" ]; then \
 		sudo apt-get update; \
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-		rpm \
-		libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3 \
-		fuse libfuse2 \
-		binutils \
-		fakeroot \
-		dpkg-dev \
-		zip \
-		patchelf \
-		zsync \
-		curl \
-		coreutils \
-		xz-utils \
-		file; \
-		if ! command -v appimagetool >/dev/null; then \
-			curl -L -o /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage; \
-			chmod +x /usr/local/bin/appimagetool; \
+			libegl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libgl1 libdbus-1-3; \
+	fi
+
+install-build-deps: install-test-deps
+	@echo "Installing build dependencies..."
+	$(PYTHON) -m pip install --only-binary=:all: -r requirements-build.txt
+	@set -e; \
+	if [ "$(PLATFORM)" = "linux" ]; then \
+		sudo apt-get update; \
+		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+			rpm fuse libfuse2 binutils fakeroot dpkg-dev zip patchelf zsync \
+			curl coreutils xz-utils file lintian; \
+		if ! command -v appimagetool >/dev/null 2>&1; then \
+			curl -fL --proto '=https' --tlsv1.2 --retry 3 \
+				-o /tmp/appimagetool \
+				"$(APPIMAGETOOL_URL)"; \
+			echo "$(APPIMAGETOOL_SHA256)  /tmp/appimagetool" | sha256sum -c -; \
+			sudo mv /tmp/appimagetool /usr/local/bin/appimagetool; \
+			sudo chmod +x /usr/local/bin/appimagetool; \
 		fi; \
 	fi
-	@if [ "$(PLATFORM)" = "macos" ]; then \
+	@set -e; \
+	if [ "$(PLATFORM)" = "macos" ]; then \
 		brew list create-dmg >/dev/null 2>&1 || brew install create-dmg; \
 	fi
-	@if [ "$(PLATFORM)" = "windows" ]; then \
+	@set -e; \
+	if [ "$(PLATFORM)" = "windows" ]; then \
 		choco install zip -y; \
 		choco install wixtoolset -y; \
 	fi
+
+# Обратная совместимость: старое имя цели.
+install-deps: install-build-deps
 
 create-version:
 	@echo "Creating version.txt from git tag or commit..."
@@ -189,30 +206,28 @@ build-linux-executable:
 	
 create-linux-appimage:
 	@echo "Creating Linux AppImage..."
-		@if command -v appimagetool >/dev/null 2>&1; then \
-			mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/1024x1024/apps; \
-			cp dist/efd_unpacker AppDir/usr/bin/efd_unpacker; \
-			if [ -f "resources/icon.png" ]; then \
-				cp resources/icon.png AppDir/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
-				cp resources/icon.png AppDir/efd_unpacker.png; \
-			fi; \
-			cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/; \
-			cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
-			cp installer/linux/AppRun AppDir/; \
-			mkdir -p AppDir/usr/share/doc/efd-unpacker; \
-			cp installer/linux/copyright AppDir/usr/share/doc/efd-unpacker/copyright; \
-		chmod +x AppDir/AppRun; \
-		appimagetool AppDir dist/efd-unpacker-$$(cat version.txt)-linux.AppImage; \
-		rm -rf AppDir; \
-	else \
-		echo "Warning: appimagetool not found. Skipping AppImage creation."; \
-	fi
+	@set -e; \
+	if ! command -v appimagetool >/dev/null 2>&1; then \
+		echo "Error: appimagetool not found."; exit 1; \
+	fi; \
+	VERSION=$$(cat version.txt); \
+	rm -rf AppDir; \
+	mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
+		AppDir/usr/share/icons/hicolor/1024x1024/apps AppDir/usr/share/doc/efd-unpacker; \
+	cp dist/efd_unpacker AppDir/usr/bin/efd_unpacker; \
+	if [ -f "resources/icon.png" ]; then \
+		cp resources/icon.png AppDir/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
+		cp resources/icon.png AppDir/efd_unpacker.png; \
+	fi; \
+	cp installer/linux/efd_unpacker.desktop AppDir/usr/share/applications/; \
+	cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
+	cp installer/linux/AppRun AppDir/; \
+	cp installer/linux/copyright AppDir/usr/share/doc/efd-unpacker/copyright; \
+	chmod +x AppDir/AppRun; \
+	appimagetool AppDir "dist/efd-unpacker-$$VERSION-linux.AppImage"; \
+	rm -rf AppDir; \
+	test -f "dist/efd-unpacker-$$VERSION-linux.AppImage"
 
-# dpkg-deb собирается с -Zxz: на ubuntu-22.04 умолчание — zstd, а это
-# ubuntu-специфичное расширение. lintian считает такой архив malformed, и
-# старый инструментарий его не разбирает; xz понимают все.
-# Комментарии внутрь рецепта не ставить: он склеен обратными слэшами в одну
-# логическую строку, и '#' закомментирует весь её остаток.
 create-linux-deb:
 	@echo "Creating Linux DEB package..."
 	@set -e; \

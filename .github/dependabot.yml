@@ -1,0 +1,16 @@
+# Пины actions по SHA замораживают и security-патчи, поэтому Dependabot
+# обязателен: без него обновления приходится ловить вручную.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"

@@ -74,9 +74,22 @@ arm64 и x86_64, и `target_arch='universal2'` падает с `IncompatibleBina
 - `.github/workflows/test.yml` — тесты на Windows, Linux и macOS
 - `.github/workflows/build-and-release.yml` — сборка и smoke-тест артефактов по тегу `v*`
 
-Важно:
-- tag workflow сейчас **собирает и проверяет** артефакты;
-- автоматическая публикация GitHub Release в workflow пока отключена и требует отдельного включения.
+### Что происходит по тегу `v*`
+
+1. `test-suite` — тесты на трёх платформах.
+2. `build-linux`, `build-windows`, `build-macos` — сборка артефактов. macOS собирается дважды, под `x86_64` и `arm64`: PyInstaller не кросс-компилирует.
+3. Четыре смоук-job — `test-appimage`, `test-deb`, `test-windows-setup`, `test-dmg` — устанавливают собранное и проверяют, что CLI отрабатывает и распаковка даёт непустой результат.
+4. `create-release` публикует **не-draft** GitHub Release с файлами из `artifacts/{linux,windows,macos-*}-builds/*`.
+
+Публикация сразу в открытый доступ — намеренное решение (коммит `dc33514`), по этому контуру вышли версии v1.2.9–v1.2.11, и `docs/INSTALL.md` ссылается на страницу релизов. Следствие: **пробный тег создаст публичный релиз**, отдельного «черновикового» прогона сейчас нет.
+
+### Локальная подготовка зависимостей
+
+- `make install-test-deps` — только то, что нужно для `pytest` (используется в `test.yml`).
+- `make install-build-deps` — плюс весь packaging-тулинг: rpm, fakeroot, appimagetool, create-dmg, WiX.
+- `make install-deps` — синоним `install-build-deps`, оставлен для совместимости.
+
+Версия PyInstaller запинена в `requirements-build.txt`: её обновление регулярно ломает сбор плагинов PyQt5, и это должно быть осознанным коммитом. `appimagetool` качается с проверкой sha256, зафиксированного в `Makefile`.
 
 ## Что не считать официальным путём
 
