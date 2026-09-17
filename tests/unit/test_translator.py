@@ -1,9 +1,22 @@
-import ast
 import re
 from pathlib import Path
 import os
 import xml.etree.ElementTree as ET
 
+import pytest
+
+from efd_unpacker.application.messages import (
+    CORRUPTED_ARCHIVE_REASONS,
+    format_unpack_result,
+    format_validation_error,
+)
+from efd_unpacker.domain.errors import (
+    FileValidationCode,
+    FileValidationError,
+    UnpackError,
+    UnpackErrorCode,
+)
+from efd_unpacker.localization import translator as translator_module
 from efd_unpacker.localization.translator import Translator
 
 
@@ -43,10 +56,13 @@ def test_translator_falls_back_for_empty_translation(tmp_path):
 
 def _source_keys():
     """
-    Ключи, которые приложение запрашивает в рантайме.
+    Пары (context, source), которые приложение может запросить в рантайме.
 
-    messages.py собирает их из словарей, поэтому literal-строки берём AST-обходом,
-    а вызовы translate(...)/_t(...) — регуляркой.
+    Литеральные вызовы translate(...)/_t(...) берём регуляркой, а ключи слоя
+    сообщений — прогоном самих форматтеров по всем членам обоих enum через
+    записывающий переводчик. Раньше здесь был ast-обход словарей messages.py,
+    но он терял контекст: одна и та же строка живёт в разных контекстах, и
+    сверка «есть в ts, нет в коде» на таком экстракторе даёт ложные срабатывания.
     """
     root = Path(__file__).resolve().parents[2] / "src" / "efd_unpacker"
     keys = set()
@@ -60,20 +76,37 @@ def _source_keys():
         for context, source in call_pattern.findall(text):
             keys.add((context, source))
 
-    # messages.py: значения словарей кодов ошибок и причин повреждения.
-    messages = root / "application" / "messages.py"
-    tree = ast.parse(messages.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Dict):
-            for value in node.values:
-                if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    keys.add((None, value.value))
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "key":
-                    if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                        keys.add((None, node.value.value))
+    keys |= _message_layer_keys()
     return keys
+
+
+class RecordingTranslator:
+    """Переводчик, запоминающий каждый запрошенный ключ."""
+
+    def __init__(self):
+        self.asked = set()
+
+    def translate(self, context, source):
+        self.asked.add((context, source))
+        return source
+
+
+def _message_layer_keys():
+    """Всё, что messages.py способен спросить: по члену enum и по причине порчи."""
+    recorder = RecordingTranslator()
+    for code in FileValidationCode:
+        format_validation_error(recorder, FileValidationError(code, {"error": "x"}))
+    format_validation_error(recorder, FileValidationError(UnpackErrorCode.UNEXPECTED))
+    format_unpack_result(recorder, success=True)
+    for code in UnpackErrorCode:
+        format_unpack_result(recorder, success=False, error=UnpackError(code, {"error": "x"}))
+    for reason in CORRUPTED_ARCHIVE_REASONS:
+        format_unpack_result(
+            recorder,
+            success=False,
+            error=UnpackError(UnpackErrorCode.CORRUPTED_ARCHIVE, {"reason": reason}),
+        )
+    return recorder.asked
 
 
 def _catalog():
@@ -118,3 +151,159 @@ def test_every_runtime_string_has_a_russian_translation():
             missing.append(f"unfinished: [{context or '*'}] {source}")
 
     assert not missing, "\n".join(missing)
+
+
+def test_catalog_has_no_entries_without_a_branch_in_the_code():
+    """
+    Обратная сторона дрейфа: запись в ru.ts, до которой нет ни одной ветки.
+
+    Прямое направление ловит тест выше, а эта сторона раньше не проверялась
+    ничем — так в каталоге и накопились шесть мёртвых записей MainWindow,
+    оставшихся после переезда сообщений в FileValidator и UnpackService.
+    """
+    live = _source_keys()
+    dead = sorted(key for key in _catalog() if key not in live)
+
+    assert not dead, "нет ни одной ветки в коде:\n" + "\n".join(
+        f"  [{context}] {source}" for context, source in dead
+    )
+
+
+# --- устойчивость загрузчика -------------------------------------------------
+
+
+BROKEN_CATALOGS = {
+    "обрезанный": "<TS><context><name>X</name><message><source>A</source>",
+    "мусор": "не xml вовсе",
+    "пустой": "",
+    "два корня": "<TS><context><name>X</name></context></TS><TS/>",
+    # ParseError тут ни при чём: expat поднимает LookupError ещё до разбора.
+    "кодировка NOPE": '<?xml version="1.0" encoding="NOPE"?><TS/>',
+    "кодировка пустая": '<?xml version="1.0" encoding=""?><TS/>',
+    "битая сущность": '<?xml version="1.0"?><TS>&nope;</TS>',
+    "нулевой байт": '<?xml version="1.0"?><TS>\x00</TS>',
+}
+
+
+@pytest.mark.parametrize("payload", BROKEN_CATALOGS.values(), ids=list(BROKEN_CATALOGS))
+def test_broken_catalog_falls_back_to_english_instead_of_killing_the_process(tmp_path, payload):
+    """
+    Регресс: ET.parse стоял без обработки ошибок, а вызывается он в main.py
+    до создания QApplication. Битый ru.ts означал, что окно не появится вообще,
+    молча на сборках Windows и macOS — обе без консоли.
+    """
+    (tmp_path / "ru.ts").write_text(payload, encoding="utf-8")
+
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate("MainWindow", "Unpack") == "Unpack"
+
+
+def test_broken_catalog_does_not_keep_stale_entries(tmp_path):
+    """Повторная загрузка битого файла обязана оставить словарь пустым."""
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+    assert translator.translate("MainWindow", "Unpack") == "Распаковать"
+
+    (tmp_path / "ru.ts").write_text("<TS><context>", encoding="utf-8")
+    translator.load()
+
+    assert translator.translate("MainWindow", "Unpack") == "Unpack"
+
+
+def test_catalog_that_cannot_be_read_falls_back_to_english(tmp_path, monkeypatch):
+    """
+    OSError при чтении — тот же случай: английский UI лучше мёртвого процесса.
+
+    Проверяем подменой парсера, а не правами файла: на Windows chmod(0o000)
+    ставит лишь признак «только чтение» и доступ на чтение не отзывает, так
+    что настоящая проверка прав там ничего не проверяет.
+    """
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+
+    def denied(*_args, **_kwargs):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(translator_module.ET, "parse", denied)
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate("MainWindow", "Unpack") == "Unpack"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="chmod(0o000) на Windows не отзывает чтение")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root читает что угодно")
+def test_catalog_without_read_permission_falls_back_to_english(tmp_path):
+    """Тот же откат, но на настоящем отказе прав, а не на подмене."""
+    ts_path = tmp_path / "ru.ts"
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+    os.chmod(ts_path, 0o000)
+    try:
+        translator = Translator(lang="ru", translations_dir=str(tmp_path))
+        assert translator.translate("MainWindow", "Unpack") == "Unpack"
+    finally:
+        os.chmod(ts_path, 0o644)
+
+
+def test_any_parser_failure_is_survivable(tmp_path, monkeypatch):
+    """
+    Гарантия шире перечня типов: что бы ни поднял парсер, запуск не ломается.
+
+    Список исключений ET.parse открытый — ParseError, LookupError, OSError
+    наблюдались на реальных входах, — и перечисление типов в except однажды
+    пропустит ещё один и вернёт молчаливое падение на старте.
+    """
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+
+    for exception in (RuntimeError("неожиданно"), MemoryError(), RecursionError()):
+        monkeypatch.setattr(
+            translator_module.ET,
+            "parse",
+            lambda *_a, _exc=exception, **_k: (_ for _ in ()).throw(_exc),
+        )
+        assert Translator(lang="ru", translations_dir=str(tmp_path)).translate(
+            "MainWindow", "Unpack"
+        ) == "Unpack"
+
+
+@pytest.mark.parametrize("draft_type", ["unfinished", "obsolete", "vanished"])
+def test_draft_translations_are_not_shown_to_the_user(tmp_path, draft_type):
+    """
+    Регресс: атрибут type не читался, и черновик с непустым текстом показывался
+    как готовый перевод. lrelease такие записи в .qm не кладёт, но здесь .ts
+    читается напрямую, и фильтровать их больше некому.
+    """
+    ts_path = tmp_path / "ru.ts"
+    ts_path.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<TS><context><name>MainWindow</name><message>"
+        "<source>Unpack</source>"
+        f'<translation type="{draft_type}">ЧЕРНОВИК</translation>'
+        "</message></context></TS>",
+        encoding="utf-8",
+    )
+
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate("MainWindow", "Unpack") == "Unpack"
+
+
+def test_finished_translation_without_type_is_used(tmp_path):
+    """Фильтр черновиков не должен задевать обычные записи."""
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate("MainWindow", "Unpack") == "Распаковать"
+
+
+def test_real_catalog_has_no_draft_entries_left():
+    """После чистки в ru.ts не должно остаться ни одного type=... ."""
+    ts_path = Path(__file__).resolve().parents[2] / "translations" / "ru.ts"
+    drafts = [
+        (context.find("name").text, message.find("source").text, message.find("translation").get("type"))
+        for context in ET.parse(ts_path).getroot().findall("context")
+        for message in context.findall("message")
+        if message.find("translation") is not None and message.find("translation").get("type")
+    ]
+
+    assert not drafts, drafts
