@@ -12,6 +12,8 @@ class UIConstants:
     LOADING_ICON_SIZE = 96
     COMBO_MIN_WIDTH = 200
     LOADING_MARGIN = 20
+    # Сколько ждём остановки распаковки при закрытии окна.
+    THREAD_STOP_TIMEOUT_MS = 10000
 
 
 class UIState(Enum):

@@ -12,7 +12,7 @@ import stat
 import tempfile
 import zlib
 from struct import unpack
-from typing import BinaryIO, Callable, List, Protocol
+from typing import BinaryIO, Callable, List, Optional, Protocol
 
 import onec_dtools
 from onec_dtools import supply_reader as supply_reader_module
@@ -197,6 +197,21 @@ def _apply_file_mtime(path: str, modified_at: dt.datetime) -> None:
 class SafeSupplyReader(onec_dtools.SupplyReader):
     """Совместимая обертка над onec_dtools с безопасной обработкой mtime на Windows."""
 
+    def __init__(self, file: BinaryIO) -> None:
+        super().__init__(file)
+        self._cancel_check: Optional[Callable[[], bool]] = None
+
+    def set_cancel_check(self, cancel_check: Callable[[], bool]) -> None:
+        """Функция, по которой распаковка прерывается между записями."""
+        self._cancel_check = cancel_check
+
+    def _cancelled(self) -> bool:
+        return self._cancel_check is not None and self._cancel_check()
+
+    def _raise_if_cancelled(self, entry: str = "") -> None:
+        if self._cancelled():
+            raise UnpackError(UnpackErrorCode.CANCELLED, {"entry": entry} if entry else None)
+
     def unpack(self, output_dir: str) -> None:
         with tempfile.TemporaryFile() as buffer_file:
             self._inflate_to(buffer_file)
@@ -239,6 +254,12 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             ]
 
             for (src_path, modified_at, size), path in zip(self.included_files, paths):
+                # Прерываемся между записями, а не посреди файла: каждая запись
+                # ставится на место через os.replace, поэтому уже записанные
+                # файлы целые. Удалять их нельзя — output_dir это общий каталог
+                # шаблонов, где лежат и чужие.
+                self._raise_if_cancelled(src_path)
+
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 self._write_entry(buffer_file, path, src_path, size)
                 _apply_file_mtime(path, modified_at)
@@ -259,6 +280,11 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             with os.fdopen(descriptor, "wb") as out_file:
                 written = 0
                 while written < size:
+                    # Одна запись бывает в сотни мегабайт: без опроса внутри
+                    # цикла отмена не успевала сработать и закрытие окна
+                    # неизбежно упиралось в terminate().
+                    self._raise_if_cancelled(src_path)
+
                     data = buffer_file.read(min(self.CHUNK_SIZE, size - written))
                     if not data:
                         # Объявленный размер больше, чем осталось в потоке.
@@ -284,6 +310,8 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
         total_out = 0
 
         while True:
+            self._raise_if_cancelled()
+
             chunk = self.file.read(self.CHUNK_SIZE)
             if not chunk:
                 break
@@ -328,11 +356,20 @@ class UnpackService:
     def __init__(self, reader_factory: SupplyReaderFactory = _default_reader_factory) -> None:
         self._reader_factory = reader_factory
 
-    def unpack(self, input_file: str, output_dir: str) -> None:
+    def unpack(
+        self,
+        input_file: str,
+        output_dir: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """Распаковывает файл или поднимает UnpackError."""
         try:
             with open(input_file, "rb") as handle:
                 reader = self._reader_factory(handle)
+                if cancel_check is not None:
+                    setter = getattr(reader, "set_cancel_check", None)
+                    if setter is not None:
+                        setter(cancel_check)
                 reader.unpack(output_dir)
         except UnpackError:
             # Уже доменная ошибка с точным кодом — переупаковывать нечего.

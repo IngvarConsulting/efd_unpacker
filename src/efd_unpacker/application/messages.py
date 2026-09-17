@@ -40,6 +40,8 @@ def format_unpack_result(translator: Translator, success: bool, error: UnpackErr
         key = "Archive rejected: unpacked size exceeds the allowed limit"
     elif error.code is UnpackErrorCode.CORRUPTED_ARCHIVE:
         key = "Archive is damaged or incomplete: %1"
+    elif error.code is UnpackErrorCode.CANCELLED:
+        key = "Unpacking was stopped, some files were not extracted"
     else:
         key = "Unexpected error: %1"
 
