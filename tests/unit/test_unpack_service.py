@@ -1,6 +1,9 @@
+import datetime as dt
 import os
 import tempfile
 import unittest
+
+import pytest
 from pathlib import Path
 
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
@@ -76,6 +79,72 @@ def test_unpack_leaves_representable_mtime_on_every_platform(tmp_path) -> None:
     assert len(unpacked) == 4
     for path in unpacked:
         assert path.stat().st_mtime_ns != -(2 ** 63), path
+
+
+def test_apply_file_mtime_skips_dates_before_the_representable_range(tmp_path, monkeypatch):
+    """FILETIME от 1601 года не должен уезжать в os.utime ни на одной платформе."""
+    target = tmp_path / "f.txt"
+    target.write_text("x", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(unpack_service.os, "utime", lambda *a, **k: calls.append(a))
+
+    unpack_service._apply_file_mtime(str(target), dt.datetime(1601, 5, 3))
+
+    assert calls == []
+
+
+def test_unpack_service_does_not_branch_on_platform_for_mtime():
+    """
+    Регресс: guard был привязан к sys.platform, и на macOS/Linux древние даты
+    уезжали в os.utime, давая st_mtime_ns = INT64_MIN. После правки модуль
+    вообще не смотрит на платформу — подменять в тесте нечего.
+    """
+    assert not hasattr(unpack_service, "sys")
+    assert unpack_service.MIN_REPRESENTABLE_MTIME == dt.datetime(1678, 1, 1)
+
+
+@pytest.mark.parametrize(
+    "moment, applied",
+    [
+        (dt.datetime(1601, 5, 3), False),
+        (dt.datetime(1677, 12, 31), False),
+        (dt.datetime(1678, 1, 2), True),
+        (dt.datetime(1969, 1, 1), True),
+        (dt.datetime(2019, 6, 15), True),
+    ],
+    ids=["1601", "1677", "1678", "1969", "2019"],
+)
+def test_apply_file_mtime_boundary(tmp_path, monkeypatch, moment, applied):
+    target = tmp_path / "f.txt"
+    target.write_text("x", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(unpack_service.os, "utime", lambda *a, **k: calls.append(a))
+
+    unpack_service._apply_file_mtime(str(target), moment)
+
+    assert bool(calls) is applied
+
+
+def test_apply_file_mtime_applies_modern_dates(tmp_path):
+    target = tmp_path / "f.txt"
+    target.write_text("x", encoding="utf-8")
+
+    unpack_service._apply_file_mtime(str(target), dt.datetime(2019, 6, 15, 12, 0, 0))
+
+    assert dt.datetime.utcfromtimestamp(os.path.getmtime(str(target))).year == 2019
+
+
+def test_apply_file_mtime_survives_oserror(tmp_path, monkeypatch):
+    """Метка времени — не повод считать распаковку неуспешной."""
+    target = tmp_path / "f.txt"
+    target.write_text("x", encoding="utf-8")
+
+    def boom(*_a, **_k):
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr(unpack_service.os, "utime", boom)
+
+    unpack_service._apply_file_mtime(str(target), dt.datetime(2019, 6, 15))
 
 
 if __name__ == "__main__":

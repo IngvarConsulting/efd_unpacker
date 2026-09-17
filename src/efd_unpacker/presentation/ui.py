@@ -7,7 +7,6 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt5 import QtWidgets
 from PyQt5.QtCore import QThread, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QCursor, QDragEnterEvent, QDropEvent, QMovie
 from PyQt5.QtWidgets import (

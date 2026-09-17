@@ -28,8 +28,13 @@ jobs:
         run: |
           make install-test-deps
 
-      - name: Run tests with make
+      - name: Lint
+        run: |
+          make lint
+
+      - name: Run tests with coverage
         env:
           PYTHONPATH: src
         run: |
-          make test 
+          make test-cov
+
