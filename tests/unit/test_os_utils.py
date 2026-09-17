@@ -265,7 +265,9 @@ def test_open_folder_passes_a_relative_path_as_absolute(monkeypatch, tmp_path):
     monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
 
     assert os_utils.open_folder(str(target)) is True
-    assert calls[0][0][1].startswith(os.sep)
+    # Именно isabs, а не startswith(os.sep): на Windows абсолютный путь
+    # начинается с буквы диска, и проверка по разделителю там всегда ложна.
+    assert os.path.isabs(calls[0][0][1])
     assert "--" not in calls[0][0]
 
 
