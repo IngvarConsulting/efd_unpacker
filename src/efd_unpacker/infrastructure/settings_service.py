@@ -18,7 +18,16 @@ class SettingsService:
         self.settings = settings or QSettings("efd_unpacker", "settings")
 
     def get_output_path(self) -> str:
-        return self.settings.value("output_path", get_1c_configuration_location_default())
+        default = get_1c_configuration_location_default()
+        value = self.settings.value("output_path", default)
+        # QSettings отдаёт то, что лежит в файле: конфиг, правленный извне,
+        # миграция или REG_MULTI_SZ дают list, а os.path.normpath дальше роняет
+        # запуск ещё до window.show() — без окна и без сообщения.
+        # ','.join тут нельзя: Qt при разборе срезает пробел после запятой,
+        # и склейка даст молча неверный каталог вместо честного отката.
+        if not isinstance(value, str):
+            return default
+        return value
 
     def set_output_path(self, path: str) -> None:
         self.settings.setValue("output_path", path)

@@ -99,27 +99,80 @@ def test_cfg_cp1251_with_odd_length_works(tmp_path, monkeypatch):
     assert os_utils.get_1c_configuration_location_from_1cestart() == ["/opt/Шаблоны"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#18: платформа 1С пишет конфиг в UTF-16, сейчас такой файл даёт пустой список",
+@pytest.mark.parametrize(
+    "encoding",
+    ["utf-16", "utf-16-le", "utf-16-be", "utf-16-le-bom", "utf-16-be-bom"],
+    ids=["utf-16+BOM", "utf-16le без BOM", "utf-16be без BOM", "utf-16le с BOM", "utf-16be с BOM"],
 )
-@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le"], ids=["utf-16+BOM", "utf-16le без BOM"])
-def test_cfg_utf16_is_not_parsed(tmp_path, monkeypatch, encoding):
-    _write_config(tmp_path, monkeypatch, (CONFIG_LINE + "\r\n").encode(encoding))
+def test_cfg_utf16_in_every_shape(tmp_path, monkeypatch, encoding):
+    """
+    Регресс #18: utf-16le не снимает BOM, а \ufeff не пробельный, поэтому первая
+    строка не проходила проверку префикса. Без BOM файл вообще не доходил до
+    своей ветки: байты UTF-16LE для ASCII валидны как UTF-8, и utf-8-sig
+    отрабатывал первым, ничего не находил и обрывал перебор.
+    """
+    if encoding.endswith("-bom"):
+        base = encoding[: -len("-bom")]
+        payload = (b"\xff\xfe" if base.endswith("le") else b"\xfe\xff") + (
+            CONFIG_LINE + "\r\n"
+        ).encode(base)
+    else:
+        payload = (CONFIG_LINE + "\r\n").encode(encoding)
+    _write_config(tmp_path, monkeypatch, payload)
 
     assert os_utils.get_1c_configuration_location_from_1cestart() == ["/opt/1c/tmplts"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#18: utf-16le декодирует любую чётную последовательность без исключения и обрывает перебор",
-)
-def test_cfg_cp1251_with_even_length_is_lost(tmp_path, monkeypatch):
+def test_cfg_cp1251_with_even_length_is_parsed(tmp_path, monkeypatch):
+    """
+    Регресс #18: чётная длина уводила файл в utf-16le, который декодирует любую
+    последовательность без исключения. Разбор cp1251 работал через раз —
+    в зависимости от чётности размера файла.
+    """
     payload = "ConfigurationTemplatesLocation=/opt/Шаблоныx\r\n".encode("cp1251")
     assert len(payload) % 2 == 0
     _write_config(tmp_path, monkeypatch, payload)
 
     assert os_utils.get_1c_configuration_location_from_1cestart() == ["/opt/Шаблоныx"]
+
+
+def test_cfg_large_cp1251_file_is_not_truncated(tmp_path, monkeypatch):
+    """
+    Регресс #18: locations накапливался между попытками, поэтому частично
+    прочитанное под utf-8-sig оставалось, utf-16le доедал остаток и делал break.
+    На файле из 251 строки возвращалось 174.
+    """
+    lines = []
+    for index in range(251):
+        suffix = "Шаблоны" if index == 230 else str(index)
+        lines.append("ConfigurationTemplatesLocation=/opt/%s" % suffix)
+    payload = ("\r\n".join(lines) + "\r\n").encode("cp1251")
+    assert len(payload) > 8192
+    _write_config(tmp_path, monkeypatch, payload)
+
+    result = os_utils.get_1c_configuration_location_from_1cestart()
+
+    assert len(result) == 251
+    assert "/opt/Шаблоны" in result
+
+
+def test_cfg_without_the_key_returns_empty(tmp_path, monkeypatch):
+    """Файл без ключа — не повод перебирать кодировки до иероглифов."""
+    _write_config(tmp_path, monkeypatch, "CommonInfoBases=x\r\n".encode("cp1251"))
+
+    assert os_utils.get_1c_configuration_location_from_1cestart() == []
+
+
+def test_cfg_unreadable_file_does_not_raise(tmp_path, monkeypatch):
+    home = _write_config(tmp_path, monkeypatch, (CONFIG_LINE + "\n").encode("utf-8"))
+    config = home / ".1C" / "1cestart" / "1cestart.cfg"
+    os.chmod(config, 0o000)
+    try:
+        if os.access(config, os.R_OK):
+            pytest.skip("права не отзываются на этой платформе")
+        assert os_utils.get_1c_configuration_location_from_1cestart() == []
+    finally:
+        os.chmod(config, 0o644)
 
 
 def test_cfg_windows_reads_appdata_and_allusersprofile(tmp_path, monkeypatch):
@@ -156,6 +209,17 @@ def test_open_folder_windows_uses_startfile(monkeypatch, tmp_path):
     startfile.assert_called_once_with(str(target))
 
 
+def _completed(returncode=0):
+    """subprocess.run-заглушка, фиксирующая аргументы и отдающая заданный код."""
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, returncode)
+
+    return fake_run, calls
+
+
 @pytest.mark.parametrize(
     "system, expected_command",
     [("Darwin", "open"), ("Linux", "xdg-open")],
@@ -163,13 +227,85 @@ def test_open_folder_windows_uses_startfile(monkeypatch, tmp_path):
 def test_open_folder_uses_platform_command(monkeypatch, tmp_path, system, expected_command):
     target = tmp_path / "tmplts"
     target.mkdir()
-    run = mock.Mock()
+    fake_run, calls = _completed()
 
     monkeypatch.setattr(os_utils.platform, "system", lambda: system)
-    monkeypatch.setattr(os_utils.subprocess, "run", run)
+    monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
 
     assert os_utils.open_folder(str(target)) is True
-    run.assert_called_once_with([expected_command, str(target)])
+    assert calls[0][0] == [expected_command, str(target)]
+
+
+@pytest.mark.parametrize("returncode", [1, 3, 4], ids=["rc=1", "rc=3", "rc=4"])
+def test_open_folder_reports_a_nonzero_exit_code(monkeypatch, tmp_path, returncode):
+    """
+    Регресс #18: код возврата не читался вообще. xdg-open отвечает 3 или 4,
+    когда ассоциации inode/directory нет, а пользователь видел «открыл».
+    """
+    target = tmp_path / "tmplts"
+    target.mkdir()
+    fake_run, _calls = _completed(returncode)
+
+    monkeypatch.setattr(os_utils.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
+
+    assert os_utils.open_folder(str(target)) is False
+
+
+def test_open_folder_passes_a_relative_path_as_absolute(monkeypatch, tmp_path):
+    """
+    Путь, начинающийся с дефиса, не должен уехать в команду как опция.
+    Разделитель "--" тут не годится: xdg-open его не понимает.
+    """
+    target = tmp_path / "-tmplts"
+    target.mkdir()
+    fake_run, calls = _completed()
+
+    monkeypatch.setattr(os_utils.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
+
+    assert os_utils.open_folder(str(target)) is True
+    # Именно isabs, а не startswith(os.sep): на Windows абсолютный путь
+    # начинается с буквы диска, и проверка по разделителю там всегда ложна.
+    assert os.path.isabs(calls[0][0][1])
+    assert "--" not in calls[0][0]
+
+
+def test_open_folder_restores_the_library_path_for_the_child(monkeypatch, tmp_path):
+    """
+    Регресс #18: дочерний процесс наследовал LD_LIBRARY_PATH бутлоадера
+    PyInstaller и подхватывал Qt из каталога распаковки вместо системного.
+    """
+    target = tmp_path / "tmplts"
+    target.mkdir()
+    fake_run, calls = _completed()
+
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEIxxxxxx")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/x86_64-linux-gnu")
+    monkeypatch.setattr(os_utils.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
+
+    os_utils.open_folder(str(target))
+
+    env = calls[0][1]["env"]
+    assert env["LD_LIBRARY_PATH"] == "/usr/lib/x86_64-linux-gnu"
+    assert "LD_LIBRARY_PATH_ORIG" not in env
+
+
+def test_child_environment_drops_the_library_path_without_an_original(monkeypatch):
+    """Если ORIG нет, ключ надо убрать, а не оставить путь бутлоадера."""
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEIxxxxxx")
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+
+    env = os_utils.child_environment()
+
+    assert "LD_LIBRARY_PATH" not in env
+
+
+def test_child_environment_keeps_the_rest_of_the_environment(monkeypatch):
+    monkeypatch.setenv("SOME_MARKER", "значение")
+
+    assert os_utils.child_environment()["SOME_MARKER"] == "значение"
 
 
 def test_open_folder_swallows_launcher_failure(monkeypatch, tmp_path):
@@ -186,18 +322,3 @@ def test_open_folder_swallows_launcher_failure(monkeypatch, tmp_path):
     assert os_utils.open_folder(str(target)) is False
 
 
-def test_open_folder_real_subprocess_signature(monkeypatch, tmp_path):
-    """Проверяем, что вызов действительно совместим с subprocess.run."""
-    target = tmp_path / "tmplts"
-    target.mkdir()
-    calls = []
-
-    def fake_run(args, **kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0)
-
-    monkeypatch.setattr(os_utils.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(os_utils.subprocess, "run", fake_run)
-
-    assert os_utils.open_folder(str(target)) is True
-    assert calls == [["open", str(target)]]

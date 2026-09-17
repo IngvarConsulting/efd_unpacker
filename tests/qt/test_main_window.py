@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QMessageBox, QWidget
 
 from efd_unpacker.domain.file_validator import FileValidator
 from efd_unpacker.domain.unpack_service import UnpackService
+from efd_unpacker.presentation import ui
 from efd_unpacker.presentation.ui import MainWindow, UnpackThread
 
 
@@ -215,3 +216,56 @@ def test_window_shows_the_message_without_cli_markers(qtbot, success):
     assert shown == "Распаковка завершена успешно"
     assert "[OK]" not in shown
     assert "[ERROR]" not in shown
+
+
+def test_failed_folder_open_is_reported_to_the_user(qtbot, monkeypatch, tmp_path):
+    """
+    Регресс #18: open_folder возвращал False, а вызывающий код результат не читал.
+    В состоянии SUCCESS комбобокс с путём скрыт, так что при молчаливом отказе
+    каталог распаковки узнать из окна было негде.
+    """
+    window = _plain_window(qtbot)
+    window.output_path = str(tmp_path)
+    shown = {}
+
+    monkeypatch.setattr(ui.MainWindow, "_t", lambda _self, _ctx, text: text)
+    monkeypatch.setattr(ui, "open_folder", lambda _path: False)
+    monkeypatch.setattr(
+        ui.QMessageBox, "warning", lambda _parent, title, text: shown.update(title=title, text=text)
+    )
+
+    window.open_output_folder()
+
+    assert "Could not open the folder" in shown["text"]
+    assert str(tmp_path) in shown["text"], "путь должен быть в сообщении, чтобы его можно было скопировать"
+
+
+def test_successful_folder_open_is_silent(qtbot, monkeypatch, tmp_path):
+    window = _plain_window(qtbot)
+    window.output_path = str(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(ui, "open_folder", lambda _path: True)
+    monkeypatch.setattr(ui.QMessageBox, "warning", lambda *a, **k: calls.append(a))
+
+    window.open_output_folder()
+
+    assert calls == []
+
+
+def test_failed_folder_open_keeps_the_window_in_success_state(qtbot, monkeypatch, tmp_path):
+    """
+    show_message(..., is_error=True) перевёл бы окно в UIState.ERROR и спрятал
+    саму кнопку «Открыть папку» — поэтому здесь QMessageBox, а не он.
+    """
+    window = _plain_window(qtbot)
+    window.unpack_finished(True, "Готово")
+    window.output_path = str(tmp_path)
+
+    monkeypatch.setattr(ui, "open_folder", lambda _path: False)
+    monkeypatch.setattr(ui.QMessageBox, "warning", lambda *a, **k: None)
+
+    window.open_output_folder()
+
+    assert window.btn_open_folder.isVisible() or not window.isVisible()
+    assert window.btn_retry.isVisible() is False

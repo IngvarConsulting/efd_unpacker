@@ -88,6 +88,10 @@
         <source>No .efd file selected</source>
         <translation>Не выбран файл .efd</translation>
     </message>
+    <message>
+        <source>Could not open the folder</source>
+        <translation>Не удалось открыть папку</translation>
+    </message>
 </context>
 <context>
     <name>UnpackService</name>

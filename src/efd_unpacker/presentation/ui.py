@@ -389,5 +389,16 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def open_output_folder(self) -> None:
-        if self.output_path:
-            open_folder(self.output_path)
+        if not self.output_path:
+            return
+        if open_folder(self.output_path):
+            return
+        # QMessageBox, а не show_message: последний переводит окно в UIState.ERROR
+        # и прячет саму кнопку «Открыть папку». Путь в тексте — чтобы его можно
+        # было скопировать: в состоянии SUCCESS комбобокс с путём скрыт, и узнать
+        # каталог распаковки из окна больше неоткуда.
+        QMessageBox.warning(
+            self,
+            self._t("MainWindow", "Error"),
+            "{}\n\n{}".format(self._t("MainWindow", "Could not open the folder"), self.output_path),
+        )
