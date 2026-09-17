@@ -32,8 +32,8 @@ class Styles:
     MESSAGE_SUCCESS = "color: #4caf50; font-size: 16px;"
     MESSAGE_ERROR = "color: #d32f2f; font-size: 16px;"
     LOADING_LABEL = """
-        QLabel { 
-            margin: 20px; 
+        QLabel {
+            margin: 20px;
         }
     """
 
@@ -52,4 +52,4 @@ class FileExtensions:
 class URLSchemes:
     """URL схемы"""
     FILE = "file://"
-    EFD = "efd://" 
+    EFD = "efd://"

@@ -2,13 +2,7 @@ import os
 import sys
 import subprocess
 import platform
-import locale
-import re
 from typing import List
-
-# Добавляем импорт ctypes только для Windows
-if sys.platform.startswith('win'):
-    import ctypes
 
 def get_1c_configuration_location_default() -> str:
     """Возвращает путь к каталогу распаковки по умолчанию в зависимости от ОС."""
@@ -25,12 +19,12 @@ def get_1c_configuration_location_default() -> str:
 def get_1c_configuration_location_from_1cestart() -> List[str]:
     """
     Возвращает массив значений ConfigurationTemplatesLocation из файла 1cestart.cfg.
-    
+
     Проверяет все возможные расположения файла для разных ОС:
     - Linux/macOS: ~/.1C/1cestart/1cestart.cfg
     - Windows (для пользователя): %APPDATA%\1C\1CEStart\1cestart.cfg
     - Windows (для всех пользователей): %ALLUSERSPROFILE%\1C\1CEStart\1cestart.cfg
-    
+
     Returns:
         list: Массив путей к каталогам шаблонов конфигураций
     """

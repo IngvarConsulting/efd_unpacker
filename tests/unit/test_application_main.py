@@ -1,3 +1,7 @@
+import urllib.parse
+
+import pytest
+
 from efd_unpacker.application.main import format_help_text, process_file_argument
 from efd_unpacker.domain.file_validator import FileValidator
 
@@ -46,3 +50,53 @@ def test_format_help_text_localizes_headings_and_descriptions():
     assert "Использование:" in help_text
     assert "GUI mode: open the window and preselect the input file" not in help_text
     assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in help_text
+
+
+def test_process_file_argument_supports_percent_encoded_file_url(tmp_path):
+    input_file = tmp_path / "файл с пробелом.efd"
+    input_file.write_text("payload", encoding="utf-8")
+
+    result = process_file_argument(input_file.resolve().as_uri(), FileValidator())
+
+    assert result == str(input_file.resolve())
+
+
+def test_process_file_argument_returns_none_for_missing_file(tmp_path):
+    """Сейчас причина отказа теряется — GUI открывается пустым (см. #15)."""
+    assert process_file_argument(str(tmp_path / "missing.efd"), FileValidator()) is None
+
+
+def test_process_file_argument_rejects_wrong_extension(tmp_path):
+    other = tmp_path / "data.zip"
+    other.write_text("payload", encoding="utf-8")
+
+    assert process_file_argument(str(other), FileValidator()) is None
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#15: parsed.path.lstrip('/') превращает абсолютный путь в относительный",
+)
+def test_process_file_argument_supports_efd_scheme(tmp_path, monkeypatch):
+    """Форма из docs/FILE_ASSOCIATION_GUIDE.md: efd:///abs/path.efd."""
+    input_file = tmp_path / "sample.efd"
+    input_file.write_text("payload", encoding="utf-8")
+    monkeypatch.chdir(tmp_path.parent)
+
+    result = process_file_argument(f"efd://{input_file.resolve().as_posix()}", FileValidator())
+
+    assert result == str(input_file.resolve())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#15: efd:// с percent-encoding не декодируется, unquote применяется только к file://",
+)
+def test_process_file_argument_decodes_efd_scheme(tmp_path):
+    input_file = tmp_path / "файл.efd"
+    input_file.write_text("payload", encoding="utf-8")
+    quoted = urllib.parse.quote(input_file.resolve().as_posix())
+
+    result = process_file_argument(f"efd://{quoted}", FileValidator())
+
+    assert result == str(input_file.resolve())

@@ -1,6 +1,6 @@
 # EFD Unpacker Makefile
 
-.PHONY: help clean build-macos build-linux build-windows test install-deps install-test-deps install-build-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
+.PHONY: help clean lint test-cov build-macos build-linux build-windows test install-deps install-test-deps install-build-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
 
 # Определяем ОС
 ifeq ($(OS),Windows_NT)
@@ -108,6 +108,21 @@ build-windows: clean create-version check generate-spec
 test:
 	@echo "Running tests..."
 	$(PYTHON) -m pytest tests/ -v
+
+# Отдельная цель: порог покрытия не должен блокировать выпуск релиза, поэтому
+# build-and-release.yml остаётся на голом `test`, а гейт живёт в test.yml.
+# COV_MIN стоит на пару пунктов ниже фактического минимума по раннерам —
+# запас на платформенные ветки, которые на одной ОС не выполняются.
+COV_MIN ?= 80
+
+test-cov:
+	@echo "Running tests with coverage (min $(COV_MIN)%)..."
+	$(PYTHON) -m pytest tests/ -q \
+		--cov=src/efd_unpacker --cov-report=term-missing --cov-fail-under=$(COV_MIN)
+
+lint:
+	@echo "Running ruff..."
+	$(PYTHON) -m ruff check src tests
 
 generate-spec:
 	@echo "Generating EFDUnpacker.spec from template..."

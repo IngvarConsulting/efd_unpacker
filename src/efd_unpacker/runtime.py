@@ -8,7 +8,6 @@ import locale
 import os
 import shlex
 import shutil
-import stat
 import sys
 import tempfile
 from pathlib import Path
