@@ -6,7 +6,7 @@
 
 | Платформа | CI runner | Основные артефакты |
 |-----------|-----------|--------------------|
-| macOS | `macos-15-intel` | `.dmg` |
+| macOS | `macos-15-intel` + `macos-15` | `.dmg` (x86_64 и arm64) |
 | Windows | `windows-2022` | `setup.exe` |
 | Linux | `ubuntu-22.04` | `.AppImage`, `.deb` |
 
@@ -50,7 +50,12 @@ make build-windows
 
 ### macOS
 - промежуточный `dist/EFDUnpacker.app`
-- основной артефакт `dist/efd-unpacker-<version>-macos.dmg`
+- основной артефакт `dist/efd-unpacker-<version>-macos-<arch>.dmg`
+
+`<arch>` берётся из `uname -m` сборочной машины. PyInstaller не кросс-компилирует,
+поэтому архитектура раннера и есть архитектура бинаря: под каждую нужен свой job.
+Universal2 одним проходом невозможен — PyQt5 публикует раздельные колёса под
+arm64 и x86_64, и `target_arch='universal2'` падает с `IncompatibleBinaryArchError`.
 
 ### Windows
 - промежуточный `dist/EFDUnpacker.exe`
