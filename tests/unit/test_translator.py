@@ -16,6 +16,7 @@ from efd_unpacker.domain.errors import (
     UnpackError,
     UnpackErrorCode,
 )
+from efd_unpacker.localization import translator as translator_module
 from efd_unpacker.localization.translator import Translator
 
 
@@ -171,16 +172,20 @@ def test_catalog_has_no_entries_without_a_branch_in_the_code():
 # --- устойчивость загрузчика -------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "<TS><context><name>X</name><message><source>A</source>",
-        "не xml вовсе",
-        "",
-        "<TS><context><name>X</name></context></TS><TS/>",
-    ],
-    ids=["обрезанный", "мусор", "пустой", "два корня"],
-)
+BROKEN_CATALOGS = {
+    "обрезанный": "<TS><context><name>X</name><message><source>A</source>",
+    "мусор": "не xml вовсе",
+    "пустой": "",
+    "два корня": "<TS><context><name>X</name></context></TS><TS/>",
+    # ParseError тут ни при чём: expat поднимает LookupError ещё до разбора.
+    "кодировка NOPE": '<?xml version="1.0" encoding="NOPE"?><TS/>',
+    "кодировка пустая": '<?xml version="1.0" encoding=""?><TS/>',
+    "битая сущность": '<?xml version="1.0"?><TS>&nope;</TS>',
+    "нулевой байт": '<?xml version="1.0"?><TS>\x00</TS>',
+}
+
+
+@pytest.mark.parametrize("payload", BROKEN_CATALOGS.values(), ids=list(BROKEN_CATALOGS))
 def test_broken_catalog_falls_back_to_english_instead_of_killing_the_process(tmp_path, payload):
     """
     Регресс: ET.parse стоял без обработки ошибок, а вызывается он в main.py
@@ -206,8 +211,29 @@ def test_broken_catalog_does_not_keep_stale_entries(tmp_path):
     assert translator.translate("MainWindow", "Unpack") == "Unpack"
 
 
-def test_unreadable_catalog_falls_back_to_english(tmp_path):
-    """OSError при чтении — тот же случай: английский UI лучше мёртвого процесса."""
+def test_catalog_that_cannot_be_read_falls_back_to_english(tmp_path, monkeypatch):
+    """
+    OSError при чтении — тот же случай: английский UI лучше мёртвого процесса.
+
+    Проверяем подменой парсера, а не правами файла: на Windows chmod(0o000)
+    ставит лишь признак «только чтение» и доступ на чтение не отзывает, так
+    что настоящая проверка прав там ничего не проверяет.
+    """
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+
+    def denied(*_args, **_kwargs):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(translator_module.ET, "parse", denied)
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate("MainWindow", "Unpack") == "Unpack"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="chmod(0o000) на Windows не отзывает чтение")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root читает что угодно")
+def test_catalog_without_read_permission_falls_back_to_english(tmp_path):
+    """Тот же откат, но на настоящем отказе прав, а не на подмене."""
     ts_path = tmp_path / "ru.ts"
     create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
     os.chmod(ts_path, 0o000)
@@ -216,6 +242,27 @@ def test_unreadable_catalog_falls_back_to_english(tmp_path):
         assert translator.translate("MainWindow", "Unpack") == "Unpack"
     finally:
         os.chmod(ts_path, 0o644)
+
+
+def test_any_parser_failure_is_survivable(tmp_path, monkeypatch):
+    """
+    Гарантия шире перечня типов: что бы ни поднял парсер, запуск не ломается.
+
+    Список исключений ET.parse открытый — ParseError, LookupError, OSError
+    наблюдались на реальных входах, — и перечисление типов в except однажды
+    пропустит ещё один и вернёт молчаливое падение на старте.
+    """
+    create_ts(tmp_path, "ru", "MainWindow", "Unpack", "Распаковать")
+
+    for exception in (RuntimeError("неожиданно"), MemoryError(), RecursionError()):
+        monkeypatch.setattr(
+            translator_module.ET,
+            "parse",
+            lambda *_a, _exc=exception, **_k: (_ for _ in ()).throw(_exc),
+        )
+        assert Translator(lang="ru", translations_dir=str(tmp_path)).translate(
+            "MainWindow", "Unpack"
+        ) == "Unpack"
 
 
 @pytest.mark.parametrize("draft_type", ["unfinished", "obsolete", "vanished"])
