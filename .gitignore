@@ -264,3 +264,5 @@ tmp/
 *.tar.gz
 *.rar
 *.7z 
+# Каталог-заготовка AppImage, остаётся при обрыве create-linux-appimage
+AppDir/
