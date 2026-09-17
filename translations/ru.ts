@@ -251,6 +251,10 @@
         <source>Failed to create output directory: %1</source>
         <translation>Не удалось создать папку вывода: %1</translation>
     </message>
+    <message>
+        <source>Unexpected error: %1</source>
+        <translation>Неожиданная ошибка: %1</translation>
+    </message>
 </context>
 <context>
     <name>CLIHelp</name>

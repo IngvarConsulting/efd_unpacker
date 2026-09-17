@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
@@ -22,12 +23,23 @@ class FileValidator:
     extension: str = ".efd"
 
     @staticmethod
-    def normalize_path(path: str) -> str:
-        """Раскрывает `~` и приводит путь к абсолютному виду."""
+    def normalize_path(
+        path: str,
+        invalid_code: FileValidationCode = FileValidationCode.NOT_FOUND,
+    ) -> str:
+        """
+        Раскрывает `~` и приводит путь к абсолютному виду.
+
+        Для относительного пути `os.path.abspath` дёргает `os.getcwd()`, а тот
+        падает, если рабочий каталог процесса удалён. Раньше `FileNotFoundError`
+        пролетал мимо обработчиков в CLI и GUI и выходил трейсбеком.
+        """
         if not path:
             return path
-        expanded = os.path.expanduser(path)
-        return os.path.abspath(expanded)
+        try:
+            return os.path.abspath(os.path.expanduser(path))
+        except OSError as exc:
+            raise FileValidationError(invalid_code, {"path": path, "error": str(exc)}) from exc
 
     def validate_input_file(self, file_path: str) -> str:
         """Возвращает нормализованный путь к файлу или выбрасывает FileValidationError."""
@@ -66,7 +78,7 @@ class FileValidator:
         if not output_dir or not output_dir.strip():
             raise FileValidationError(FileValidationCode.OUTPUT_PATH_EMPTY)
 
-        normalized = self.normalize_path(output_dir)
+        normalized = self.normalize_path(output_dir, FileValidationCode.OUTPUT_PATH_INVALID)
 
         if os.path.exists(normalized):
             if not os.path.isdir(normalized):
@@ -82,16 +94,43 @@ class FileValidator:
         try:
             os.makedirs(normalized, exist_ok=True)
         except OSError as exc:
-            raise FileValidationError(FileValidationCode.OUTPUT_CANNOT_CREATE, {"error": str(exc)}) from exc
+            # Отдельный код: «не удалось создать» — не то же самое, что «нет прав».
+            # Настоящая причина (Errno 20, слишком длинное имя, кончилось место)
+            # раньше складывалась в details и выбрасывалась при форматировании.
+            raise FileValidationError(
+                FileValidationCode.OUTPUT_CREATE_FAILED, {"path": output_dir, "error": str(exc)}
+            ) from exc
 
+        self._require_writable(normalized, output_dir)
         return normalized
+
+    @staticmethod
+    def _require_writable(normalized: str, original: str) -> None:
+        """
+        Проверяет пробной записью, что в только что созданный каталог можно писать.
+
+        Права на создание у родителя ничего не обещают про сам каталог: umask,
+        наследуемые deny-ACE на сетевых дисках, setgid. `os.access` под ACL врёт,
+        поэтому проверка — настоящим файлом.
+        """
+        try:
+            with tempfile.TemporaryFile(dir=normalized):
+                pass
+        except OSError as exc:
+            try:
+                os.rmdir(normalized)  # не оставлять каталог-сироту, в который нельзя писать
+            except OSError:
+                pass
+            raise FileValidationError(
+                FileValidationCode.OUTPUT_NOT_WRITABLE, {"path": original, "error": str(exc)}
+            ) from exc
 
     def get_file_info(self, file_path: str) -> Optional[dict]:
         """Возвращает информацию о файле (без выбрасывания ошибок)."""
-        normalized = self.normalize_path(file_path)
         try:
+            normalized = self.normalize_path(file_path)
             stat_result = os.stat(normalized)
-        except OSError:
+        except (OSError, FileValidationError):
             return None
 
         return {
@@ -105,8 +144,11 @@ class FileValidator:
     @staticmethod
     def _find_existing_parent(path: str) -> Optional[str]:
         """Ищет ближайшую существующую директорию."""
+        # Именно isdir, а не exists: для /tmp/report.txt/out «родителем»
+        # назначался сам файл report.txt, os.access на него давал True,
+        # и makedirs падал с Errno 20 уже после проверки прав.
         current = os.path.dirname(path)
-        while current and not os.path.exists(current):
+        while current and not os.path.isdir(current):
             next_parent = os.path.dirname(current)
             if next_parent == current:
                 break
