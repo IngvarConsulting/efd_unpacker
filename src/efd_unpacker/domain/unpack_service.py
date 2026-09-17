@@ -31,6 +31,8 @@ SupplyReaderFactory = Callable[[BinaryIO], SupplyReaderProtocol]
 POSIX_EPOCH = dt.datetime(1970, 1, 1)
 # Нижняя граница, которую os.utime представляет одинаково на всех платформах.
 MIN_REPRESENTABLE_MTIME = dt.datetime(1678, 1, 1)
+# FILETIME — число интервалов по 100 нс от 1 января 1601 года.
+FILETIME_EPOCH = dt.datetime(1601, 1, 1)
 # Единственная версия заголовка, встречавшаяся в исследованных файлах поставки.
 SUPPORTED_HEADER = 1
 
@@ -172,7 +174,44 @@ def _apply_file_mode(temporary: str, path: str) -> None:
         pass
 
 
-def _apply_file_mtime(path: str, modified_at: dt.datetime) -> None:
+def _filetime_to_datetime(filetime: int) -> Optional[dt.datetime]:
+    """
+    FILETIME в datetime. None, если дата непредставима.
+
+    Отрицательные значения — не порча архива: в поставках 1С их десятки.
+    В БГУ 2.0.110.66 таких записей 10 из 83, в «Бухгалтерии предприятия КОРП»
+    3.0.206.19 — 21 из 26, и все они означают дату на полчаса раньше 1601 года.
+    Осмысленной метки времени тут нет, поэтому отдаём None: файл получит
+    текущее время, как и для всех прочих дат вне представимого диапазона.
+    """
+    if filetime <= 0:
+        return None
+    try:
+        return FILETIME_EPOCH + dt.timedelta(microseconds=filetime // 10)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _read_included_file_info(buffer_file: BinaryIO) -> tuple:
+    """
+    Описание одной вложенной записи: имя, дата, размер.
+
+    Не делегируем onec_dtools.read_included_file_info: там FILETIME читается
+    как беззнаковый "Q", поэтому дата до 1601 года превращается в 1.8e19, и
+    datetime + timedelta бросает OverflowError. Пользователь получал
+    «Неожиданная ошибка: date value out of range» и ни одного распакованного
+    файла — падение происходит при разборе оглавления, до первой записи.
+    """
+    buffer_file.read(4)  # назначение поля неизвестно
+    filename = supply_reader_module.read_string(buffer_file)
+    # Именно "q": знаковое. Ради этого и написан свой разбор.
+    filetime = unpack("q", buffer_file.read(8))[0]
+    buffer_file.read(4)  # назначение поля неизвестно
+    file_size = unpack("I", buffer_file.read(4))[0]
+    return filename, _filetime_to_datetime(filetime), file_size
+
+
+def _apply_file_mtime(path: str, modified_at: Optional[dt.datetime]) -> None:
     """
     Применяет mtime к распакованному файлу.
 
@@ -183,7 +222,7 @@ def _apply_file_mtime(path: str, modified_at: dt.datetime) -> None:
     st_mtime_ns = INT64_MIN — `ls -l` показывал 1677 год. Отсекаем по
     представимому диапазону, одинаково на всех платформах.
     """
-    if modified_at < MIN_REPRESENTABLE_MTIME:
+    if modified_at is None or modified_at < MIN_REPRESENTABLE_MTIME:
         return
 
     timestamp = (modified_at - POSIX_EPOCH).total_seconds()
@@ -239,7 +278,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
 
             included_files_count = unpack("I", buffer_file.read(4))[0]
             for _ in range(included_files_count):
-                self.included_files.append(supply_reader_module.read_included_file_info(buffer_file))
+                self.included_files.append(_read_included_file_info(buffer_file))
 
             output_root = os.path.realpath(output_dir)
 
