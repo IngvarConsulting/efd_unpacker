@@ -63,6 +63,13 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build Linux version
         run: |
           make build-linux VERSION="$EFD_VERSION"
@@ -89,9 +96,18 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build Windows version
         run: |
-          make build-windows VERSION="$EFD_VERSION"
+          # $env:, а не $: шаг исполняется PowerShell, где $EFD_VERSION —
+          # необъявленная переменная, а не окружение.
+          make build-windows VERSION="$env:EFD_VERSION"
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -128,6 +144,13 @@ jobs:
       - name: Setup CI environment
         run: |
           make install-build-deps
+      - name: Check dry-run version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Версия пробной сборки: '${EFD_VERSION}'"
+          echo "${EFD_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            || { echo "Нужен формат X.Y.Z: иначе WiX отвергнет версию, а пустое значение означает, что подстановка не сработала."; exit 1; }
       - name: Build macOS version
         run: |
           make build-macos VERSION="$EFD_VERSION"
