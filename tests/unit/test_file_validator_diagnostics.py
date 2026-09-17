@@ -60,6 +60,7 @@ def test_creating_a_directory_under_a_file_reports_the_os_reason(validator, tmp_
     assert shown != "Нет прав на создание папки вывода"
 
 
+@POSIX_ONLY
 def test_missing_parent_still_reports_no_permission(validator, tmp_path):
     """Ветка «родителя нет вовсе» должна остаться на прежнем коде."""
     unwritable = tmp_path / "locked"
@@ -128,6 +129,8 @@ def test_write_probe_leaves_no_files(validator, tmp_path):
 @pytest.fixture
 def deleted_cwd():
     """Процесс с удалённым cwd: os.getcwd() падает, а с ним и os.path.abspath."""
+    if sys.platform.startswith("win"):
+        pytest.skip("Windows не даёт удалить каталог, который является cwd процесса")
     keep = os.getcwd()
     doomed = tempfile.mkdtemp()
     os.chdir(doomed)
@@ -138,7 +141,6 @@ def deleted_cwd():
         os.chdir(keep)
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows держит cwd открытым")
 def test_normalize_path_wraps_a_deleted_cwd(validator, deleted_cwd):
     """Регресс: голый FileNotFoundError пролетал мимо обработчиков CLI и GUI."""
     with pytest.raises(FileValidationError) as ctx:
@@ -147,7 +149,6 @@ def test_normalize_path_wraps_a_deleted_cwd(validator, deleted_cwd):
     assert ctx.value.code is FileValidationCode.NOT_FOUND
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows держит cwd открытым")
 def test_prepare_output_directory_reports_an_invalid_path(validator, deleted_cwd):
     """Для папки вывода диагноз точнее: путь невозможно разрешить."""
     with pytest.raises(FileValidationError) as ctx:
@@ -156,13 +157,11 @@ def test_prepare_output_directory_reports_an_invalid_path(validator, deleted_cwd
     assert ctx.value.code is FileValidationCode.OUTPUT_PATH_INVALID
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows держит cwd открытым")
 def test_validate_input_file_reports_a_domain_error(validator, deleted_cwd):
     with pytest.raises(FileValidationError):
         validator.validate_input_file("a.efd")
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows держит cwd открытым")
 def test_get_file_info_keeps_its_promise_not_to_raise(validator, deleted_cwd):
     """Докстринг обещает «без выбрасывания ошибок» — обещание должно держаться."""
     assert validator.get_file_info("a.efd") is None
