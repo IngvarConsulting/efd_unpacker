@@ -32,6 +32,9 @@ class DummyTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def _cli(output=None):
     return CLIApplication(
         validator=FileValidator(),

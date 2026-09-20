@@ -406,30 +406,6 @@
         <translation>нет шаблонов внутри</translation>
     </message>
     <message>
-        <source>files:</source>
-        <translation>файлов:</translation>
-    </message>
-    <message>
-        <source>templates:</source>
-        <translation>шаблонов:</translation>
-    </message>
-    <message>
-        <source>distributions:</source>
-        <translation>дистрибутивов:</translation>
-    </message>
-    <message>
-        <source>other:</source>
-        <translation>прочего:</translation>
-    </message>
-    <message>
-        <source>skipped:</source>
-        <translation>пропущено:</translation>
-    </message>
-    <message>
-        <source>errors:</source>
-        <translation>отказов:</translation>
-    </message>
-    <message>
         <source>written</source>
         <translation>записано</translation>
     </message>
@@ -444,6 +420,54 @@
     <message>
         <source>to write:</source>
         <translation>к записи:</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s)</source>
+        <translation>
+            <numerusform>%n файл</numerusform>
+            <numerusform>%n файла</numerusform>
+            <numerusform>%n файлов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n template(s)</source>
+        <translation>
+            <numerusform>%n шаблон</numerusform>
+            <numerusform>%n шаблона</numerusform>
+            <numerusform>%n шаблонов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n distribution(s)</source>
+        <translation>
+            <numerusform>%n дистрибутив</numerusform>
+            <numerusform>%n дистрибутива</numerusform>
+            <numerusform>%n дистрибутивов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n other file(s)</source>
+        <translation>
+            <numerusform>%n прочий файл</numerusform>
+            <numerusform>%n прочих файла</numerusform>
+            <numerusform>%n прочих файлов</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n skipped</source>
+        <translation>
+            <numerusform>%n пропуск</numerusform>
+            <numerusform>%n пропуска</numerusform>
+            <numerusform>%n пропусков</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n error(s)</source>
+        <translation>
+            <numerusform>%n ошибка</numerusform>
+            <numerusform>%n ошибки</numerusform>
+            <numerusform>%n ошибок</numerusform>
+        </translation>
     </message>
 </context>
 <context>

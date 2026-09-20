@@ -22,6 +22,9 @@ class Passthrough:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def item(**kwargs):
     defaults = dict(
         kind=ItemKind.SUPPLY, title="Бухгалтерия", version="3.0.1", source=("a.zip",),
@@ -201,18 +204,18 @@ def test_summary_counts_every_outcome():
     )
     summary = text.splitlines()[-1]
 
-    assert "files: 4" in summary
-    assert "templates: 1" in summary
-    assert "distributions: 1" in summary
-    assert "skipped: 1" in summary
-    assert "errors: 1" in summary
+    assert "4 file(s)" in summary
+    assert "1 template(s)" in summary
+    assert "1 distribution(s)" in summary
+    assert "1 skipped" in summary
+    assert "1 error(s)" in summary
     assert "0.4s" in summary
 
 
 def test_empty_plan_still_prints_a_summary():
     text = format_plan(Passthrough(), plan(), source_count=0, elapsed=0.0)
 
-    assert "files: 0" in text
+    assert "0 file(s)" in text
 
 
 # --- JSON --------------------------------------------------------------------
@@ -312,7 +315,7 @@ def test_summary_counts_failures_that_happened_while_writing():
     )
     summary = text.splitlines()[-1]
 
-    assert "errors: 1" in summary
+    assert "1 error(s)" in summary
     assert "written:" in summary
 
 
@@ -352,8 +355,8 @@ def test_template_emptied_by_the_filter_is_counted_as_skipped():
     table = format_plan(Passthrough(), current, source_count=1, elapsed=0.1)
     machine = json.loads(format_json(current, source_count=1, elapsed=0.1))
 
-    assert "templates: 1" in table
-    assert "skipped: 1" in table
+    assert "1 template(s)" in table
+    assert "1 skipped" in table
     # В JSON ключи по исходу, а не по виду: write/skip/fail.
     assert machine["totals"]["write"] == 1
     assert machine["totals"]["skip"] == 1

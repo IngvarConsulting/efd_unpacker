@@ -22,6 +22,9 @@ class DummyTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def _template(root=("1c", "Acc", "3_0_1"), size=1024):
     entries = (Entry(path="/".join(root) + "/1cv8.cf", parts=root + ("1cv8.cf",),
                      modified_at=None, size=size),)

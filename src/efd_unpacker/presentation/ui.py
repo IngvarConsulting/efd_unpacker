@@ -40,6 +40,7 @@ from PyQt5.QtWidgets import (
 
 from ..application.executor import Writers
 from ..application.inspector import inspect_all
+from ..application import report
 from ..application.messages import format_validation_error
 from ..constants import UIConstants
 from ..domain.batch import run as run_batch
@@ -700,15 +701,16 @@ class MainWindow(QMainWindow):
             else:
                 kinds[item.kind] += 1
         parts = [
-            ("files:", len(self._inspected)),
-            ("templates:", kinds[ItemKind.SUPPLY]),
-            ("distributions:", kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
-            ("other:", kinds[ItemKind.CONTENT] + kinds[ItemKind.OTHER]),
-            ("skipped:", skipped),
-            ("errors:", failed),
+            (report.COUNT_FILES, len(self._inspected)),
+            (report.COUNT_TEMPLATES, kinds[ItemKind.SUPPLY]),
+            (report.COUNT_DISTRIBUTIONS, kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
+            (report.COUNT_OTHER, kinds[ItemKind.CONTENT] + kinds[ItemKind.OTHER]),
+            (report.COUNT_SKIPPED, skipped),
+            (report.COUNT_ERRORS, failed),
         ]
         return "  ·  ".join(
-            "%s %d" % (self._t("Report", key), value) for key, value in parts if value
+            self.translator.translate_n("Report", source, value)
+            for source, value in parts if value
         )
 
     def _option_text(self) -> str:

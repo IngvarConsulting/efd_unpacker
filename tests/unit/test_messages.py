@@ -28,6 +28,9 @@ class PassthroughTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def russian() -> Translator:
     return Translator(lang="ru", translations_dir=TRANSLATIONS_DIR)
 
