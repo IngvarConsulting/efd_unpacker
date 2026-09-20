@@ -336,3 +336,22 @@ def test_compression_bomb_stops_at_the_limit():
 
 def test_default_limit_is_generous_enough_for_real_supplies():
     assert CATALOG_PREFIX_LIMIT >= 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"not deflate at all, just bytes", b"\x78\x9c" + b"\xff" * 40, b"\x00" * 64],
+    ids=["мусор", "битый поток", "нули"],
+)
+def test_broken_stream_becomes_a_domain_error(data):
+    """
+    Регресс: отказ zlib уходил наружу как есть.
+
+    Вызывающий код ловит UnpackError, а не деталь реализации: иначе осмотр
+    падал бы zlib.error там, где обрезанный заголовок даёт внятный отказ.
+    """
+    with pytest.raises(UnpackError) as ctx:
+        read_catalog(io.BytesIO(data))
+
+    assert ctx.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+    assert ctx.value.details["reason"] in {"broken_stream", "truncated_header"}

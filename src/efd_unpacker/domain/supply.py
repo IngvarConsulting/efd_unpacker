@@ -359,22 +359,34 @@ def read_catalog(handle: BinaryIO, limit: int = CATALOG_PREFIX_LIMIT) -> Catalog
 
 
 def _inflate_prefix(handle: BinaryIO, limit: int) -> Tuple[bytes, bool]:
-    """Разжимает начало потока. Возвращает данные и признак «поток кончился»."""
+    """
+    Разжимает начало потока. Возвращает данные и признак «поток кончился».
+
+    Отказ zlib переводится в доменную ошибку: наружу должен уходить код
+    CORRUPTED_ARCHIVE, а не деталь реализации. Иначе осмотр падал бы
+    zlib.error там, где обрезанный заголовок даёт внятный отказ.
+    """
     decompressor = zlib.decompressobj(-15)
     out = bytearray()
 
-    while len(out) < limit:
-        chunk = handle.read(CATALOG_CHUNK)
-        if not chunk:
-            return bytes(out), True
-        data = decompressor.decompress(chunk, limit - len(out))
-        while data:
-            out += data
-            tail = decompressor.unconsumed_tail
-            if not tail or len(out) >= limit:
-                break
-            data = decompressor.decompress(tail, limit - len(out))
-        if decompressor.eof:
-            return bytes(out), True
+    try:
+        while len(out) < limit:
+            chunk = handle.read(CATALOG_CHUNK)
+            if not chunk:
+                return bytes(out), True
+            data = decompressor.decompress(chunk, limit - len(out))
+            while data:
+                out += data
+                tail = decompressor.unconsumed_tail
+                if not tail or len(out) >= limit:
+                    break
+                data = decompressor.decompress(tail, limit - len(out))
+            if decompressor.eof:
+                return bytes(out), True
+    except zlib.error as exc:
+        raise UnpackError(
+            UnpackErrorCode.CORRUPTED_ARCHIVE,
+            {"reason": "broken_stream", "error": str(exc)},
+        ) from exc
 
     return bytes(out), False
