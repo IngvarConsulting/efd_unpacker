@@ -21,6 +21,10 @@ from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
 from efd_unpacker.infrastructure import rar
 from efd_unpacker.infrastructure.rar import LIBARCHIVE, SEVENZIP, RarEntry, Tool
 
+#: Настоящая функция: фикстура ниже подменяет её заглушкой для всех тестов,
+#: кроме тех, что проверяют сам разбор реестра.
+_REAL_FROM_REGISTRY = rar._from_registry
+
 # Подставная программа. Поведение зашито в файл, а не в окружение: поиск
 # кешируется, и переключать режим через переменную было бы нечестно.
 FAKE = '''
@@ -41,12 +45,12 @@ args = sys.argv[1:]
 if BEHAVIOUR == "hang":
     time.sleep(30)
 if args and args[0] == "--version":
-    print("fake 1.0")
+    sys.stdout.buffer.write(b"fake 1.0\\n")
     sys.exit(0)
 if args and args[0] == "-tvf":
     if BEHAVIOUR == "broken_list":
         sys.exit(1)
-    sys.stdout.write(LISTING)
+    sys.stdout.buffer.write(LISTING.encode("utf-8"))
     sys.exit(0)
 if args and args[0] == "-xf":
     if BEHAVIOUR == "list_only":
@@ -75,11 +79,19 @@ def fake_tool(tmp_path, behaviour="good", name="bsdtar"):
 
 
 @pytest.fixture(autouse=True)
-def _forget_discovery():
-    """Поиск кешируется на весь процесс — между тестами его надо сбрасывать."""
-    rar.forget()
+def _isolate_discovery(monkeypatch):
+    """
+    Поиск изолируется от машины, на которой идёт прогон.
+
+    Кеш живёт весь процесс, поэтому сбрасывается между тестами. Реестр
+    заглушается: на раннере windows-2022 установлен настоящий 7z.exe, и поиск
+    находил его помимо подменённого shutil.which — тесты про порядок и про
+    отсутствие программ падали от того, что есть на машине сборки.
+    """
+    rar.reset()
+    monkeypatch.setattr(rar, "_from_registry", list)
     yield
-    rar.forget()
+    rar.reset()
 
 
 # --- разбор вывода libarchive ------------------------------------------------
@@ -325,7 +337,7 @@ def test_family_is_guessed_by_the_file_name(name, expected):
 def test_registry_is_only_read_on_windows(monkeypatch):
     monkeypatch.setattr(rar.sys, "platform", "darwin")
 
-    assert rar._from_registry() == []
+    assert _REAL_FROM_REGISTRY() == []
 
 
 def test_install_hint_is_a_command_not_an_action():
@@ -373,6 +385,8 @@ class _FakeKey:
 
 
 def _with_winreg(monkeypatch, fake):
+    """Возвращает настоящий _from_registry поверх заглушки из фикстуры."""
+    monkeypatch.setattr(rar, "_from_registry", _REAL_FROM_REGISTRY)
     monkeypatch.setattr(rar.sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "winreg", fake)
 
@@ -481,3 +495,45 @@ def test_changing_the_tool_within_one_process_takes_effect(tmp_path, monkeypatch
         assert [tool.name for tool in rar.discover()] == ["second"]
     finally:
         rar.reset()
+
+
+# --- кодировка вывода --------------------------------------------------------
+
+
+def test_output_is_decoded_as_utf8_first():
+    """
+    Вывод берётся байтами, а не text=True.
+
+    На Windows text=True декодирует кодировкой локали — cp1251 или cp866, — и
+    кириллица в именах записей превратилась бы в мусор.
+    """
+    assert rar._decode("файл.txt".encode("utf-8")) == "файл.txt"
+
+
+def test_undecodable_output_does_not_lose_the_whole_listing(monkeypatch):
+    """Потерять одно имя лучше, чем потерять всё оглавление."""
+    monkeypatch.setattr(rar.locale, "getpreferredencoding", lambda _do_setlocale=True: "ascii")
+
+    decoded = rar._decode(b"a.txt\n\xff\xfe broken\n")
+
+    assert "a.txt" in decoded
+
+
+def test_unknown_locale_encoding_is_survived(monkeypatch):
+    """LookupError от несуществующей кодировки не должен ронять осмотр."""
+    monkeypatch.setattr(rar.locale, "getpreferredencoding", lambda _do_setlocale=True: "нет-такой")
+
+    assert rar._decode(b"\xff plain") .endswith("plain")
+
+
+def test_sevenzip_is_asked_for_utf8_output(tmp_path, monkeypatch):
+    """
+    7-Zip по умолчанию пишет в кодовой странице консоли; -sccUTF-8 делает
+    вывод предсказуемым независимо от системы.
+    """
+    seen = []
+    monkeypatch.setattr(rar, "_run", lambda command, _timeout: seen.append(command) or None)
+
+    rar.list_entries(Tool(path="7z", family=SEVENZIP), "any.rar")
+
+    assert "-sccUTF-8" in seen[0]

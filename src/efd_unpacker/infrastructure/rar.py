@@ -17,6 +17,7 @@ solid-архивы даются libarchive хуже, и проверка на к
 
 from __future__ import annotations
 
+import locale
 import os
 import re
 import shutil
@@ -223,13 +224,13 @@ def _version(path: str, family: str, prefix: Sequence[str] = ()) -> str:
     arguments = ["--version"] if family == LIBARCHIVE else []
     try:
         completed = subprocess.run(
-            list(prefix) + [path] + arguments, capture_output=True, text=True,
+            list(prefix) + [path] + arguments, capture_output=True,
             timeout=LIST_TIMEOUT, env=_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    output = (completed.stdout or completed.stderr or "").strip().splitlines()
-    return output[0].strip() if output else ""
+    lines = _decode(completed.stdout or completed.stderr or b"").strip().splitlines()
+    return lines[0].strip() if lines else ""
 
 
 # --- оглавление --------------------------------------------------------------
@@ -256,15 +257,16 @@ def read_entries(archive: str, extra: Optional[str] = None) -> Tuple[RarEntry, .
 def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
     """Оглавление этой программой, либо None, если она не справилась."""
     arguments = (
-        ["-tvf", archive] if tool.family == LIBARCHIVE else ["l", "-slt", "-ba", archive]
+        ["-tvf", archive]
+        if tool.family == LIBARCHIVE
+        else ["l", "-slt", "-ba", "-sccUTF-8", archive]
     )
     completed = _run(tool.command(arguments), LIST_TIMEOUT)
     if completed is None or completed.returncode != 0:
         return None
+    output = _decode(completed.stdout)
     parsed = (
-        _parse_libarchive(completed.stdout)
-        if tool.family == LIBARCHIVE
-        else _parse_sevenzip(completed.stdout)
+        _parse_libarchive(output) if tool.family == LIBARCHIVE else _parse_sevenzip(output)
     )
     return parsed or None
 
@@ -421,11 +423,29 @@ def _run(command: Sequence[str], timeout: float):
     """
     try:
         return subprocess.run(
-            list(command), capture_output=True, text=True,
+            list(command), capture_output=True,
             timeout=timeout, env=_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def _decode(raw: bytes) -> str:
+    """
+    Вывод программы в текст.
+
+    Байтами, а не text=True: subprocess декодировал бы кодировкой локали, а на
+    Windows это cp1251 или cp866 — кириллица в именах записей превратилась бы
+    в мусор. Сначала UTF-8 (7-Zip мы сами просим о нём через -sccUTF-8), затем
+    локаль, и только потом замена непрошедших байтов: потерять одно имя лучше,
+    чем потерять всё оглавление.
+    """
+    for encoding in ("utf-8", locale.getpreferredencoding(False)):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
 
 
 # --- подсказка об установке --------------------------------------------------
