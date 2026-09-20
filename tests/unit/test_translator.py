@@ -11,6 +11,7 @@ from efd_unpacker.application.messages import (
     format_validation_error,
 )
 from efd_unpacker.application.report import format_plan
+from efd_unpacker.domain.batch import BatchResult
 from efd_unpacker.domain.plan import Action, ItemKind, Plan, PlannedItem, SkipReason
 from efd_unpacker.domain.errors import (
     FileValidationCode,
@@ -124,26 +125,37 @@ def _report_layer_keys():
     recorder = RecordingTranslator()
     items = [
         PlannedItem(
-            kind=kind, title="t", version="1", source=("a",),
+            kind=kind, title="t", version="1", source=("a",), origin="/d/a",
             destination="/root/sub/%s" % kind.value, bytes_total=1, action=Action.WRITE,
         )
         for kind in ItemKind
     ]
     items += [
         PlannedItem(
-            kind=ItemKind.OTHER, title="t", version="", source=("a",),
+            kind=ItemKind.OTHER, title="t", version="", source=("a",), origin="/d/a",
             destination="", bytes_total=0, action=Action.SKIP, reason=reason,
         )
         for reason in SkipReason
     ]
     items.append(
         PlannedItem(
-            kind=ItemKind.OTHER, title="t", version="", source=("a",),
+            kind=ItemKind.OTHER, title="t", version="", source=("a",), origin="/d/a",
             destination="", bytes_total=0, action=Action.FAIL,
             failure=UnpackError(UnpackErrorCode.UNEXPECTED, {"error": "x"}),
         )
     )
-    format_plan(recorder, Plan(items=tuple(items)), source_count=1, elapsed=0.0)
+    plan = Plan(items=tuple(items))
+    format_plan(recorder, plan, source_count=1, elapsed=0.0)
+    # Второй прогон — с исходом: после распаковки первая колонка и итоговая
+    # строка берут другие ключи, и без этого они остались бы без перевода.
+    format_plan(
+        recorder, plan, source_count=1, elapsed=0.0,
+        result=BatchResult(
+            written=(items[0],),
+            failed=((items[-1], UnpackError(UnpackErrorCode.UNEXPECTED, {})),),
+            cancelled=True,
+        ),
+    )
     return recorder.asked
 
 

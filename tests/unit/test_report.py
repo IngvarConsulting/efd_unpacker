@@ -25,7 +25,8 @@ class Passthrough:
 def item(**kwargs):
     defaults = dict(
         kind=ItemKind.SUPPLY, title="Бухгалтерия", version="3.0.1", source=("a.zip",),
-        destination="/root/tmplts/1c/Acc/3_0_1", bytes_total=1024, action=Action.WRITE,
+        origin="/d/a.zip", destination="/root/tmplts/1c/Acc/3_0_1",
+        bytes_total=1024, action=Action.WRITE,
         file_count=2,
     )
     defaults.update(kwargs)

@@ -172,7 +172,7 @@ def test_format_help_text_localizes_headings_and_descriptions():
     assert "Режимы CLI:" in help_text
     assert "Использование:" in help_text
     assert "GUI mode: open the window and preselect the input file" not in help_text
-    assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in help_text
+    assert "efd_unpacker unpack <file>... -tmplts <dir>" in help_text
 
 
 @pytest.mark.parametrize(

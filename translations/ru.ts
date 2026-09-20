@@ -366,6 +366,18 @@
         <translation>отказов:</translation>
     </message>
     <message>
+        <source>written</source>
+        <translation>записано</translation>
+    </message>
+    <message>
+        <source>written:</source>
+        <translation>записано:</translation>
+    </message>
+    <message>
+        <source>stopped</source>
+        <translation>остановлено</translation>
+    </message>
+    <message>
         <source>to write:</source>
         <translation>к записи:</translation>
     </message>

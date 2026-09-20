@@ -44,7 +44,14 @@ class CLICommands:
     INFO = "info"
     OUTPUT_FLAG = "-tmplts"
     DIST_FLAG = "-dist"
+    DIST_FLAG_LONG = "--dist"
     JSON_FLAG = "--json"
+    RAR_TOOL_FLAG = "--rar-tool"
+    OUTPUT_FLAG_LONG = "--output"
+    ONLY_FLAG = "--only"
+    ONLY_CONFIGURATION = "cf"
+    DRY_RUN_FLAG = "--dry-run"
+    REQUIRE_ALL_FLAG = "--require-all"
     HELP_FLAGS = ("--help", "-h")
     # Код 2 для ошибки синтаксиса — соглашение getopt и argparse; 1 остаётся
     # за содержательным отказом (файл не найден, архив повреждён).

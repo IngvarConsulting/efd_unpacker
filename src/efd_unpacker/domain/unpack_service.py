@@ -164,6 +164,17 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
     def __init__(self, file: BinaryIO) -> None:
         super().__init__(file)
         self._cancel_check: Optional[Callable[[], bool]] = None
+        self._keep: Optional[Callable[[str], bool]] = None
+
+    def set_filter(self, keep: Callable[[str], bool]) -> None:
+        """
+        Ограничить распаковку частью записей.
+
+        Нужно для `--only cf` и для поставки с несколькими шаблонами, когда
+        распаковывается один. Отбор по пути записи, а не по индексу: индексы
+        сдвинутся, стоит формату добавить поле.
+        """
+        self._keep = keep
 
     def set_cancel_check(self, cancel_check: Callable[[], bool]) -> None:
         """Функция, по которой распаковка прерывается между записями."""
@@ -208,6 +219,13 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                 # файлы целые. Удалять их нельзя — output_dir это общий каталог
                 # шаблонов, где лежат и чужие.
                 self._raise_if_cancelled(src_path)
+
+                if self._keep is not None and not self._keep(src_path):
+                    # Пропущенную запись надо перешагнуть в потоке: данные
+                    # записей лежат подряд, и следующая прочиталась бы не с
+                    # того места.
+                    buffer_file.seek(size, os.SEEK_CUR)
+                    continue
 
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 self._write_entry(buffer_file, path, src_path, size)
@@ -335,6 +353,7 @@ class UnpackService:
         handle: BinaryIO,
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]] = None,
+        keep: Optional[Callable[[str], bool]] = None,
     ) -> None:
         """
         Распаковывает уже открытый поток.
@@ -344,7 +363,7 @@ class UnpackService:
         копия весила бы 2.4 ГБ.
         """
         try:
-            self._unpack_handle(handle, output_dir, cancel_check)
+            self._unpack_handle(handle, output_dir, cancel_check, keep)
         except UnpackError:
             raise
         except FileNotFoundError as exc:
@@ -361,10 +380,17 @@ class UnpackService:
         handle: BinaryIO,
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]],
+        keep: Optional[Callable[[str], bool]] = None,
     ) -> None:
         reader = self._reader_factory(handle)
         if cancel_check is not None:
             setter = getattr(reader, "set_cancel_check", None)
             if setter is not None:
                 setter(cancel_check)
+        if keep is not None:
+            # getattr, а не прямой вызов: reader_factory подменяется в тестах,
+            # и подставной reader не обязан знать про отбор.
+            setter = getattr(reader, "set_filter", None)
+            if setter is not None:
+                setter(keep)
         reader.unpack(output_dir)
