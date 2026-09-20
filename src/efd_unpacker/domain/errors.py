@@ -34,6 +34,9 @@ class UnpackErrorCode(Enum):
     UNSAFE_ENTRY = "unpack_unsafe_entry"
     TOO_LARGE = "unpack_too_large"
     CORRUPTED_ARCHIVE = "unpack_corrupted_archive"
+    CONTAINER_UNSUPPORTED = "unpack_container_unsupported"
+    NESTING_TOO_DEEP = "unpack_nesting_too_deep"
+    TOO_MANY_ENTRIES = "unpack_too_many_entries"
     CANCELLED = "unpack_cancelled"
     UNEXPECTED = "unpack_unexpected"
 
