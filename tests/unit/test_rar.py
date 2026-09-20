@@ -864,11 +864,14 @@ def test_found_does_not_start_a_search(tmp_path, monkeypatch):
 
     Меню открывается в потоке окна, а поиск запускает каждого кандидата за
     номером версии: предел ожидания такого запуска — двадцать секунд.
+
+    Вторая подмена which поверх первой, а не через monkeypatch.undo(): undo
+    снимает ВСЕ подмены, включая заглушку реестра из фикстуры, — и на раннере
+    windows-2022 discover() находил настоящий 7z.exe, установленный в системе.
     """
     monkeypatch.setattr(rar.shutil, "which", _forbidden_which)
     assert rar.found() is None
 
-    monkeypatch.undo()
     monkeypatch.setattr(rar.shutil, "which", lambda name: None)
     rar.discover()
 

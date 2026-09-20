@@ -194,6 +194,59 @@ def test_space_line_warns_when_it_does_not_fit(qtbot, translator, settings):
     assert style.ALERT in screen.label_space.styleSheet()
 
 
+def test_space_is_asked_of_each_destination_volume(qtbot, translator, settings, monkeypatch):
+    """
+    Каталоги бывают на разных томах, и спрашивать надо каждый.
+
+    Одна цифра на оба означала бы «свободно» с того тома, куда поедет меньшая
+    часть: пачка дистрибутивов на полный диск выглядела бы благополучно, пока
+    распаковка не отказала бы на середине.
+    """
+    settings.set_output_path(os.path.join(os.sep, "быстрый", "tmplts"))
+    settings.set_distributions_path(os.path.join(os.sep, "большой", "dist"))
+    devices = {os.path.join(os.sep, "быстрый", "tmplts"): 1}
+    free = {1: 100 * 1024 ** 3, 2: 1024 ** 3}
+    monkeypatch.setattr(screens, "volume_of", lambda path: devices.get(path, 2))
+    monkeypatch.setattr(screens, "free_bytes", lambda path: free[devices.get(path, 2)])
+
+    screen = screens.PathsScreen(translator, settings)
+    qtbot.addWidget(screen)
+    # Шаблоны влезают с запасом, дистрибутивы — нет. Общей цифрой это
+    # выглядело бы как «свободно 100 ГБ, нужно 12».
+    screen.set_needed(templates=2 * 1024 ** 3, distributions=10 * 1024 ** 3)
+
+    assert style.ALERT in screen.label_space.styleSheet(), "переполнение тома не замечено"
+    assert screen.label_space.text().count("free") == 2, screen.label_space.text()
+
+
+def test_one_volume_is_reported_once(qtbot, translator, settings, monkeypatch):
+    """Обычный случай — соседние каталоги: одна строка, а не две одинаковых."""
+    monkeypatch.setattr(screens, "volume_of", lambda path: 1)
+    monkeypatch.setattr(screens, "free_bytes", lambda path: 100 * 1024 ** 3)
+    screen = screens.PathsScreen(translator, settings)
+    qtbot.addWidget(screen)
+
+    screen.set_needed(templates=1024 ** 3, distributions=1024 ** 3)
+
+    text = screen.label_space.text()
+    assert text.count("free") == 1, text
+    # Нужное складывается: на один том поедет и то, и другое.
+    assert "needed 2" in text, text
+
+
+def test_volume_is_read_from_an_existing_parent(tmp_path):
+    """Как и место: каталога ещё нет, а том у него и у предка один."""
+    missing = tmp_path / "нет" / "такого"
+
+    assert screens.volume_of(str(missing)) == screens.volume_of(str(tmp_path))
+
+
+def test_volume_gives_up_instead_of_looping(monkeypatch):
+    monkeypatch.setattr(screens.os, "stat", _refuse)
+
+    assert screens.volume_of(os.path.join(os.sep, "a", "b")) is None
+
+
 def test_free_space_is_read_from_an_existing_parent(tmp_path):
     """
     Каталог создаётся перед распаковкой, а место интересно до неё.
@@ -232,13 +285,17 @@ def tools_screen(qtbot, translator, found=()):
     return screen
 
 
-def test_found_program_is_shown_with_its_path(qtbot, translator):
+def test_found_program_is_shown_with_its_path(qtbot, translator, monkeypatch):
     """Критерий #66: экран показывает найденное на этой машине."""
+    monkeypatch.setattr(rar, "last_probe", lambda: None)
     screen = tools_screen(qtbot, translator, found=(tool(),))
 
     shown = texts(screen)
     assert any("/usr/bin/bsdtar" in line for line in shown)
-    assert "IN USE" in shown
+    # Пока ни одного .rar не читали, использовать некого: первая по очереди —
+    # это обещание, а не факт, и назвать его «используется» было бы враньём.
+    assert "first in line" in shown
+    assert "IN USE" not in shown
 
 
 def test_long_version_banner_is_cut_down_to_the_number(qtbot, translator):
@@ -281,19 +338,30 @@ def test_missing_family_names_what_was_searched(qtbot, translator):
         assert any(name in line for name in rar.searched_names(family) for line in shown)
 
 
-def test_second_program_is_spare_not_in_use(qtbot, translator):
+def test_used_is_the_program_that_read_the_archive(qtbot, translator, monkeypatch):
     """
-    Используется первая по очереди: оглавление читает первая, которая
-    справится, остальные остаются про запас.
+    «Используется» — про ту, что прочитала архив, а не про первую по очереди.
+
+    Первая могла не справиться именно с этим .rar — ради этого запасные и
+    перечисляются, — и тогда отметка «используется» у неё стояла бы рядом со
+    строкой о проверке под соседней.
     """
-    screen = tools_screen(
-        qtbot, translator,
-        found=(tool(), tool(path="/usr/local/bin/7zz", family=rar.SEVENZIP, version="7-Zip 23.01")),
+    first = tool()
+    second = tool(path="/usr/local/bin/7zz", family=rar.SEVENZIP, version="7-Zip 23.01")
+    monkeypatch.setattr(
+        rar, "last_probe", lambda: rar.Probe(tool=second, archive="a.rar", entries=44)
     )
+
+    screen = tools_screen(qtbot, translator, found=(first, second))
 
     shown = texts(screen)
     assert shown.count("IN USE") == 1
     assert "spare" in shown
+    # Обе отметки у своих строк: «используется» под 7-Zip, «про запас» под
+    # libarchive, и строка о проверке там же, где «используется».
+    order = [line for line in shown if line in ("IN USE", "spare")]
+    assert order == ["spare", "IN USE"]
+    assert shown.index("checked on a.rar: 44 entries") > shown.index("IN USE")
 
 
 def test_install_command_is_shown_but_never_run(qtbot, translator, monkeypatch):
@@ -307,10 +375,12 @@ def test_install_command_is_shown_but_never_run(qtbot, translator, monkeypatch):
     monkeypatch.setattr(screens.rar.subprocess, "Popen", _forbidden)
     screen = tools_screen(qtbot, translator, found=())
 
-    assert rar.install_hint() in texts(screen)
+    shown = texts(screen)
+    for command in rar.install_hints():
+        assert command in shown
 
-    screen.copy_command()
-    assert QApplication.clipboard().text() == rar.install_hint()
+    screen.copy_command(rar.install_hints()[0])
+    assert QApplication.clipboard().text() == rar.install_hints()[0]
 
 
 def _forbidden(*_args, **_kwargs):
@@ -323,7 +393,29 @@ def test_install_command_is_absent_when_everything_is_found(qtbot, translator):
 
     screen = tools_screen(qtbot, translator, found=found)
 
-    assert rar.install_hint() not in texts(screen)
+    shown = texts(screen)
+    for command in rar.install_hints():
+        assert command not in shown
+
+
+def test_alternative_commands_are_copied_one_at_a_time(qtbot, translator, monkeypatch):
+    """
+    Варианты равноправны: нужен ровно один, смотря какой менеджер пакетов.
+
+    Склеенные в строку, они попадают в буфер конвейером: «a | b», вставленное
+    в оболочку, запустит вторую команду даже после успеха первой, а её отказ
+    человек примет за отказ установки.
+    """
+    monkeypatch.setattr(
+        rar, "install_hints", lambda: ("sudo apt install libarchive-tools", "sudo dnf install p7zip")
+    )
+    screen = tools_screen(qtbot, translator, found=())
+
+    screen.copy_command(rar.install_hints()[1])
+
+    copied = QApplication.clipboard().text()
+    assert copied == "sudo dnf install p7zip"
+    assert "|" not in copied
 
 
 def test_probe_line_belongs_to_the_program_that_read_the_archive(qtbot, translator, monkeypatch):
@@ -676,3 +768,44 @@ def test_button_icons_are_drawn_not_typed(qtbot, draw):
         # обрезался бы у любого размера, кроме того единственного, под который
         # ширину подобрали.
         assert style.INK.upper() in painted(half, image.width()), "шеврон обрезан"
+
+
+def test_hanging_search_is_terminated_instead_of_outliving_the_window(qtbot, translator,
+                                                                      monkeypatch):
+    """
+    Предел ожидания обязан кончаться снятием, а не просто истекать.
+
+    Зависший кандидат держит поиск до своих двадцати секунд, и закрытие окна
+    после истёкшего ожидания разрушило бы живой QThread — то есть уронило бы
+    приложение на выходе. Поиск ничего не пишет, снимать его безопасно.
+    """
+    import time
+
+    from efd_unpacker.constants import UIConstants
+
+    monkeypatch.setattr(UIConstants, "THREAD_STOP_TIMEOUT_MS", 50)
+    screen = screens.ToolsScreen(translator, discover=lambda: time.sleep(5) or ())
+    qtbot.addWidget(screen)
+    qtbot.waitUntil(lambda: screen._thread is not None and screen._thread.isRunning(), timeout=2000)
+
+    started = time.monotonic()
+    screen.wait()
+
+    assert not screen._thread.isRunning(), "поток пережил ожидание"
+    assert time.monotonic() - started < 4, "ждали до самого конца вместо снятия"
+
+
+def test_every_install_command_is_a_single_command():
+    """
+    Каждый вариант — самостоятельная команда, а не кусок конвейера.
+
+    Строка попадает в буфер целиком и вставляется в оболочку как есть: «a | b»
+    запустит вторую команду даже после успеха первой, а «a && b» потребует
+    обеих, хотя нужна ровно одна.
+
+    Проверяются подсказки ВСЕХ систем, а не текущей: прогон идёт на одной, и
+    склейка, сделанная в чужой строке, доехала бы до релиза незамеченной.
+    """
+    for system, commands in rar._HINTS.items():
+        for command in commands:
+            assert not set(command) & set("|&;\n"), "%s: %s" % (system, command)

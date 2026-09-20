@@ -47,11 +47,16 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from ..constants import UIConstants
 from ..infrastructure import rar
 from ..infrastructure.os_utils import get_distributions_location_default
 from ..infrastructure.settings_service import ORIGIN_KEYS, SettingsService
 from ..runtime import resource_path
 from . import style
+
+#: Роли каталогов, те же, что в окне: подпись про место идёт по ним.
+ROLE_TEMPLATES = "templates"
+ROLE_DISTRIBUTIONS = "distributions"
 
 #: Ссылки экрана «О программе». Все три ведут в один репозиторий, потому что
 #: обратная связь у проекта одна — его трекер.
@@ -362,6 +367,22 @@ def free_bytes(path: str) -> Optional[int]:
             probe = parent
 
 
+def volume_of(path: str) -> Optional[int]:
+    """
+    Устройство, на котором лежит путь, — как и free_bytes, по ближайшему
+    существующему предку. None, если не удалось спросить ни у кого.
+    """
+    probe = os.path.normpath(path) if path else os.sep
+    while True:
+        try:
+            return os.stat(probe).st_dev
+        except OSError:
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                return None
+            probe = parent
+
+
 class PathsScreen(Screen):
     """Каталог шаблонов и каталог дистрибутивов."""
 
@@ -370,7 +391,7 @@ class PathsScreen(Screen):
     def __init__(self, translator, settings_service: SettingsService) -> None:
         super().__init__(translator, translator.translate("Screens", "Where to unpack"))
         self.settings_service = settings_service
-        self._needed = 0
+        self._needed = {ROLE_TEMPLATES: 0, ROLE_DISTRIBUTIONS: 0}
         self._groups: List[QButtonGroup] = []
 
         self.setStyleSheet(style.radio_sheet())
@@ -387,9 +408,15 @@ class PathsScreen(Screen):
 
         self.refresh()
 
-    def set_needed(self, total: int) -> None:
-        """Объём отмеченного. Окно сообщает его перед показом экрана."""
-        self._needed = total
+    def set_needed(self, templates: int, distributions: int = 0) -> None:
+        """
+        Объём отмеченного, раздельно по каталогам.
+
+        Раздельно, потому что каталоги бывают на разных томах: одна цифра на
+        оба означала бы «свободно» с того тома, куда поедет меньшая часть, —
+        и пачка дистрибутивов на полный диск выглядела бы благополучно.
+        """
+        self._needed = {ROLE_TEMPLATES: templates, ROLE_DISTRIBUTIONS: distributions}
         self._refresh_space()
 
     def refresh(self) -> None:
@@ -548,17 +575,53 @@ class PathsScreen(Screen):
 
     # --- место на диске -------------------------------------------------------
 
+    def _volumes(self) -> List[Tuple[str, int, Optional[int]]]:
+        """
+        Тома назначения: путь, нужно на него, свободно на нём.
+
+        Один том, когда каталоги соседи (обычный случай), и два, когда их
+        развели по разным дискам. Считается по устройству, а не по виду пути:
+        соседние каталоги с непохожими именами всё равно лежат на одном томе.
+        """
+        roots = [
+            (ROLE_TEMPLATES, self.settings_service.get_output_path()),
+            (ROLE_DISTRIBUTIONS, self.settings_service.get_distributions_path()),
+        ]
+        volumes: List[Tuple[str, int, Optional[int]]] = []
+        by_device: dict = {}
+        for role, path in roots:
+            device = volume_of(path)
+            if device is not None and device in by_device:
+                index = by_device[device]
+                known, needed, free = volumes[index]
+                volumes[index] = (known, needed + self._needed[role], free)
+                continue
+            by_device[device] = len(volumes)
+            volumes.append((path, self._needed[role], free_bytes(path)))
+        return volumes
+
     def _refresh_space(self) -> None:
-        free = free_bytes(self.settings_service.get_output_path())
+        # Тома считаются один раз: каждый вызов ходит на диск.
+        volumes = self._volumes()
+        split = len(volumes) > 1
         parts = []
-        if free is not None:
-            parts.append("%s %s" % (self._t("Screens", "free"), style.human_size(free)))
-        if self._needed:
-            parts.append("%s %s" % (self._t("Screens", "needed"), style.human_size(self._needed)))
+        tight = False
+        for path, needed, free in volumes:
+            if free is None:
+                continue
+            if split and not needed:
+                # На этот том ничего не поедет: место на нём сейчас не новость.
+                continue
+            room = "%s %s" % (self._t("Screens", "free"), style.human_size(free))
+            if split:
+                room = "%s: %s" % (os.path.basename(os.path.normpath(path)) or path, room)
+            parts.append(room)
+            if needed:
+                parts.append("%s %s" % (self._t("Screens", "needed"), style.human_size(needed)))
+            tight = tight or needed > free
         self.label_space.setText("  ·  ".join(parts))
         # Не влезает — это единственное, что стоит сказать про место заранее:
         # отказ на середине распаковки обходится дороже, чем предупреждение.
-        tight = free is not None and self._needed > free
         self.label_space.setStyleSheet(
             "font-family: %s; font-size: 11.5px; color: %s;"
             % (style.mono_stack(), style.ALERT if tight else style.MUTED)
@@ -627,6 +690,7 @@ class ToolsScreen(Screen):
         self._thread = None
         self._tools: Tuple = ()
         self._searching = False
+        self._copy_buttons: List[QPushButton] = []
 
         self.label_trailing.setText(system_line())
 
@@ -659,6 +723,18 @@ class ToolsScreen(Screen):
         rar.forget()
         self.search()
 
+    def refresh(self) -> None:
+        """
+        Перерисовывает экран по тому, что уже известно.
+
+        Зовётся при каждом заходе: запись о проверке появляется, когда
+        распаковали .rar, а строки собираются один раз при первом показе.
+        Без этого проверка, случившаяся после, так и осталась бы невидимой —
+        а «Искать заново» вместо неё не годится, она сначала всё забывает.
+        """
+        if not self._searching:
+            self._render()
+
     def _search_in_thread(self) -> None:
         from .threads import ToolsThread  # noqa: PLC0415 - модуль тянет QThread
 
@@ -673,10 +749,20 @@ class ToolsScreen(Screen):
         self._thread = None
 
     def wait(self) -> None:
-        """Дожидается потока поиска. Зовётся при закрытии окна."""
+        """
+        Дожидается потока поиска, в крайнем случае снимая его.
+
+        Предел ожидания обязан кончаться снятием, а не просто истекать:
+        зависший кандидат держит поиск до своих двадцати секунд, а закрытие
+        окна после этого разрушило бы живой QThread — то есть уронило бы
+        приложение на выходе. Поиск ничего не пишет, снимать его безопасно.
+        """
         thread = self._thread
-        if thread is not None and thread.isRunning():
-            thread.wait(2000)
+        if thread is None or not thread.isRunning():
+            return
+        if not thread.wait(UIConstants.THREAD_STOP_TIMEOUT_MS):
+            thread.terminate()
+            thread.wait()
 
     def show_tools(self, tools) -> None:
         self._tools = tuple(tools)
@@ -700,13 +786,21 @@ class ToolsScreen(Screen):
             self.body.addStretch()
             return
 
+        # Кто в деле, решает запись о проверке, а не порядок поиска: первая
+        # программа могла не справиться именно с этим архивом, и дальше по
+        # списку нашлась другая — ради этого запасные и перечисляются.
+        probe = rar.last_probe()
+        used = probe.tool.path if probe is not None else None
+
         missing = False
         for family in rar.known_families():
             found = [tool for tool in self._tools if tool.family == family]
             self.body.addWidget(_rule())
             if found:
                 for tool in found:
-                    self.body.addWidget(self._found_row(tool, first=self._tools[0] is tool))
+                    self.body.addWidget(self._found_row(
+                        tool, used=used, first=self._tools[0] is tool,
+                    ))
             else:
                 missing = True
                 self.body.addWidget(self._missing_row(family))
@@ -714,7 +808,7 @@ class ToolsScreen(Screen):
 
         if missing:
             self.body.addSpacing(12)
-            self.body.addWidget(self._install_row())
+            self.body.addWidget(self._install_block())
         self.body.addSpacing(14)
         self.body.addWidget(_note(self._t(
             "Screens",
@@ -724,21 +818,29 @@ class ToolsScreen(Screen):
         )))
         self.body.addStretch()
 
-    def _found_row(self, tool, first: bool) -> QWidget:
+    def _found_row(self, tool, used: Optional[str], first: bool) -> QWidget:
         title = QLabel(rar.FAMILY_TITLES.get(tool.family, tool.family))
         title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
-        # «Используется» у первой по очереди, а не у любой найденной: оглавление
-        # читает первая, которая справится, и остальные остаются про запас.
-        badge = QLabel(self._t("Screens", "IN USE") if first else self._t("Screens", "spare"))
+
+        # «Используется» — только про ту, что действительно прочитала архив.
+        # Пока ни одного .rar не читали, использовать некого, и первая по
+        # очереди — это обещание, а не факт: так и называем.
+        if used is not None and tool.path == used:
+            mark, accented = self._t("Screens", "IN USE"), True
+        elif used is None and first:
+            mark, accented = self._t("Screens", "first in line"), True
+        else:
+            mark, accented = self._t("Screens", "spare"), False
+        badge = QLabel(mark)
         badge.setStyleSheet(
             "font-size: 11px; font-weight: 500; color: %s;"
-            % (style.ACCENT if first else style.MUTED)
+            % (style.ACCENT if accented else style.MUTED)
         )
 
         version = short_version(tool)
         lines = [tool.path if not version else "%s  ·  %s" % (tool.path, version)]
-        probe = rar.last_probe()
         note = ""
+        probe = rar.last_probe()
         if probe is not None and probe.tool.path == tool.path:
             note = self._t("Screens", "checked on %s: %d entries") % (
                 probe.archive, probe.entries,
@@ -787,52 +889,73 @@ class ToolsScreen(Screen):
         holder.setLayout(outer)
         return holder
 
-    def _install_row(self) -> QWidget:
+    def _install_block(self) -> QWidget:
         """
-        Команда установки — одна на экран, а не по одной у каждой строки.
+        Команды установки — по одной в строке, каждая со своей кнопкой.
 
-        Подсказка в rar даётся на систему целиком, и раскладывать её обратно
-        по семействам значило бы сочинять имена пакетов: у Debian и Fedora они
-        разные, и проверить их мне не на чем. Показываем ровно то, что знаем.
+        Не одной строкой: варианты равноправны, нужен ровно один из них, и
+        «a | b», вставленное в оболочку, становится конвейером — вторая
+        команда запустится даже после успеха первой, а её отказ человек
+        примет за отказ установки.
+
+        По семействам программ они при этом не разложены: подсказка в rar
+        даётся на систему целиком, и раскладывать её обратно значило бы
+        сочинять имена пакетов — у Debian и Fedora они разные, и проверить их
+        мне не на чем.
         """
-        self.label_command = QLabel(rar.install_hint())
-        self.label_command.setStyleSheet(style.code_sheet())
-        self.label_command.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._copy_buttons = []
+        box = QVBoxLayout()
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(6)
+        for command in rar.install_hints():
+            label = QLabel(command)
+            label.setStyleSheet(style.code_sheet())
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        self.button_copy = QPushButton(self._t("Screens", "Copy"))
-        self.button_copy.setStyleSheet(style.small_button_sheet())
-        self.button_copy.setCursor(Qt.PointingHandCursor)
-        self.button_copy.clicked.connect(self.copy_command)
+            button = QPushButton(self._t("Screens", "Copy"))
+            button.setStyleSheet(style.small_button_sheet())
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _checked, text=command: self.copy_command(text))
+            self._copy_buttons.append(button)
 
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        row.addWidget(self.label_command)
-        row.addWidget(self.button_copy)
-        row.addStretch()
-        holder = QWidget()
-        holder.setLayout(row)
-        return holder
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            row.addWidget(label)
+            row.addWidget(button)
+            row.addStretch()
+            holder = QWidget()
+            holder.setLayout(row)
+            box.addWidget(holder)
 
-    def copy_command(self) -> None:
+        block = QWidget()
+        block.setLayout(box)
+        return block
+
+    def copy_command(self, command: str) -> None:
         """
-        Кладёт команду в буфер. Установку не запускаем.
+        Кладёт одну команду в буфер. Установку не запускаем.
 
         winget и brew просят повышения прав и задают свои вопросы, а человек
         вправе знать, что ставится в его систему, до того как это произойдёт.
         """
         clipboard = QApplication.clipboard()
         if clipboard is not None:
-            clipboard.setText(rar.install_hint())
-        self.button_copy.setText(self._t("Screens", "Copied"))
+            clipboard.setText(command)
+        for button in self._copy_buttons:
+            button.setText(
+                self._t("Screens", "Copied") if button is self.sender()
+                else self._t("Screens", "Copy")
+            )
         QTimer.singleShot(1500, self._restore_copy)
 
     def _restore_copy(self) -> None:
-        # Кнопка могла уехать вместе с пересборкой тела, пока шёл отсчёт.
-        try:
-            self.button_copy.setText(self._t("Screens", "Copy"))
-        except RuntimeError:
-            pass
+        for button in self._copy_buttons:
+            # Кнопки могли уехать вместе с пересборкой тела, пока шёл отсчёт.
+            try:
+                button.setText(self._t("Screens", "Copy"))
+            except RuntimeError:
+                pass
 
 
 # --- о программе -------------------------------------------------------------

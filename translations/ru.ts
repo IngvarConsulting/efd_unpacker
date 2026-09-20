@@ -596,5 +596,9 @@
         <source>Ingvar Consulting helps 1C teams sort out development processes: planning, releases, reviews, onboarding, and makes the team more manageable.</source>
         <translation>Ingvar Consulting помогает 1С-командам разбирать процессы разработки: планирование, релизы, ревью, онбординг и повышает управляемость команды.</translation>
     </message>
+    <message>
+        <source>first in line</source>
+        <translation>будет первой</translation>
+    </message>
 </context>
 </TS>

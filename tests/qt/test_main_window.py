@@ -7,6 +7,7 @@
 """
 
 import os
+import threading
 
 os.environ.setdefault("QT_QPA_PLATFORM", "minimal")
 os.environ.setdefault("QT_API", "pyqt5")
@@ -918,14 +919,15 @@ def test_folders_cannot_be_changed_while_unpacking(qtbot):
     Смена настройки развела бы обещанное в окне и то, что пишется на диск, —
     а увидел бы это пользователь только по готовым файлам не в том каталоге.
     """
-    started = {}
+    running = threading.Event()
+    release = threading.Event()
 
     def batch(plan, sink, *_args, **_kwargs):
-        started["menu"] = [
-            (action.text(), action.isEnabled())
-            for action in window.menu().actions()
-            if not action.isSeparator()
-        ]
+        # Батч зовётся из потока распаковки. Виджеты меню собираются в потоке
+        # окна и только там: собрать QMenu отсюда значит проверять одно, а
+        # ломать другое. Поэтому поток лишь замирает, а меню читает тест.
+        running.set()
+        release.wait(5)
         return BatchResult(written=plan.to_write)
 
     window = make_window(qtbot, batch=batch)
@@ -933,10 +935,19 @@ def test_folders_cannot_be_changed_while_unpacking(qtbot):
     qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
+    qtbot.waitUntil(running.is_set, timeout=3000)
+    try:
+        items = [
+            (action.text(), action.isEnabled())
+            for action in window.menu().actions()
+            if not action.isSeparator()
+        ]
+    finally:
+        release.set()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
-    assert started["menu"][0] == ("Where to unpack…", False)
-    assert started["menu"][1][1] is True, "инструменты читать можно всегда"
+    assert items[0] == ("Where to unpack…", False)
+    assert items[1][1] is True, "инструменты читать можно всегда"
 
 
 def test_tools_count_is_shown_only_when_it_is_known(qtbot, monkeypatch):
@@ -1107,3 +1118,66 @@ def _has_border(label):
     )
     lines = {ui.style.LINE.upper(), ui.style.LINE_SOFT.upper(), ui.style.LINE_FAINT.upper()}
     return any(QColor(image.pixel(x, y)).name().upper() in lines for x, y in edges)
+
+
+def test_tools_screen_shows_a_probe_made_after_it_was_first_opened(qtbot, monkeypatch):
+    """
+    Строки экрана собираются один раз, а запись о проверке появляется позже.
+
+    Распаковали .rar — и «проверена на вашем архиве» обязана показаться при
+    следующем заходе. «Искать заново» вместо этого не годится: она сначала
+    забывает всё, что знала, включая саму запись.
+    """
+    from efd_unpacker.infrastructure import rar as rar_module
+
+    found = rar_module.Tool(path="/usr/bin/bsdtar", family=rar_module.LIBARCHIVE, version="")
+    monkeypatch.setattr(rar_module, "last_probe", lambda: None)
+    window = make_window(qtbot)
+    window._tools = ui.screens.ToolsScreen(
+        window.translator, discover=lambda: (found,), start_search=lambda: None
+    )
+    window._tools.show_tools((found,))
+    # Только в стопку окна: за qtbot экран закрывался бы второй раз, уже
+    # после того, как его удалило окно.
+    window.pages.addWidget(window._tools)
+    assert not _lines(window._tools, "checked on setup.rar")
+
+    monkeypatch.setattr(
+        rar_module, "last_probe",
+        lambda: rar_module.Probe(tool=found, archive="setup.rar", entries=44),
+    )
+    window.show_tools()
+
+    assert _lines(window._tools, "checked on setup.rar")
+
+
+def _lines(widget, needle):
+    """
+    Подписи, содержащие строку.
+
+    Искать по «checked on» нельзя: ровно эта подстрока есть и в пояснении
+    внизу экрана, про проверку на самом архиве.
+    """
+    from PyQt5.QtWidgets import QLabel
+
+    return [label.text() for label in widget.findChildren(QLabel) if needle in label.text()]
+
+
+def test_paths_screen_is_told_what_goes_to_each_folder(qtbot):
+    """
+    Нужное делится по каталогам: они бывают на разных томах.
+
+    Одной цифрой экран путей спросил бы про место только том шаблонов, и
+    пачка дистрибутивов на полный диск выглядела бы благополучно.
+    """
+    plan = Plan(items=(
+        item(kind=ItemKind.SUPPLY, bytes_total=2000),
+        item(title="Платформа", kind=ItemKind.PLATFORM, bytes_total=5000),
+    ))
+    window = make_window(qtbot, plan=plan)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.show_paths()
+
+    assert window._paths._needed == {"templates": 2000, "distributions": 5000}

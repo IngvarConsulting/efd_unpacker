@@ -416,7 +416,15 @@ class MainWindow(QMainWindow):
             self._paths.closed.connect(self.close_screen)
             self.pages.addWidget(self._paths)
         self._paths.refresh()
-        self._paths.set_needed(sum(item.bytes_total for item in self._selected()))
+        selected = self._selected()
+        self._paths.set_needed(
+            templates=sum(
+                item.bytes_total for item in selected if item.kind is ItemKind.SUPPLY
+            ),
+            distributions=sum(
+                item.bytes_total for item in selected if item.kind is not ItemKind.SUPPLY
+            ),
+        )
         self.pages.setCurrentWidget(self._paths)
 
     def show_tools(self) -> None:
@@ -424,6 +432,9 @@ class MainWindow(QMainWindow):
             self._tools = screens.ToolsScreen(self.translator)
             self._tools.closed.connect(self.close_screen)
             self.pages.addWidget(self._tools)
+        # Перерисовка на каждом заходе: между заходами могли распаковать .rar,
+        # и запись о проверке иначе так и не показалась бы.
+        self._tools.refresh()
         self.pages.setCurrentWidget(self._tools)
 
     def show_about(self) -> None:

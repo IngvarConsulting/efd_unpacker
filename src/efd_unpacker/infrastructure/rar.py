@@ -598,16 +598,35 @@ def _decode(raw: bytes) -> str:
 #: Команду показываем, но не выполняем: winget и brew просят повышения прав и
 #: задают свои вопросы, а человек вправе знать, что ставится в его систему,
 #: до того как это произойдёт.
+#: Вариантов может быть несколько — это РАВНОПРАВНЫЕ альтернативы, а не
+#: последовательность: на Linux один пакет ставится apt, другой dnf, и нужен
+#: ровно один из них, смотря какой менеджер пакетов в системе.
 _HINTS = {
-    "darwin": "brew install sevenzip",
-    "win32": "winget install 7zip.7zip",
-    "linux": "sudo apt install libarchive-tools  |  sudo dnf install p7zip",
+    "darwin": ("brew install sevenzip",),
+    "win32": ("winget install 7zip.7zip",),
+    "linux": ("sudo apt install libarchive-tools", "sudo dnf install p7zip"),
 }
+
+#: Чем варианты разделяются в одной строке. Не вертикальная черта: строку
+#: показывают рядом с кнопкой «копировать», а «a | b», вставленное в оболочку,
+#: становится конвейером — вторая команда запустится даже после успеха первой,
+#: и её отказ человек примет за отказ установки.
+HINT_SEPARATOR = "  либо  "
+
+
+def install_hints() -> Tuple[str, ...]:
+    """Команды установки по отдельности: каждая — самостоятельный вариант."""
+    return _HINTS.get(sys.platform, _HINTS["linux"])
 
 
 def install_hint() -> str:
-    """Что набрать, чтобы появилась программа для .rar."""
-    return _HINTS.get(sys.platform, _HINTS["linux"])
+    """
+    Что набрать, чтобы появилась программа для .rar, — одной строкой.
+
+    Для сообщения об отказе, где строка одна и кнопок нет. Окно показывает
+    варианты по отдельности, каждый со своей кнопкой «копировать».
+    """
+    return HINT_SEPARATOR.join(install_hints())
 
 
 def extract_entry(tool: Tool, archive: str, destination: str, entry: RarEntry) -> bool:
