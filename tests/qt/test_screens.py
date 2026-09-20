@@ -770,29 +770,70 @@ def test_button_icons_are_drawn_not_typed(qtbot, draw):
         assert style.INK.upper() in painted(half, image.width()), "шеврон обрезан"
 
 
-def test_hanging_search_is_terminated_instead_of_outliving_the_window(qtbot, translator,
-                                                                      monkeypatch):
+class _StuckThread:
     """
-    Предел ожидания обязан кончаться снятием, а не просто истекать.
+    Поток, который не кончается сам.
 
-    Зависший кандидат держит поиск до своих двадцати секунд, и закрытие окна
+    Подставной намеренно: проверяется ПОРЯДОК действий при закрытии, а не
+    работа QThread. Снимать настоящий поток, исполняющий байт-код Python,
+    ради этого не стоит — terminate() рвёт его в произвольной точке, и цена
+    ошибки здесь не красный тест, а развалившийся процесс прогона.
+    """
+
+    def __init__(self) -> None:
+        self.waits = []
+        self.terminated = False
+
+    def isRunning(self) -> bool:
+        return not self.terminated
+
+    #: Чем записывается вызов wait() без аргумента. Настоящий QThread.wait()
+    #: без срока ждёт до конца, а None ему передать нельзя — он отвечает
+    #: TypeError, и подгонять рабочий код под удобство двойника значило бы
+    #: уронить закрытие окна ради красивого сравнения в тесте.
+    FOREVER = "до конца"
+
+    def wait(self, *arguments) -> bool:
+        self.waits.append(arguments[0] if arguments else _StuckThread.FOREVER)
+        # Срок вышел, поток жив — ровно тот случай, ради которого снятие и есть.
+        return self.terminated
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def test_expired_wait_ends_with_terminate_not_with_a_live_thread(qtbot, translator, monkeypatch):
+    """
+    Предел ожидания обязан кончаться снятием, а не истечением срока.
+
+    Зависший кандидат держит поиск до своих двадцати секунд, а закрытие окна
     после истёкшего ожидания разрушило бы живой QThread — то есть уронило бы
     приложение на выходе. Поиск ничего не пишет, снимать его безопасно.
     """
-    import time
-
     from efd_unpacker.constants import UIConstants
 
-    monkeypatch.setattr(UIConstants, "THREAD_STOP_TIMEOUT_MS", 50)
-    screen = screens.ToolsScreen(translator, discover=lambda: time.sleep(5) or ())
+    screen = screens.ToolsScreen(translator, discover=lambda: (), start_search=lambda: None)
     qtbot.addWidget(screen)
-    qtbot.waitUntil(lambda: screen._thread is not None and screen._thread.isRunning(), timeout=2000)
+    screen._thread = _StuckThread()
 
-    started = time.monotonic()
     screen.wait()
 
-    assert not screen._thread.isRunning(), "поток пережил ожидание"
-    assert time.monotonic() - started < 4, "ждали до самого конца вместо снятия"
+    assert screen._thread.terminated, "поток пережил ожидание"
+    # Сначала срок, потом безусловное ожидание конца: снятие не мгновенно, и
+    # выход без него оставил бы всё тот же живой поток.
+    assert screen._thread.waits == [UIConstants.THREAD_STOP_TIMEOUT_MS, _StuckThread.FOREVER]
+
+
+def test_finished_search_is_not_waited_on(qtbot, translator):
+    """Закрытие не должно ничего ждать, когда ждать уже нечего."""
+    screen = screens.ToolsScreen(translator, discover=lambda: (), start_search=lambda: None)
+    qtbot.addWidget(screen)
+    screen._thread = _StuckThread()
+    screen._thread.terminated = True  # то же, что «поток уже кончился»
+
+    screen.wait()
+
+    assert screen._thread.waits == []
 
 
 def test_every_install_command_is_a_single_command():
