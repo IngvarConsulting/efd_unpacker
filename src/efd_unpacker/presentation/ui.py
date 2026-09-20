@@ -1,9 +1,13 @@
 """
 Окно массовой распаковки.
 
+Собрано по макетам: шапка с названием и версией, список из двух ярусов,
+подвал с каталогом 1С, нижняя полоса с единственной опцией и главной кнопкой,
+в которой видно количество и объём.
+
 Строка списка — это шаблон, а не файл. Иначе список врёт: demo.zip несёт два
 шаблона разных продуктов, а server64_*.zip в каталог шаблонов не попадёт
-вовсе. План из #51 уже устроен так же, окно просто его показывает.
+вовсе. План из #51 уже так устроен, окно его показывает.
 
 Окно не тупиковое: после распаковки список остаётся, и можно бросить ещё
 файлы, не перезапуская приложение.
@@ -12,22 +16,24 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 from PyQt5.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,8 +41,7 @@ from PyQt5.QtWidgets import (
 from ..application.executor import Writers
 from ..application.inspector import inspect_all
 from ..application.messages import format_validation_error
-from ..application.report import human_bytes
-from ..constants import Styles, UIConstants
+from ..constants import UIConstants
 from ..domain.batch import run as run_batch
 from ..domain.errors import FileValidationError, UnpackError
 from ..domain.file_validator import FileValidator
@@ -54,18 +59,10 @@ from ..domain.unpack_service import UnpackService
 from ..infrastructure.os_utils import open_folder
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import Translator
+from . import rows, style
 from .threads import BatchThread, PlanThread, describe_failure
 
-#: Состояние строки кодируется формой, а не только цветом: залитый квадрат
-#: будет распакован, пустой — отфильтрован, прочерк — пропуск по делу,
-#: круг — отказ. Пропуск и отказ намеренно разные: «уже установлено» —
-#: нормальный исход, а не проблема.
-MARK_WRITE = "■"
-MARK_FILTERED = "□"
-MARK_SKIP = "—"
-MARK_FAIL = "●"
-MARK_RUNNING = "▶"
-MARK_DONE = "✓"
+APP_VERSION = "2.0.0"
 
 ROLE_TEMPLATES = "templates"
 ROLE_DISTRIBUTIONS = "distributions"
@@ -78,8 +75,6 @@ REASON_KEYS = {
     SkipReason.NOTHING_FOUND: "nothing found inside",
     SkipReason.NO_TEMPLATES: "no templates inside",
 }
-
-COLUMNS = ("", "name", "version", "size", "where")
 
 
 class MainWindow(QMainWindow):
@@ -110,14 +105,18 @@ class MainWindow(QMainWindow):
 
         self._inspected: List = []
         self._plan = Plan()
-        self._outcomes: Dict[int, Tuple[str, Optional[UnpackError]]] = {}
+        self.rows: List[rows.PlanRow] = []
+        self._row_of: Dict[int, rows.PlanRow] = {}
+        self._unchecked: set = set()
         self._plan_thread: Optional[PlanThread] = None
         self._batch_thread: Optional[BatchThread] = None
         self._templates_root = ""
         self._written_kinds: set = set()
+        self._started_at = 0.0
+        self._written_bytes = 0
 
         self._build_ui()
-        self._refresh_footer()
+        self._refresh()
 
     # --- построение окна -----------------------------------------------------
 
@@ -126,61 +125,236 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.setWindowTitle(self._t("MainWindow", "EFD Unpacker"))
-        self.setMinimumSize(UIConstants.WINDOW_WIDTH + 420, UIConstants.WINDOW_HEIGHT + 240)
+        self.resize(style.WINDOW_WIDTH, style.WINDOW_HEIGHT)
+        self.setMinimumSize(640, 460)
         self.setAcceptDrops(True)
-
-        self.label_input = QLabel(self._t("MainWindow", "Drag files here or click to choose"))
-        self.label_input.setAlignment(Qt.AlignCenter)
-        self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
-        self.label_input.mousePressEvent = self.open_file_dialog
-
-        self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(
-            [self._t("Report", key) if key else "" for key in COLUMNS]
-        )
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
-
-        self.check_only_cf = QCheckBox(self._t("MainWindow", "Without demo databases"))
-        self.check_only_cf.stateChanged.connect(self._rebuild_plan)
-
-        self.label_roots = QLabel("")
-        self.label_roots.setStyleSheet("color: #5E6A72;")
-        self.label_roots.setWordWrap(True)
-
-        self.btn_paths = QPushButton(self._t("MainWindow", "Change folders…"))
-        self.btn_paths.clicked.connect(self.browse_output_path)
-        self.btn_unpack = QPushButton(self._t("MainWindow", "Unpack"))
-        self.btn_unpack.clicked.connect(self.unpack)
-        self.btn_unpack.setEnabled(False)
-        self.btn_cancel = QPushButton(self._t("MainWindow", "Cancel"))
-        self.btn_cancel.clicked.connect(self.cancel)
-        self.btn_cancel.setEnabled(False)
-        self.btn_open = QPushButton(self._t("MainWindow", "Open Folder"))
-        self.btn_open.clicked.connect(self.open_output_folder)
-        self.btn_open.setEnabled(False)
-
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.btn_paths)
-        buttons.addStretch()
-        buttons.addWidget(self.btn_open)
-        buttons.addWidget(self.btn_cancel)
-        buttons.addWidget(self.btn_unpack)
+        self.setStyleSheet(style.window_sheet())
 
         layout = QVBoxLayout()
-        layout.addWidget(self.label_input)
-        layout.addWidget(self.table)
-        layout.addWidget(self.check_only_cf)
-        layout.addWidget(self.label_roots)
-        layout.addLayout(buttons)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._make_header())
+        layout.addWidget(self._make_progress())
+        layout.addWidget(self._make_summary())
+        layout.addWidget(self._make_body(), 1)
+        layout.addWidget(self._make_footer())
+        layout.addWidget(self._make_actions())
 
         central = QWidget()
         central.setLayout(layout)
         self.setCentralWidget(central)
+
+    def _make_header(self) -> QWidget:
+        self.label_status = QLabel("")
+        self.label_status.setProperty("role", "mono")
+
+        self.button_menu = QPushButton("⚙  ▾")
+        self.button_menu.setStyleSheet(style.secondary_button_sheet())
+        self.button_menu.setCursor(Qt.PointingHandCursor)
+        self.button_menu.clicked.connect(self._show_menu)
+
+        title = QLabel(self._t("MainWindow", "EFD Unpacker"))
+        title.setProperty("role", "title")
+        version = QLabel(APP_VERSION)
+        version.setProperty("role", "mono")
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(style.SIDE_PADDING, 0, style.SIDE_PADDING, 0)
+        bar.setSpacing(8)
+        bar.addWidget(title)
+        bar.addWidget(version)
+        bar.addStretch()
+        bar.addWidget(self.label_status)
+        bar.addWidget(self.button_menu)
+
+        header = QFrame()
+        header.setFixedHeight(style.HEADER_HEIGHT)
+        header.setLayout(bar)
+        header.setStyleSheet("QFrame { border-bottom: 1px solid %s; }" % style.LINE)
+        return header
+
+    def _make_progress(self) -> QWidget:
+        self.progress_total = QProgressBar()
+        self.progress_total.setTextVisible(False)
+        self.progress_total.setFixedHeight(style.PROGRESS_HEIGHT)
+        self.progress_total.setStyleSheet(
+            "QProgressBar { border: 0; background: %s; }"
+            "QProgressBar::chunk { background: %s; }" % (style.LINE_SOFT, style.ACCENT)
+        )
+        self.progress_total.hide()
+        return self.progress_total
+
+    def _make_summary(self) -> QWidget:
+        self.label_counts = QLabel("")
+        self.label_counts.setProperty("role", "mono")
+        self.button_clear_marks = QPushButton(self._t("MainWindow", "Clear all marks"))
+        self.button_clear_marks.setStyleSheet(style.link_sheet())
+        self.button_clear_marks.setCursor(Qt.PointingHandCursor)
+        self.button_clear_marks.clicked.connect(self._clear_marks)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(style.SIDE_PADDING, 11, style.SIDE_PADDING, 11)
+        bar.addWidget(self.label_counts)
+        bar.addStretch()
+        bar.addWidget(self.button_clear_marks)
+
+        self.summary = QFrame()
+        self.summary.setLayout(bar)
+        self.summary.setStyleSheet("QFrame { border-bottom: 1px solid %s; }" % style.LINE_SOFT)
+        self.summary.hide()
+        return self.summary
+
+    def _make_body(self) -> QWidget:
+        self.drop_zone = self._make_drop_zone()
+
+        self.rows_box = QVBoxLayout()
+        self.rows_box.setContentsMargins(style.SIDE_PADDING, 0, style.SIDE_PADDING, 0)
+        self.rows_box.setSpacing(0)
+        self.rows_box.addStretch()
+        holder = QWidget()
+        holder.setLayout(self.rows_box)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(holder)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+
+        self.body = QStackedWidget()
+        self.body.addWidget(self.drop_zone)
+        self.body.addWidget(self.scroll)
+        return self.body
+
+    def _make_drop_zone(self) -> QWidget:
+        self.label_drop = QLabel(self._t("MainWindow", "Drag files here"))
+        self.label_drop.setAlignment(Qt.AlignCenter)
+        self.label_drop.setStyleSheet("font-size: 16px; font-weight: 600; border: 0;")
+        hint = QLabel(".efd  ·  .zip  ·  .tar.gz  ·  .tar.bz2  ·  .rar  ·  .dmg")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(
+            "font-family: %s; font-size: 12px; color: %s; border: 0;"
+            % (style.mono_stack(), style.MUTED)
+        )
+        choose = QPushButton(self._t("MainWindow", "Select files"))
+        choose.setStyleSheet(style.secondary_button_sheet())
+        choose.setCursor(Qt.PointingHandCursor)
+        choose.clicked.connect(self.open_file_dialog)
+
+        inner = QVBoxLayout()
+        inner.setContentsMargins(32, 40, 32, 40)
+        inner.setSpacing(14)
+        inner.addWidget(self.label_drop)
+        inner.addWidget(hint)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(choose)
+        row.addStretch()
+        inner.addLayout(row)
+
+        self.zone = QFrame()
+        self.zone.setLayout(inner)
+        self.zone.setStyleSheet(style.drop_zone_sheet())
+        self.zone.setMaximumWidth(440)
+
+        outer = QHBoxLayout()
+        outer.addStretch()
+        outer.addWidget(self.zone)
+        outer.addStretch()
+        wrapper = QVBoxLayout()
+        wrapper.addStretch()
+        wrapper.addLayout(outer)
+        wrapper.addStretch()
+        holder = QWidget()
+        holder.setLayout(wrapper)
+        return holder
+
+    def _make_footer(self) -> QWidget:
+        self.label_root_caption = QLabel(self._t("MainWindow", "1C folder"))
+        self.label_root_caption.setProperty("role", "muted")
+        self.label_root = QLabel("")
+        self.label_root.setProperty("role", "path")
+        self.button_paths = QPushButton(self._t("MainWindow", "Change"))
+        self.button_paths.setStyleSheet(style.link_sheet())
+        self.button_paths.setCursor(Qt.PointingHandCursor)
+        self.button_paths.clicked.connect(self.browse_output_path)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(8)
+        top.addWidget(self.label_root_caption)
+        top.addWidget(self.label_root)
+        top.addStretch()
+        top.addWidget(self.button_paths)
+
+        self.label_inside = QLabel("")
+        self.label_inside.setProperty("role", "muted")
+
+        box = QVBoxLayout()
+        box.setContentsMargins(style.SIDE_PADDING, 12, style.SIDE_PADDING, 14)
+        box.setSpacing(6)
+        box.addLayout(top)
+        box.addWidget(self.label_inside)
+
+        self.footer = QFrame()
+        self.footer.setLayout(box)
+        self.footer.setStyleSheet("QFrame { border-top: 1px solid %s; }" % style.LINE)
+        return self.footer
+
+    def _make_actions(self) -> QWidget:
+        self.check_only_cf = QCheckBox(self._t("MainWindow", "Without demo databases"))
+        self.check_only_cf.stateChanged.connect(self._rebuild_plan)
+
+        self.button_clear = QPushButton(self._t("MainWindow", "Clear list"))
+        self.button_clear.setStyleSheet(style.secondary_button_sheet())
+        self.button_clear.clicked.connect(self._clear_list)
+        self.button_clear.hide()
+
+        self.button_stop = QPushButton(self._t("MainWindow", "Stop"))
+        self.button_stop.setStyleSheet(style.secondary_button_sheet())
+        self.button_stop.clicked.connect(self.cancel)
+        self.button_stop.hide()
+
+        self.button_unpack = QPushButton(self._t("MainWindow", "Unpack"))
+        self.button_unpack.setStyleSheet(style.primary_button_sheet())
+        self.button_unpack.setCursor(Qt.PointingHandCursor)
+        self.button_unpack.clicked.connect(self.unpack)
+        self.button_unpack.setEnabled(False)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(style.SIDE_PADDING, 13, style.SIDE_PADDING, 13)
+        bar.setSpacing(12)
+        bar.addWidget(self.check_only_cf)
+        bar.addStretch()
+        bar.addWidget(self.button_clear)
+        bar.addWidget(self.button_stop)
+        bar.addWidget(self.button_unpack)
+
+        actions = QFrame()
+        actions.setLayout(bar)
+        actions.setStyleSheet("QFrame { border-top: 1px solid %s; }" % style.LINE_FAINT)
+        return actions
+
+    # --- меню ----------------------------------------------------------------
+
+    def _show_menu(self) -> None:
+        """
+        Меню шестерёнки.
+
+        В макетах у него три экрана; здесь пока два действия, которые уже
+        есть. Отдельные экраны путей, инструментов и «О программе» — в #66.
+        """
+        menu = QMenu(self)
+        menu.addAction(self._t("MainWindow", "Change folders…"), self.browse_output_path)
+        menu.addAction(self._t("MainWindow", "About"), self._show_about)
+        menu.exec_(self.button_menu.mapToGlobal(self.button_menu.rect().bottomLeft()))
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self, self._t("MainWindow", "About"),
+            "<b>EFD Unpacker</b> %s<br><br>%s" % (
+                APP_VERSION,
+                self._t("MainWindow", "Cross-platform unpacker for 1C supply files"),
+            ),
+        )
 
     # --- приём файлов --------------------------------------------------------
 
@@ -208,17 +382,19 @@ class MainWindow(QMainWindow):
         return [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
 
     def _set_drag_active(self, active: bool) -> None:
-        if active:
-            self.label_input.setText(self._t("MainWindow", "Drop files to inspect"))
-            self.label_input.setStyleSheet(Styles.INPUT_DRAG)
-        else:
-            self.label_input.setText(self._t("MainWindow", "Drag files here or click to choose"))
-            self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
+        self.zone.setStyleSheet(style.drop_zone_sheet(active))
+        self.label_drop.setText(
+            self._t("MainWindow", "Drop files to inspect") if active
+            else self._t("MainWindow", "Drag files here")
+        )
 
-    def open_file_dialog(self, _event) -> None:
+    def open_file_dialog(self, _event=None) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self, self._t("MainWindow", "Select files"), "",
-            self._t("MainWindow", "Supply and distribution files (*.efd *.zip *.rar *.dmg *.tar *.gz *.bz2 *.xz)"),
+            self._t(
+                "MainWindow",
+                "Supply and distribution files (*.efd *.zip *.rar *.dmg *.tar *.gz *.bz2 *.xz)",
+            ),
         )
         if paths:
             self.set_input_files(paths)
@@ -232,8 +408,8 @@ class MainWindow(QMainWindow):
         if not paths or self._running(self._plan_thread) or self._unpacking():
             return False
 
-        self.label_input.setText(self._t("MainWindow", "Inspecting…"))
-        self.btn_unpack.setEnabled(False)
+        self.label_status.setText(self._t("MainWindow", "Inspecting…"))
+        self.button_unpack.setEnabled(False)
         thread = PlanThread(paths, self._inspect_files)
         thread.ready.connect(self._inspection_ready)
         thread.finished.connect(thread.deleteLater)
@@ -244,6 +420,7 @@ class MainWindow(QMainWindow):
 
     def _inspection_ready(self, inspected, error: Optional[UnpackError]) -> None:
         self._set_drag_active(False)
+        self.label_status.setText("")
         if error is not None:
             QMessageBox.warning(
                 self, self._t("MainWindow", "Error"),
@@ -256,7 +433,6 @@ class MainWindow(QMainWindow):
         # Добавляем к уже осмотренному: окно не тупиковое, и второй набор
         # файлов дополняет список, а не стирает его.
         self._inspected = list(self._inspected) + list(inspected)
-        self._outcomes = {}
         self._rebuild_plan()
 
     def _forget_plan_thread(self) -> None:
@@ -279,58 +455,42 @@ class MainWindow(QMainWindow):
         Осмотр стоит секунд, построение плана — микросекунд, поэтому
         переключение «без демобаз» не трогает диск.
         """
-        previous = self._plan
         self._plan = self._build(self._inspected, self._settings())
-        if self._plan.items != previous.items:
-            # Исходы привязаны к объектам прежнего плана. Оставить их значит
-            # рисковать совпадением id у нового объекта на месте старого.
-            self._outcomes = {}
-        self._fill_table()
-        self._refresh_footer()
-        self.btn_unpack.setEnabled(bool(self._plan.to_write) and not self._unpacking())
+        self._fill_rows()
+        self._refresh()
 
-    def _fill_table(self) -> None:
-        self.table.setRowCount(len(self._plan.items))
-        for row, item in enumerate(self._plan.items):
-            for column, text in enumerate(self._row_cells(item)):
-                cell = QTableWidgetItem(text)
-                if column in (0, 3):
-                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(row, column, cell)
+    def _fill_rows(self) -> None:
+        for row in self.rows:
+            self.rows_box.removeWidget(row)
+            row.deleteLater()
+        self.rows = []
+        self._row_of = {}
 
-    def _row_cells(self, item: PlannedItem) -> Tuple[str, ...]:
-        return (
-            self._mark(item),
-            item.title,
-            item.version,
-            human_bytes(item.bytes_total) if item.bytes_total else "",
-            self._where(item),
-        )
+        for index, item in enumerate(self._plan.items):
+            row = rows.PlanRow(
+                title=item.title,
+                detail=self._detail(item),
+                trailing=self._trailing(item),
+                state=self._initial_state(item),
+            )
+            row.toggled.connect(self._refresh)
+            row.open_requested.connect(lambda item=item: self._open_item(item))
+            self.rows_box.insertWidget(index, row)
+            self.rows.append(row)
+            self._row_of[id(item)] = row
 
-    def _mark(self, item: PlannedItem) -> str:
-        outcome, _error = self._outcomes.get(_key(item), (None, None))
-        if outcome == "running":
-            return MARK_RUNNING
-        if outcome == "written":
-            return MARK_DONE
-        if outcome == "failed":
-            return MARK_FAIL
+        self.body.setCurrentIndex(1 if self.rows else 0)
+        self.summary.setVisible(bool(self.rows))
+
+    def _initial_state(self, item: PlannedItem) -> str:
         if item.action is Action.FAIL:
-            return MARK_FAIL
+            return rows.FAILED
         if item.action is Action.SKIP:
-            return MARK_FILTERED if item.reason is SkipReason.FILTERED_OUT else MARK_SKIP
-        return MARK_WRITE
+            return rows.UNAVAILABLE
+        return rows.UNCHECKED if _key(item) in self._unchecked else rows.PENDING
 
-    def _where(self, item: PlannedItem) -> str:
-        """
-        Роль каталога и путь внутри него, без общего начала.
-
-        Повторять «/Users/…/tmplts» в каждой строке незачем: оно одно на все
-        и вынесено в подвал.
-        """
-        _outcome, error = self._outcomes.get(_key(item), (None, None))
-        if error is not None:
-            return describe_failure(self.translator, error)
+    def _detail(self, item: PlannedItem) -> str:
+        """Нижний ярус: куда поедет или почему не поедет."""
         if item.action is Action.FAIL:
             return describe_failure(self.translator, item.failure)
         if item.action is Action.SKIP:
@@ -344,22 +504,105 @@ class MainWindow(QMainWindow):
         )
         return "%s · %s" % (self._t("MainWindow", role), _relative_to(item.destination, root))
 
-    def _refresh_footer(self) -> None:
-        saved = _demo_bytes(self._plan)
-        self.check_only_cf.setText(
-            "%s — %s" % (
-                self._t("MainWindow", "Without demo databases"),
-                self._t("MainWindow", "saves %s") % human_bytes(saved),
-            )
-            if saved
-            else self._t("MainWindow", "Without demo databases")
+    def _trailing(self, item: PlannedItem) -> str:
+        return style.human_size(item.bytes_total) if item.bytes_total else ""
+
+    def _selected(self) -> List[PlannedItem]:
+        return [
+            item for item in self._plan.items
+            if self._row_of.get(id(item)) is not None and self._row_of[id(item)].selected()
+        ]
+
+    def _clear_marks(self) -> None:
+        for item in self._plan.items:
+            row = self._row_of.get(id(item))
+            if row is not None and row.state() == rows.PENDING:
+                row.set_state(rows.UNCHECKED)
+                self._unchecked.add(_key(item))
+        self._refresh()
+
+    def _clear_list(self) -> None:
+        self._inspected = []
+        self._unchecked = set()
+        self._written_kinds = set()
+        self._rebuild_plan()
+
+    # --- показ ---------------------------------------------------------------
+
+    def _refresh(self) -> None:
+        """Пересчитывает подписи, которые зависят от выбора."""
+        self._remember_marks()
+        selected = self._selected()
+        volume = sum(item.bytes_total for item in selected)
+        self.button_unpack.setText(
+            "%s %d · %s" % (self._t("MainWindow", "Unpack"), len(selected), style.human_size(volume))
+            if selected else self._t("MainWindow", "Unpack")
         )
-        self.label_roots.setText(
-            "%s → %s\n%s → %s" % (
-                self._t("MainWindow", ROLE_TEMPLATES),
-                self.settings_service.get_output_path(),
-                self._t("MainWindow", ROLE_DISTRIBUTIONS),
-                self.settings_service.get_distributions_path(),
+        self.button_unpack.setEnabled(bool(selected) and not self._unpacking())
+        self.button_clear_marks.setVisible(bool(selected))
+        self.label_counts.setText(self._counts_text())
+        self.check_only_cf.setText(self._option_text())
+        self._refresh_footer()
+
+    def _remember_marks(self) -> None:
+        """Снятые отметки переживают пересборку плана: выбор делал человек."""
+        for item in self._plan.items:
+            row = self._row_of.get(id(item))
+            if row is None:
+                continue
+            if row.state() == rows.UNCHECKED:
+                self._unchecked.add(_key(item))
+            elif row.state() == rows.PENDING:
+                self._unchecked.discard(_key(item))
+
+    def _counts_text(self) -> str:
+        kinds = {kind: 0 for kind in ItemKind}
+        skipped = failed = 0
+        for item in self._plan.items:
+            if item.action is Action.FAIL:
+                failed += 1
+            elif item.action is Action.SKIP:
+                skipped += 1
+            else:
+                kinds[item.kind] += 1
+        parts = [
+            ("files:", len(self._inspected)),
+            ("templates:", kinds[ItemKind.SUPPLY]),
+            ("distributions:", kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
+            ("other:", kinds[ItemKind.CONTENT] + kinds[ItemKind.OTHER]),
+            ("skipped:", skipped),
+            ("errors:", failed),
+        ]
+        return "  ·  ".join(
+            "%s %d" % (self._t("Report", key), value) for key, value in parts if value
+        )
+
+    def _option_text(self) -> str:
+        saved = _demo_bytes(self._plan)
+        if not saved:
+            return self._t("MainWindow", "Without demo databases")
+        return "%s — %s" % (
+            self._t("MainWindow", "Without demo databases"),
+            self._t("MainWindow", "saves %s") % style.human_size(saved),
+        )
+
+    def _refresh_footer(self) -> None:
+        templates = self.settings_service.get_output_path()
+        distributions = self.settings_service.get_distributions_path()
+        shared = os.path.dirname(templates.rstrip("/\\")) or templates
+        if not distributions.startswith(shared):
+            # Каталоги развели вручную — общего корня нет, показываем оба.
+            self.label_root.setText(templates)
+            self.label_inside.setText(distributions)
+            return
+        self.label_root.setText(shared)
+        self.label_inside.setText(
+            "%s %s %s, %s %s" % (
+                self._t("MainWindow", "inside it"),
+                os.path.basename(templates.rstrip("/\\")),
+                self._t("MainWindow", "for templates"),
+                os.path.basename(distributions.rstrip("/\\")),
+                self._t("MainWindow", "for distributions"),
             )
         )
 
@@ -375,20 +618,21 @@ class MainWindow(QMainWindow):
 
         Поток осмотра сюда не входит намеренно: сигнал о готовности приходит
         из run(), а QThread до выхода из него ещё числится живым. Считая его
-        занятостью, окно блокировало кнопку «Распаковать» ровно в тот момент,
-        когда список уже показан, — и разблокировать её было некому.
+        занятостью, окно блокировало кнопку ровно в тот момент, когда список
+        уже показан, — и разблокировать её было некому.
         """
         return self._running(self._batch_thread)
 
     def unpack(self) -> None:
-        if self._unpacking() or not self._plan.to_write:
+        selected = self._selected()
+        if self._unpacking() or not selected:
             return
 
-        needs_templates = any(item.kind is ItemKind.SUPPLY for item in self._plan.to_write)
-        needs_distributions = any(item.kind is not ItemKind.SUPPLY for item in self._plan.to_write)
+        needs_templates = any(item.kind is ItemKind.SUPPLY for item in selected)
+        needs_distributions = any(item.kind is not ItemKind.SUPPLY for item in selected)
         try:
             # Готовим только те каталоги, в которые действительно поедет:
-            # раньше каталог шаблонов создавался даже для пачки из одних
+            # иначе каталог шаблонов создавался даже для пачки из одних
             # дистрибутивов — пустым и не к месту.
             templates_root = (
                 self.file_validator.prepare_output_directory(
@@ -409,17 +653,19 @@ class MainWindow(QMainWindow):
             return
 
         self._templates_root = templates_root
-        self._outcomes = {}
+        self._started_at = time.monotonic()
+        self._written_bytes = 0
 
         # Поток создаётся до писателей: им нужен его флаг отмены. Без него
-        # «Отмена» действовала только на границе между элементами, и пачка из
-        # одного архива дописывалась целиком после нажатия.
-        thread = BatchThread(self._plan, None, self._batch)
+        # «Остановить» действовала только на границе между элементами, и пачка
+        # из одного архива дописывалась целиком после нажатия.
+        thread = BatchThread(Plan(items=tuple(selected)), None, self._batch)
         thread.set_writers(self._make_writers(
             self.unpack_service, templates_root, self.check_only_cf.isChecked(),
-            thread.cancelled,
+            thread.cancelled, thread.report_bytes,
         ))
         thread.item_progress.connect(self._item_started)
+        thread.item_bytes.connect(self._item_bytes)
         thread.item_finished.connect(self._item_finished)
         thread.completed.connect(self._batch_finished)
         # Настоящий QThread.finished, а не наш completed: он приходит после
@@ -428,54 +674,101 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self._forget_batch_thread)
         self._batch_thread = thread
 
-        self.btn_unpack.setEnabled(False)
-        self.btn_paths.setEnabled(False)
+        self.progress_total.setMaximum(max(sum(i.bytes_total for i in selected), 1))
+        self.progress_total.setValue(0)
+        self.progress_total.show()
+        # Гасим, а не только прячем: скрытая кнопка остаётся «доступной», и
+        # проверка состояния по isEnabled показывала бы неправду.
+        self.button_unpack.setEnabled(False)
+        self.button_unpack.hide()
+        self.button_clear.hide()
+        self.button_stop.show()
+        self.button_stop.setEnabled(True)
+        self.button_paths.setEnabled(False)
         self.check_only_cf.setEnabled(False)
-        self.btn_cancel.setEnabled(True)
+        self.button_clear_marks.setEnabled(False)
         thread.start()
 
     def cancel(self) -> None:
         thread = self._batch_thread
         if thread is not None and thread.isRunning():
             thread.cancel()
-            self.btn_cancel.setEnabled(False)
+            self.button_stop.setEnabled(False)
 
     def _item_started(self, item: PlannedItem) -> None:
-        self._outcomes[_key(item)] = ("running", None)
-        self._fill_table()
+        row = self._row_of.get(id(item))
+        if row is not None:
+            row.set_state(rows.RUNNING)
+            row.set_progress(0, item.bytes_total)
+        self._update_status(item)
+
+    def _item_bytes(self, item: PlannedItem, done: int, name: str) -> None:
+        row = self._row_of.get(id(item))
+        if row is not None:
+            row.set_progress(done, item.bytes_total)
+            row.set_detail(name)
+            row.set_trailing("%s / %s" % (style.human_size(done), style.human_size(item.bytes_total)))
+        self.progress_total.setValue(self._written_bytes + done)
+        self._update_status(item)
 
     def _item_finished(self, item: PlannedItem, error: Optional[UnpackError]) -> None:
-        self._outcomes[_key(item)] = ("failed" if error is not None else "written", error)
-        self._fill_table()
+        row = self._row_of.get(id(item))
+        if row is not None:
+            row.set_state(rows.FAILED if error is not None else rows.DONE)
+            row.set_detail(
+                describe_failure(self.translator, error) if error is not None
+                else self._detail(item)
+            )
+            row.set_trailing(self._trailing(item))
+            if error is None:
+                row.offer_open(self._t("MainWindow", "Open Folder"))
+        if error is None:
+            self._written_bytes += item.bytes_total
+            self.progress_total.setValue(self._written_bytes)
+        self._update_status(item)
 
-    def _written_root(self) -> str:
-        """
-        Каталог, который действительно получил файлы.
-
-        Поставки едут в каталог шаблонов, всё прочее — в каталог
-        дистрибутивов. Открывать первый после пачки из одних дистрибутивов
-        значит показать пользователю пустую папку.
-        """
-        if ItemKind.SUPPLY in self._written_kinds:
-            return self._templates_root or self.settings_service.get_output_path()
-        if self._written_kinds:
-            return self.settings_service.get_distributions_path()
-        return self.settings_service.get_output_path()
+    def _update_status(self, _item: PlannedItem) -> None:
+        total = self.progress_total.maximum()
+        done = self.progress_total.value()
+        elapsed = max(time.monotonic() - self._started_at, 0.001)
+        if done <= 0 or done >= total:
+            self.label_status.setText("")
+            return
+        remaining = (total - done) * elapsed / done
+        self.label_status.setText(
+            "%s · %s %s" % (
+                style.human_size(done),
+                self._t("MainWindow", "about"),
+                _minutes(self.translator, remaining),
+            )
+        )
 
     def _batch_finished(self, result) -> None:
-        self.btn_paths.setEnabled(True)
+        self.button_paths.setEnabled(True)
         self.check_only_cf.setEnabled(True)
-        self.btn_cancel.setEnabled(False)
-        self.btn_open.setEnabled(bool(result.written))
-        # Кнопка распаковки снова доступна: окно не тупиковое, и повтор после
-        # отмены или отказа не требует перезапуска.
-        self.btn_unpack.setEnabled(bool(self._plan.to_write))
-        self.label_input.setText(self._t("MainWindow", "Drag files here or click to choose"))
+        self.button_clear_marks.setEnabled(True)
+        self.button_stop.hide()
+        self.button_unpack.show()
+        self.button_clear.setVisible(True)
+        self.progress_total.hide()
 
         self._written_kinds = {item.kind for item in result.written}
         if any(item.kind is ItemKind.SUPPLY for item in result.written):
             # Сохраняем только когда в каталог шаблонов действительно писали.
             self.settings_service.set_output_path(self._templates_root)
+
+        elapsed = time.monotonic() - self._started_at
+        if result.written and not result.cancelled:
+            self.label_status.setText(
+                "%s %s %s" % (
+                    style.human_size(sum(i.bytes_total for i in result.written)),
+                    self._t("MainWindow", "in"),
+                    _minutes(self.translator, elapsed),
+                )
+            )
+        elif result.cancelled:
+            self.label_status.setText(self._t("MainWindow", "stopped"))
+        self._refresh()
 
     def _forget_batch_thread(self) -> None:
         self._batch_thread = None
@@ -492,11 +785,28 @@ class MainWindow(QMainWindow):
         self.settings_service.set_output_path(directory)
         self._rebuild_plan()
 
+    def _open_item(self, item: PlannedItem) -> None:
+        self._open(item.destination)
+
     def open_output_folder(self) -> None:
-        root = self._written_root()
-        if not root:
-            return
-        if open_folder(root):
+        self._open(self._written_root())
+
+    def _written_root(self) -> str:
+        """
+        Каталог, который действительно получил файлы.
+
+        Поставки едут в каталог шаблонов, всё прочее — в каталог
+        дистрибутивов. Открывать первый после пачки из одних дистрибутивов
+        значит показать пользователю пустую папку.
+        """
+        if ItemKind.SUPPLY in self._written_kinds:
+            return self._templates_root or self.settings_service.get_output_path()
+        if self._written_kinds:
+            return self.settings_service.get_distributions_path()
+        return self.settings_service.get_output_path()
+
+    def _open(self, root: str) -> None:
+        if not root or open_folder(root):
             return
         # QMessageBox, а не строка состояния: та прятала саму кнопку «Открыть
         # папку». Путь в тексте — чтобы его можно было скопировать.
@@ -557,19 +867,16 @@ class MainWindow(QMainWindow):
             thread.wait()
 
 
-def _key(item: PlannedItem) -> int:
-    """
-    Ключ исхода — тождество объекта, а не его поля.
+def _key(item: PlannedItem) -> Tuple[str, ...]:
+    """Устойчивый ключ снятой отметки: он должен пережить пересборку плана."""
+    return (item.origin,) + item.source + (item.destination,)
 
-    В отчёте CLI хватает пары «источник плюс назначение»: там каждый файл
-    осматривается один раз. В окне тот же файл можно бросить дважды, и тогда
-    план несёт два одинаковых по полям элемента — отметка об исполнении одного
-    ставилась бы сразу на оба.
 
-    Исход привязан к текущему плану: при пересборке объекты создаются заново,
-    и `_outcomes` очищается вместе с ними.
-    """
-    return id(item)
+def _minutes(translator: Translator, seconds: float) -> str:
+    """Оставшееся время округлённо: точность здесь никому не нужна."""
+    if seconds < 60:
+        return "%d %s" % (max(int(seconds), 1), translator.translate("MainWindow", "sec"))
+    return "%d %s" % (round(seconds / 60), translator.translate("MainWindow", "min"))
 
 
 def _relative_to(destination: str, root: str) -> str:

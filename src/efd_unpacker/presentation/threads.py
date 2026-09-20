@@ -55,6 +55,7 @@ class BatchThread(QThread):
     """Исполнение плана с построчным отчётом о ходе."""
 
     item_progress = pyqtSignal(object)
+    item_bytes = pyqtSignal(object, int, str)
     item_finished = pyqtSignal(object, object)
     completed = pyqtSignal(object)
 
@@ -68,6 +69,7 @@ class BatchThread(QThread):
         # записанное — врать пользователю о том, что лежит на диске.
         self._written: List[object] = []
         self._failed: List[Tuple[object, UnpackError]] = []
+        self._current = None
 
     def set_writers(self, writers) -> None:
         """
@@ -85,8 +87,19 @@ class BatchThread(QThread):
     def cancelled(self) -> bool:
         return self._cancelled
 
+    def report_bytes(self, done: int, name: str) -> None:
+        """
+        Ход внутри текущего элемента. Зовётся писателем, не батчем.
+
+        Текущий элемент известен из ItemStarted: писатель про план не знает и
+        знать не должен.
+        """
+        if self._current is not None:
+            self.item_bytes.emit(self._current, done, name)
+
     def _emit(self, event) -> None:
         if isinstance(event, ItemStarted):
+            self._current = event.item
             self.item_progress.emit(event.item)
         elif isinstance(event, ItemWritten):
             self._written.append(event.item)

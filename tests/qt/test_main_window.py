@@ -36,7 +36,8 @@ from efd_unpacker.domain.plan import (
 from efd_unpacker.domain.supply import Entry, Template
 from efd_unpacker.domain.unpack_service import UnpackService
 from efd_unpacker.presentation import ui
-from efd_unpacker.presentation.ui import MARK_DONE, MARK_FAIL, MARK_SKIP, MARK_WRITE, MainWindow
+from efd_unpacker.presentation import rows as row_widgets
+from efd_unpacker.presentation.ui import MainWindow
 
 
 class DummyTranslator:
@@ -163,10 +164,10 @@ def test_dropping_files_fills_the_list(qtbot):
     window = make_window(qtbot)
 
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     assert window.calls["inspect"] == [("/d/a.zip",)]
-    assert window.btn_unpack.isEnabled()
+    assert window.button_unpack.isEnabled()
 
 
 def test_ten_files_go_to_inspection_in_one_call(qtbot):
@@ -179,7 +180,7 @@ def test_ten_files_go_to_inspection_in_one_call(qtbot):
 
     started = time.monotonic()
     drop(window, paths)
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     assert window.calls["inspect"] == [tuple(paths)]
     assert time.monotonic() - started < 1.0
@@ -204,7 +205,7 @@ def test_second_drop_adds_to_the_list(qtbot):
     window = make_window(qtbot, inspected=[object()])
 
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
     drop(window, ["/d/b.zip"])
     qtbot.waitUntil(lambda: len(window.calls["inspect"]) == 2, timeout=2000)
 
@@ -217,10 +218,10 @@ def test_second_drop_adds_to_the_list(qtbot):
 @pytest.mark.parametrize(
     "planned, expected",
     [
-        (item(), MARK_WRITE),
-        (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), MARK_SKIP),
-        (item(action=Action.SKIP, reason=SkipReason.FILTERED_OUT), ui.MARK_FILTERED),
-        (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)), MARK_FAIL),
+        (item(), row_widgets.PENDING),
+        (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), row_widgets.UNAVAILABLE),
+        (item(action=Action.SKIP, reason=SkipReason.FILTERED_OUT), row_widgets.UNAVAILABLE),
+        (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)), row_widgets.FAILED),
     ],
 )
 def test_state_is_encoded_by_shape(qtbot, planned, expected):
@@ -232,9 +233,9 @@ def test_state_is_encoded_by_shape(qtbot, planned, expected):
     """
     window = make_window(qtbot, plan=Plan(items=(planned,)))
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
-    assert window.table.item(0, 0).text() == expected
+    assert window.rows[0].mark.state() == expected
 
 
 def test_row_names_the_role_not_the_whole_path(qtbot):
@@ -245,11 +246,12 @@ def test_row_names_the_role_not_the_whole_path(qtbot):
     """
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
-    where = window.table.item(0, 4).text()
+    where = window.rows[0].texts()[1]
     assert where == "templates · " + "/".join(("1c", "Acc", "3_0"))
-    assert os.path.join(os.sep, "t", "tmplts") in window.label_roots.text()
+    assert window.label_root.text() == os.path.join(os.sep, "t")
+    assert "tmplts" in window.label_inside.text()
 
 
 def test_skipped_row_shows_the_reason(qtbot):
@@ -257,9 +259,9 @@ def test_skipped_row_shows_the_reason(qtbot):
         qtbot, plan=Plan(items=(item(action=Action.SKIP, reason=SkipReason.RAR_TOOL_MISSING),))
     )
     drop(window, ["/d/a.rar"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
-    assert window.table.item(0, 4).text() == "no program for .rar"
+    assert window.rows[0].texts()[1] == "no program for .rar"
 
 
 def test_demo_size_is_shown_in_the_option(qtbot):
@@ -268,9 +270,9 @@ def test_demo_size_is_shown_in_the_option(qtbot):
     """
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
-    assert "900B" in window.check_only_cf.text()
+    assert "900 Б" in window.check_only_cf.text()
 
 
 def test_toggling_the_option_rebuilds_without_inspecting_again(qtbot):
@@ -281,7 +283,7 @@ def test_toggling_the_option_rebuilds_without_inspecting_again(qtbot):
     """
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
     before_inspect = len(window.calls["inspect"])
     before_build = window.calls["build"]
 
@@ -297,12 +299,12 @@ def test_toggling_the_option_rebuilds_without_inspecting_again(qtbot):
 def test_unpacking_marks_the_rows_done(qtbot):
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
-    qtbot.waitUntil(lambda: window.table.item(0, 0).text() == MARK_DONE, timeout=2000)
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.DONE, timeout=2000)
 
-    assert window.btn_open.isEnabled()
+    assert window.button_clear.isEnabled()
 
 
 def test_failed_item_shows_its_reason_in_the_row(qtbot):
@@ -314,12 +316,12 @@ def test_failed_item_shows_its_reason_in_the_row(qtbot):
 
     window = make_window(qtbot, batch=batch)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
-    qtbot.waitUntil(lambda: window.table.item(0, 0).text() == MARK_FAIL, timeout=2000)
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.FAILED, timeout=2000)
 
-    assert "Permission error" in window.table.item(0, 4).text()
+    assert "Permission error" in window.rows[0].texts()[1]
 
 
 def test_window_is_usable_again_after_unpacking(qtbot):
@@ -330,13 +332,14 @@ def test_window_is_usable_again_after_unpacking(qtbot):
     """
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
     window.unpack()
-    qtbot.waitUntil(lambda: window.btn_unpack.isEnabled(), timeout=2000)
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
-    assert window.table.rowCount() == 1, "список стёрся"
-    assert window.btn_paths.isEnabled()
+    assert len(window.rows) == 1, "список стёрся"
+    assert window.button_paths.isEnabled()
     assert window.check_only_cf.isEnabled()
+    assert not window.rows[0].button_open.isHidden(), "в готовой строке нет «Открыть папку»"
 
     drop(window, ["/d/b.zip"])
     qtbot.waitUntil(lambda: len(window.calls["inspect"]) == 2, timeout=2000)
@@ -358,12 +361,12 @@ def test_cancel_asks_the_batch_to_stop(qtbot):
 
     window = make_window(qtbot, batch=batch)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
-    qtbot.waitUntil(lambda: window.btn_cancel.isEnabled(), timeout=2000)
+    qtbot.waitUntil(lambda: window.button_stop.isEnabled(), timeout=2000)
     window.cancel()
-    qtbot.waitUntil(lambda: not window.btn_cancel.isEnabled(), timeout=3000)
+    qtbot.waitUntil(lambda: not window.button_stop.isEnabled(), timeout=3000)
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
     assert seen.get("cancelled") is True
@@ -373,7 +376,7 @@ def test_unpack_does_nothing_while_busy(qtbot):
     """Иначе ссылка на живой QThread потерялась бы и он был бы разрушен на ходу."""
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     window.unpack()
@@ -391,7 +394,7 @@ def test_unpreparable_output_directory_is_reported(qtbot, monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: shown.append(args[2]))
     window = make_window(qtbot, validator=FailingValidator())
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
 
@@ -406,7 +409,7 @@ def test_output_path_is_saved_only_after_something_was_written(qtbot):
         batch=lambda *args, **kwargs: BatchResult(cancelled=True),
     )
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
@@ -430,7 +433,6 @@ def test_failed_folder_open_is_reported_with_the_path(qtbot, monkeypatch):
     window.open_output_folder()
 
     assert shown and os.path.join(os.sep, "t", "tmplts") in shown[0]
-    assert not window.btn_open.isHidden(), "кнопка спряталась"
 
 
 def test_successful_folder_open_shows_nothing(qtbot, monkeypatch):
@@ -463,9 +465,9 @@ def test_closing_during_unpacking_asks_first(qtbot, monkeypatch):
     )
     window = make_window(qtbot, batch=batch)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
     window.unpack()
-    qtbot.waitUntil(lambda: window.btn_cancel.isEnabled(), timeout=2000)
+    qtbot.waitUntil(lambda: window.button_stop.isEnabled(), timeout=2000)
 
     event = QCloseEvent()
     window.closeEvent(event)
@@ -501,20 +503,22 @@ def test_writers_get_the_cancellation_flag(qtbot):
     """
     seen = {}
 
-    def spy(_service, _root, _only_cf, cancel_check):
+    def spy(_service, _root, _only_cf, cancel_check, on_progress=None):
         seen["cancel_check"] = cancel_check
+        seen["on_progress"] = on_progress
         return _Writers()
 
     window = make_window(qtbot)
     window._make_writers = spy
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
     assert callable(seen.get("cancel_check")), "писателю передан не флаг отмены"
     assert seen["cancel_check"]() is False
+    assert callable(seen.get("on_progress")), "писателю не передан обратный вызов хода"
 
 
 def test_distribution_only_batch_opens_the_distributions_folder(qtbot, monkeypatch):
@@ -528,7 +532,7 @@ def test_distribution_only_batch_opens_the_distributions_folder(qtbot, monkeypat
     planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
     window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
     drop(window, ["/d/a.rar"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
@@ -545,7 +549,7 @@ def test_templates_folder_is_not_created_for_a_distribution_only_batch(qtbot):
     planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
     window = make_window(qtbot, plan=Plan(items=(planned,)), validator=validator)
     drop(window, ["/d/a.rar"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
@@ -559,7 +563,7 @@ def test_output_path_is_not_saved_for_a_distribution_only_batch(qtbot):
     planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
     window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
     drop(window, ["/d/a.rar"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
@@ -602,7 +606,7 @@ def test_inspection_error_keeps_the_existing_plan_runnable(qtbot, monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.btn_unpack.isEnabled(), timeout=2000)
+    qtbot.waitUntil(lambda: window.button_unpack.isEnabled(), timeout=2000)
 
     def boom(_paths):
         raise RuntimeError("что-то сломалось")
@@ -611,8 +615,8 @@ def test_inspection_error_keeps_the_existing_plan_runnable(qtbot, monkeypatch):
     drop(window, ["/d/b.zip"])
     qtbot.waitUntil(lambda: window._plan_thread is None, timeout=2000)
 
-    assert window.table.rowCount() == 1, "список стёрся"
-    assert window.btn_unpack.isEnabled(), "кнопка осталась погашенной"
+    assert len(window.rows) == 1, "список стёрся"
+    assert window.button_unpack.isEnabled(), "кнопка осталась погашенной"
 
 
 def test_same_file_twice_gives_rows_with_their_own_state(qtbot):
@@ -625,12 +629,12 @@ def test_same_file_twice_gives_rows_with_their_own_state(qtbot):
     first, second = item(title="A"), item(title="A")
     window = make_window(qtbot, plan=Plan(items=(first, second)))
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 2, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
 
     window._item_finished(first, None)
 
-    assert window.table.item(0, 0).text() == MARK_DONE
-    assert window.table.item(1, 0).text() == MARK_WRITE, "отметка встала на обе строки"
+    assert window.rows[0].mark.state() == row_widgets.DONE
+    assert window.rows[1].mark.state() == row_widgets.PENDING, "отметка встала на обе строки"
 
 
 def test_rebuilding_the_plan_drops_stale_outcomes(qtbot):
@@ -642,15 +646,15 @@ def test_rebuilding_the_plan_drops_stale_outcomes(qtbot):
     """
     window = make_window(qtbot)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
     window._item_finished(window._plan.items[0], None)
-    assert window._outcomes
+    assert window.rows[0].state() == row_widgets.DONE
 
     window.calls["build"] = 0
     window._build = lambda _inspected, _settings: Plan(items=(item(title="Другое"),))
     window._rebuild_plan()
 
-    assert window._outcomes == {}, "исходы пережили пересборку плана"
+    assert window.rows[0].state() == row_widgets.PENDING, "исход пережил пересборку плана"
 
 
 def test_batch_failure_does_not_rewrite_finished_outcomes(qtbot):
@@ -667,10 +671,10 @@ def test_batch_failure_does_not_rewrite_finished_outcomes(qtbot):
     first, second = item(title="A"), item(title="B")
     window = make_window(qtbot, plan=Plan(items=(first, second)), batch=batch)
     drop(window, ["/d/a.zip"])
-    qtbot.waitUntil(lambda: window.table.rowCount() == 2, timeout=2000)
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
 
     window.unpack()
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
-    assert window.table.item(0, 0).text() == MARK_DONE, "записанное объявлено отказом"
-    assert window.table.item(1, 0).text() == MARK_FAIL
+    assert window.rows[0].mark.state() == row_widgets.DONE, "записанное объявлено отказом"
+    assert window.rows[1].mark.state() == row_widgets.FAILED

@@ -46,18 +46,6 @@
         <translation>Не удалось открыть папку</translation>
     </message>
     <message>
-        <source>Cancel</source>
-        <translation>Отмена</translation>
-    </message>
-    <message>
-        <source>Change folders…</source>
-        <translation>Сменить папки…</translation>
-    </message>
-    <message>
-        <source>Drag files here or click to choose</source>
-        <translation>Перетащите файлы сюда или нажмите для выбора</translation>
-    </message>
-    <message>
         <source>Drop files to inspect</source>
         <translation>Отпустите файлы для осмотра</translation>
     </message>
@@ -88,6 +76,74 @@
     <message>
         <source>distributions</source>
         <translation>дистрибутивы</translation>
+    </message>
+    <message>
+        <source>Drag files here</source>
+        <translation>Перетащите файлы сюда</translation>
+    </message>
+    <message>
+        <source>1C folder</source>
+        <translation>Каталог 1С</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>Изменить</translation>
+    </message>
+    <message>
+        <source>inside it</source>
+        <translation>внутри него</translation>
+    </message>
+    <message>
+        <source>for templates</source>
+        <translation>для шаблонов,</translation>
+    </message>
+    <message>
+        <source>for distributions</source>
+        <translation>для дистрибутивов</translation>
+    </message>
+    <message>
+        <source>Clear all marks</source>
+        <translation>Снять все</translation>
+    </message>
+    <message>
+        <source>Clear list</source>
+        <translation>Очистить список</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Остановить</translation>
+    </message>
+    <message>
+        <source>About</source>
+        <translation>О программе</translation>
+    </message>
+    <message>
+        <source>Cross-platform unpacker for 1C supply files</source>
+        <translation>Кроссплатформенный распаковщик файлов поставки 1С</translation>
+    </message>
+    <message>
+        <source>Change folders…</source>
+        <translation>Сменить папки…</translation>
+    </message>
+    <message>
+        <source>about</source>
+        <translation>осталось ≈</translation>
+    </message>
+    <message>
+        <source>in</source>
+        <translation>за</translation>
+    </message>
+    <message>
+        <source>sec</source>
+        <translation>с</translation>
+    </message>
+    <message>
+        <source>min</source>
+        <translation>мин</translation>
+    </message>
+    <message>
+        <source>stopped</source>
+        <translation>остановлено</translation>
     </message>
 </context>
 <context>
@@ -286,22 +342,6 @@
 </context>
 <context>
     <name>Report</name>
-    <message>
-        <source>name</source>
-        <translation>наименование</translation>
-    </message>
-    <message>
-        <source>version</source>
-        <translation>версия</translation>
-    </message>
-    <message>
-        <source>size</source>
-        <translation>размер</translation>
-    </message>
-    <message>
-        <source>where</source>
-        <translation>куда</translation>
-    </message>
     <message>
         <source>paths:</source>
         <translation>пути:</translation>

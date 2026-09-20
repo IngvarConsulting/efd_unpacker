@@ -178,9 +178,11 @@ def _window_layer_keys():
     """
     from efd_unpacker.presentation import ui
 
-    keys = {("Report", column) for column in ui.COLUMNS if column}
-    keys |= {("MainWindow", ui.ROLE_TEMPLATES), ("MainWindow", ui.ROLE_DISTRIBUTIONS)}
+    keys = {("MainWindow", ui.ROLE_TEMPLATES), ("MainWindow", ui.ROLE_DISTRIBUTIONS)}
     keys |= {("Report", key) for key in ui.REASON_KEYS.values()}
+    # Подписи итоговой строки окна: те же ключи, что у отчёта CLI.
+    keys |= {("Report", key) for key in (
+        "files:", "templates:", "distributions:", "other:", "skipped:", "errors:")}
     return keys
 
 

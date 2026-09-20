@@ -86,6 +86,16 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
         super().__init__(file)
         self._cancel_check: Optional[Callable[[], bool]] = None
         self._keep: Optional[Callable[[str], bool]] = None
+        self._progress: Optional[Callable[[int, str], None]] = None
+
+    def set_progress(self, progress: Callable[[int, str], None]) -> None:
+        """
+        Сообщать о ходе после каждой записи.
+
+        Между записями, а не внутри: запись ставится на место целиком через
+        os.replace, и показывать половину файла как готовую было бы неверно.
+        """
+        self._progress = progress
 
     def set_filter(self, keep: Callable[[str], bool]) -> None:
         """
@@ -123,6 +133,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             )
 
             output_root = os.path.realpath(output_dir)
+            written = 0
 
             # Сначала проверяем все имена, и только потом пишем: отклонить
             # архив на середине значит оставить пользователю половину файлов.
@@ -151,6 +162,10 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 self._write_entry(buffer_file, path, src_path, size)
                 _apply_file_mtime(path, modified_at)
+
+                written += size
+                if self._progress is not None:
+                    self._progress(written, src_path)
 
     def _write_entry(self, buffer_file: BinaryIO, path: str, src_path: str, size: int) -> None:
         """
@@ -275,6 +290,7 @@ class UnpackService:
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]] = None,
         keep: Optional[Callable[[str], bool]] = None,
+        on_progress: Optional[Callable[[int, str], None]] = None,
     ) -> None:
         """
         Распаковывает уже открытый поток.
@@ -284,7 +300,7 @@ class UnpackService:
         копия весила бы 2.4 ГБ.
         """
         try:
-            self._unpack_handle(handle, output_dir, cancel_check, keep)
+            self._unpack_handle(handle, output_dir, cancel_check, keep, on_progress)
         except UnpackError:
             raise
         except FileNotFoundError as exc:
@@ -302,6 +318,7 @@ class UnpackService:
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]],
         keep: Optional[Callable[[str], bool]] = None,
+        on_progress: Optional[Callable[[int, str], None]] = None,
     ) -> None:
         reader = self._reader_factory(handle)
         if cancel_check is not None:
@@ -314,4 +331,8 @@ class UnpackService:
             setter = getattr(reader, "set_filter", None)
             if setter is not None:
                 setter(keep)
+        if on_progress is not None:
+            setter = getattr(reader, "set_progress", None)
+            if setter is not None:
+                setter(on_progress)
         reader.unpack(output_dir)
