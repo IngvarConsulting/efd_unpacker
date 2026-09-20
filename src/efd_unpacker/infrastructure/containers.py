@@ -131,6 +131,14 @@ def _rar_leaves(path: str, name: str) -> Iterator[Leaf]:
     entries = rar.read_entries(path)
     _check_count(len(entries), (name,))
     for entry in entries:
+        if entry.link:
+            # Символьная ссылка содержимым архива не является, а распакованная
+            # ссылка на файл хозяина открылась бы обычным open как запись
+            # архива — проверено, читался файл за пределами временного
+            # каталога. То же самое уже ловилось для образов .dmg.
+            continue
+        # Имя проверено и в read_entries; здесь — второй раз, потому что это
+        # последняя точка перед тем, как оно станет путём.
         safe_relative_parts(entry.name)
         yield Leaf(
             trail=(name, entry.name),
@@ -155,6 +163,8 @@ def _rar_opener(archive: str, entry: str) -> Callable[[], BinaryIO]:
                     UnpackErrorCode.CORRUPTED_ARCHIVE,
                     {"reason": "broken_container", "entry": entry},
                 )
+            # extract_entry уже убедился, что это обычный файл внутри probe;
+            # открываем ровно тот путь, который он проверил.
             handle = open(os.path.join(probe, *entry.split("/")), "rb")
         except BaseException:
             shutil.rmtree(probe, ignore_errors=True)

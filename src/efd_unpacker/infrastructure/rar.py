@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..domain.errors import UnpackError, UnpackErrorCode
+from ..domain.supply import safe_relative_parts
 
 #: Сколько ждём программу. Оглавление RAR5 читается за миллисекунды, поэтому
 #: предел щедрый только по меркам заголовка: зависшая программа не должна
@@ -243,15 +244,66 @@ def read_entries(archive: str, extra: Optional[str] = None) -> Tuple[RarEntry, .
     Чтение оглавления и есть проверка пригодности: отдельного пробного запуска
     нет, потому что результат нужен в любом случае. На настоящем
     setuptc64_8_3_27_2342.rar системный bsdtar отдаёт 44 записи за 8 мс.
+
+    Здесь же единственная точка, где имена проверяются: дальше они уходят
+    аргументами во внешнюю программу, и `../../` в имени распаковало бы файл
+    за пределы назначения руками самой программы.
     """
     for tool in discover(extra):
         entries = list_entries(tool, archive)
-        if entries:
-            return entries
+        if entries is not None:
+            return _checked(entries)
     raise UnpackError(
         UnpackErrorCode.CONTAINER_UNSUPPORTED,
         {"entry": os.path.basename(archive), "kind": "rar", "hint": install_hint()},
     )
+
+
+def _checked(entries: Sequence[RarEntry]) -> Tuple[RarEntry, ...]:
+    """
+    Проверяет имена, пришедшие от внешней программы.
+
+    Имена — чужие данные, и уходят они аргументами в чужой же процесс:
+    `../../escaped.txt` распаковался бы за пределы назначения руками самой
+    программы, мимо всех наших проверок. Поэтому то же правило, что для
+    записей zip и .efd.
+
+    Одинаковые имена отклоняются: внешняя программа выбирает запись по имени,
+    поэтому два листа с одним именем дали бы одно и то же содержимое, и хотя
+    бы один перестал бы совпадать с заявленным размером. Для .efd этот случай
+    уже отклоняется тем же кодом.
+    """
+    seen = set()
+    for entry in entries:
+        parts = tuple(safe_relative_parts(entry.name))
+        if parts in seen:
+            raise UnpackError(
+                UnpackErrorCode.CORRUPTED_ARCHIVE,
+                {"reason": "duplicate_entry", "entry": entry.name},
+            )
+        seen.add(parts)
+    return tuple(entries)
+
+
+def _produced(destination: str, entry: RarEntry) -> bool:
+    """
+    Появился ли обычный файл нужного размера внутри каталога назначения.
+
+    Именно обычный и именно внутри: архив может нести символьную ссылку, и
+    распакованная ссылка на файл хозяина открылась бы как содержимое архива.
+    Тот же случай уже ловился для образов .dmg — здесь он вернулся другим
+    путём.
+    """
+    produced = os.path.join(destination, *entry.name.split("/"))
+    if os.path.islink(produced) or not os.path.isfile(produced):
+        return False
+    try:
+        root = os.path.realpath(destination)
+        if os.path.commonpath([root, os.path.realpath(produced)]) != root:
+            return False
+    except ValueError:  # pragma: no cover - разные тома на Windows
+        return False
+    return os.path.getsize(produced) == entry.size
 
 
 def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
@@ -265,10 +317,10 @@ def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
     if completed is None or completed.returncode != 0:
         return None
     output = _decode(completed.stdout)
-    parsed = (
-        _parse_libarchive(output) if tool.family == LIBARCHIVE else _parse_sevenzip(output)
-    )
-    return parsed or None
+    # Пустой кортеж и None — разные ответы: первый значит «архив пуст», второй
+    # «программа не справилась». Сливать их значило бы объявить пустой архив
+    # неподдерживаемым форматом.
+    return _parse_libarchive(output) if tool.family == LIBARCHIVE else _parse_sevenzip(output)
 
 
 def _parse_libarchive(output: str) -> Tuple[RarEntry, ...]:
@@ -349,12 +401,13 @@ def extract(archive: str, destination: str, extra: Optional[str] = None) -> Tool
     failures = []
     for tool in discover(extra):
         entries = list_entries(tool, archive)
-        if not entries:
+        if entries is None:
             continue
-        if not verify(tool, archive, entries):
+        entries = _checked(entries)
+        if entries and not verify(tool, archive, entries):
             failures.append(tool.name)
             continue
-        if _extract_with(tool, archive, destination):
+        if _extract_with(tool, archive, destination) and _landed(destination, entries):
             return tool
         failures.append(tool.name)
 
@@ -367,6 +420,17 @@ def extract(archive: str, destination: str, extra: Optional[str] = None) -> Tool
             "tried": ", ".join(failures),
         },
     )
+
+
+def _landed(destination: str, entries: Sequence[RarEntry]) -> bool:
+    """
+    Все ли записи легли внутрь назначения обычными файлами.
+
+    Раскладывает файлы чужая программа, и полагаться на её собственные
+    проверки нельзя: у bsdtar и 7-Zip они разные. Ссылки в счёт не идут — их
+    мы и не просим распаковывать.
+    """
+    return all(_produced(destination, entry) for entry in entries if not entry.link)
 
 
 def verify(tool: Tool, archive: str, entries: Sequence[RarEntry]) -> bool:
@@ -391,10 +455,7 @@ def verify(tool: Tool, archive: str, entries: Sequence[RarEntry]) -> bool:
     smallest = min(probes, key=lambda entry: entry.size)
     probe = tempfile.mkdtemp(prefix="efd-rar-")
     try:
-        if not _extract_with(tool, archive, probe, only=smallest.name):
-            return False
-        produced = os.path.join(probe, *smallest.name.split("/"))
-        return os.path.isfile(produced) and os.path.getsize(produced) == smallest.size
+        return _extract_with(tool, archive, probe, only=smallest.name) and _produced(probe, smallest)
     finally:
         shutil.rmtree(probe, ignore_errors=True)
 
@@ -471,8 +532,18 @@ def extract_entry(archive: str, destination: str, entry: str) -> bool:
 
     Нужна для потока отдельной записи: осмотру хватает имён и размеров, но
     Leaf обязан уметь открыться, если внутри .rar окажется .efd.
+
+    Результат проверяется, а не принимается по коду возврата: программа,
+    которая вышла с нулём и ничего не создала, иначе считалась бы успешной,
+    очередь не дошла бы до следующей, а поток упал бы голым FileNotFoundError.
     """
     for tool in discover():
-        if list_entries(tool, archive) and _extract_with(tool, archive, destination, entry):
+        entries = list_entries(tool, archive)
+        if entries is None:
+            continue
+        wanted = next((item for item in _checked(entries) if item.name == entry), None)
+        if wanted is None:
+            continue
+        if _extract_with(tool, archive, destination, entry) and _produced(destination, wanted):
             return True
     return False

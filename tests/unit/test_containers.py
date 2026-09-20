@@ -566,3 +566,22 @@ def test_failed_rar_extraction_does_not_leave_a_directory(tmp_path, monkeypatch)
         leaf.opener()
 
     assert not os.path.isdir(created[0]), "каталог остался после неудачи"
+
+
+def test_rar_symlink_never_becomes_a_leaf(tmp_path, monkeypatch):
+    """
+    Ссылка содержимым архива не является.
+
+    Проверено воспроизведением: лист payload.efd открывался обычным open, шёл
+    по ссылке и отдавал файл за пределами временного каталога как содержимое
+    архива.
+    """
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (
+        rar_module.RarEntry("payload.efd", 20, link=True),
+        rar_module.RarEntry("real.txt", 6),
+    ))
+
+    leaves = list(walk(path))
+
+    assert [leaf.name for leaf in leaves] == ["real.txt"]

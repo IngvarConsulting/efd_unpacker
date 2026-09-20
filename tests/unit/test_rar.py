@@ -27,19 +27,31 @@ _REAL_FROM_REGISTRY = rar._from_registry
 
 # Подставная программа. Поведение зашито в файл, а не в окружение: поиск
 # кешируется, и переключать режим через переменную было бы нечестно.
-FAKE = '''
+FAKE = """
 import os
 import sys
 import time
 
-BEHAVIOUR = %r
+BEHAVIOUR = "__BEHAVIOUR__"
+OUTSIDE = os.environ.get("FAKE_OUTSIDE", "")
 LISTING = (
     "-rw-r--r--  0 owner name group name        5 Jan  1 00:00 data/a.txt\\n"
-    "-rw-r--r--  0 owner name group name       11 Feb 29  2024 data/файл с пробелом.txt\\n"
+    "-rw-r--r--  0 owner name group name       11 Feb 29  2024 data/\u0444\u0430\u0439\u043b \u0441 \u043f\u0440\u043e\u0431\u0435\u043b\u043e\u043c.txt\\n"
     "drwxr-xr-x  0 owner name group name        0 Jan  1 00:00 data/\\n"
     "lrwxr-xr-x  0 owner name group name        3 Jan  1 00:00 data/link -> a.txt\\n"
 )
-CONTENT = {"data/a.txt": b"12345", "data/\\u0444\\u0430\\u0439\\u043b \\u0441 \\u043f\\u0440\\u043e\\u0431\\u0435\\u043b\\u043e\\u043c.txt": b"12345678901"}
+LISTINGS = {
+    "traversal": "-rw-r--r--  0 u g  5 Jan  1 00:00 ../../escaped.txt\\n",
+    "duplicates": (
+        "-rw-r--r--  0 u g  9 Jan  1 00:00 dup.txt\\n"
+        "-rw-r--r--  0 u g  4 Jan  1 00:00 dup.txt\\n"
+    ),
+    "empty": "",
+}
+CONTENT = {
+    "data/a.txt": b"12345",
+    "data/\u0444\u0430\u0439\u043b \u0441 \u043f\u0440\u043e\u0431\u0435\u043b\u043e\u043c.txt": b"12345678901",
+}
 
 args = sys.argv[1:]
 if BEHAVIOUR == "hang":
@@ -50,7 +62,25 @@ if args and args[0] == "--version":
 if args and args[0] == "-tvf":
     if BEHAVIOUR == "broken_list":
         sys.exit(1)
-    sys.stdout.buffer.write(LISTING.encode("utf-8"))
+    if BEHAVIOUR == "symlink":
+        listing = "lrwxr-xr-x  0 u g  %d Jan  1 00:00 payload.efd -> %s\\n" % (len(OUTSIDE), OUTSIDE)
+        listing += "-rw-r--r--  0 u g  6 Jan  1 00:00 real.txt\\n"
+    elif BEHAVIOUR == "symlink_exact":
+        # Размер заявлен ровно такой, какой у файла за ссылкой: сверка размера
+        # такую запись пропустит, отклонить её может только проверка на ссылку.
+        listing = "-rw-r--r--  0 u g  6 Jan  1 00:00 payload.efd\\n"
+    elif BEHAVIOUR == "dirlink":
+        listing = "-rw-r--r--  0 u g  6 Jan  1 00:00 data/a.txt\\n"
+    elif BEHAVIOUR == "innerlink":
+        listing = "-rw-r--r--  0 u g  6 Jan  1 00:00 payload.efd\\n"
+    elif BEHAVIOUR == "partial":
+        listing = (
+            "-rw-r--r--  0 u g  6 Jan  1 00:00 first.txt\\n"
+            "-rw-r--r--  0 u g  6 Jan  1 00:00 second.txt\\n"
+        )
+    else:
+        listing = LISTINGS.get(BEHAVIOUR, LISTING)
+    sys.stdout.buffer.write(listing.encode("utf-8"))
     sys.exit(0)
 if args and args[0] == "-xf":
     if BEHAVIOUR == "list_only":
@@ -59,6 +89,34 @@ if args and args[0] == "-xf":
         sys.exit(0)          # код успеха, но ничего не создано
     destination = args[args.index("-C") + 1]
     wanted = args[args.index("-C") + 2:]
+    if BEHAVIOUR == "symlink_exact":
+        os.symlink(OUTSIDE, os.path.join(destination, "payload.efd"))
+        sys.exit(0)
+    if BEHAVIOUR == "innerlink":
+        # Ссылка ведёт ВНУТРЬ каталога: и размер сойдётся, и вложенность —
+        # отклонить такую запись может только проверка на ссылку.
+        with open(os.path.join(destination, "real.txt"), "wb") as handle:
+            handle.write(b"normal")
+        os.symlink("real.txt", os.path.join(destination, "payload.efd"))
+        sys.exit(0)
+    if BEHAVIOUR == "dirlink":
+        # Ссылкой становится КАТАЛОГ: сам файл обычный и нужного размера, но
+        # лежит он за пределами назначения.
+        os.symlink(OUTSIDE, os.path.join(destination, "data"))
+        sys.exit(0)
+    if BEHAVIOUR == "partial":
+        with open(os.path.join(destination, "first.txt"), "wb") as handle:
+            handle.write(b"normal")
+        sys.exit(0)
+    if BEHAVIOUR == "symlink":
+        for name in (wanted or ["payload.efd", "real.txt"]):
+            target = os.path.join(destination, name)
+            if name == "payload.efd":
+                os.symlink(OUTSIDE, target)
+            else:
+                with open(target, "wb") as handle:
+                    handle.write(b"normal")
+        sys.exit(0)
     for name, data in CONTENT.items():
         if wanted and name not in wanted:
             continue
@@ -68,12 +126,12 @@ if args and args[0] == "-xf":
             handle.write(b"x" * (len(data) - 1) if BEHAVIOUR == "short" else data)
     sys.exit(0)
 sys.exit(2)
-'''
+"""
 
 
 def fake_tool(tmp_path, behaviour="good", name="bsdtar"):
     script = tmp_path / ("%s_%s.py" % (name, behaviour))
-    script.write_text(FAKE % behaviour, encoding="utf-8")
+    script.write_text(FAKE.replace("__BEHAVIOUR__", behaviour), encoding="utf-8")
     return Tool(path=str(script), family=LIBARCHIVE, version="fake 1.0",
                 prefix=(sys.executable,))
 
@@ -537,3 +595,165 @@ def test_sevenzip_is_asked_for_utf8_output(tmp_path, monkeypatch):
     rar.list_entries(Tool(path="7z", family=SEVENZIP), "any.rar")
 
     assert "-sccUTF-8" in seen[0]
+
+
+# --- имена и содержимое от чужой программы -----------------------------------
+
+
+def test_traversal_in_an_entry_name_is_refused(tmp_path, monkeypatch):
+    """
+    Имя уходит аргументом во внешнюю программу.
+
+    `../../escaped.txt` распаковался бы за пределы назначения руками самой
+    программы, мимо всех наших проверок пути.
+    """
+    tool = fake_tool(tmp_path, "traversal", name="evil")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+
+    with pytest.raises(UnpackError) as caught:
+        rar.read_entries("any.rar")
+
+    assert caught.value.code is UnpackErrorCode.UNSAFE_ENTRY
+
+
+def test_duplicate_entry_names_are_refused(tmp_path, monkeypatch):
+    """
+    Программа выбирает запись по имени.
+
+    Два листа с одним именем вернули бы одно и то же содержимое, и хотя бы
+    один перестал бы совпадать с заявленным размером. Для .efd этот случай
+    уже отклоняется тем же кодом.
+    """
+    tool = fake_tool(tmp_path, "duplicates", name="dups")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+
+    with pytest.raises(UnpackError) as caught:
+        rar.read_entries("any.rar")
+
+    assert caught.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+    assert caught.value.details["reason"] == "duplicate_entry"
+
+
+def test_empty_archive_is_not_an_unsupported_format(tmp_path, monkeypatch):
+    """
+    Пустое оглавление и отказ программы — разные ответы.
+
+    Слитые воедино, они объявляли пустой архив неподдерживаемым форматом.
+    """
+    tool = fake_tool(tmp_path, "empty", name="emptytar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+
+    assert rar.read_entries("any.rar") == ()
+
+
+def test_extract_entry_checks_what_the_tool_produced(tmp_path, monkeypatch):
+    """
+    Код возврата ноль без файла успехом не считается.
+
+    Иначе очередь не дошла бы до следующей программы, а поток записи упал бы
+    голым FileNotFoundError вместо доменного отказа.
+    """
+    silent = fake_tool(tmp_path, "silent", name="silenttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (silent,))
+
+    assert rar.extract_entry("any.rar", str(tmp_path), "data/a.txt") is False
+
+
+def test_extract_entry_refuses_a_short_file(tmp_path, monkeypatch):
+    short = fake_tool(tmp_path, "short", name="shorttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (short,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    assert rar.extract_entry("any.rar", str(destination), "data/a.txt") is False
+
+
+def test_extracted_symlink_is_not_accepted_as_content(tmp_path, monkeypatch):
+    """
+    Распакованная ссылка на файл хозяина открылась бы обычным open как запись
+    архива. Тот же случай уже ловился для образов .dmg — здесь он вернулся
+    другим путём.
+    """
+    secret = tmp_path / "secret.txt"
+    secret.write_text("совершенно секретно", encoding="utf-8")
+    monkeypatch.setenv("FAKE_OUTSIDE", str(secret))
+    tool = fake_tool(tmp_path, "symlink", name="linktar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
+
+
+def test_symlink_whose_target_matches_the_declared_size_is_still_refused(tmp_path, monkeypatch):
+    """
+    Проверку на ссылку не должна перекрывать сверка размера.
+
+    Здесь файл за ссылкой ровно того размера, что заявлен в оглавлении: сверка
+    размера такую запись пропускает, и отклонить её может только islink. Без
+    этого теста мутация «убрать islink» проходила незамеченной — ровно так же,
+    как однажды уже было с образами .dmg.
+    """
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"normal")
+    monkeypatch.setenv("FAKE_OUTSIDE", str(secret))
+    tool = fake_tool(tmp_path, "symlink_exact", name="exacttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
+
+
+def test_regular_file_reached_through_a_symlinked_directory_is_refused(tmp_path, monkeypatch):
+    """
+    Ссылкой может оказаться каталог, а не файл.
+
+    Тогда сам файл обычный и нужного размера, islink на нём молчит, а лежит он
+    за пределами назначения. Отклоняет его только проверка вложенности.
+    """
+    outside = tmp_path / "выход"
+    outside.mkdir()
+    (outside / "a.txt").write_bytes(b"normal")
+    monkeypatch.setenv("FAKE_OUTSIDE", str(outside))
+    tool = fake_tool(tmp_path, "dirlink", name="dirtar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    assert rar.extract_entry("any.rar", str(destination), "data/a.txt") is False
+
+
+def test_extraction_that_misses_a_file_is_not_accepted(tmp_path, monkeypatch):
+    """
+    Раскладывает файлы чужая программа, и её код возврата ничего не доказывает.
+
+    Здесь она перечисляет две записи, а создаёт одну — и выходит с нулём.
+    """
+    partial = fake_tool(tmp_path, "partial", name="parttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (partial,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    with pytest.raises(UnpackError) as caught:
+        rar.extract("any.rar", str(destination))
+
+    assert caught.value.code is UnpackErrorCode.CONTAINER_UNSUPPORTED
+    assert "parttar" in caught.value.details["tried"]
+
+
+def test_symlink_pointing_inside_the_destination_is_still_refused(tmp_path, monkeypatch):
+    """
+    Проверку на ссылку не должна перекрывать и проверка вложенности.
+
+    Здесь ссылка ведёт внутрь каталога: размер сходится, вложенность сходится,
+    и отклонить запись может только islink. Запись, объявленная файлом, но
+    оказавшаяся ссылкой, — признак того, что программа сделала не то, о чём
+    её просили.
+    """
+    tool = fake_tool(tmp_path, "innerlink", name="innertar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+    destination = tmp_path / "out"
+    destination.mkdir()
+
+    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
