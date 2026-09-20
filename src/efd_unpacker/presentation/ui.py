@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
 
         self._inspected: List = []
         self._plan = Plan()
-        self._outcomes: Dict[Tuple[str, ...], Tuple[str, Optional[UnpackError]]] = {}
+        self._outcomes: Dict[int, Tuple[str, Optional[UnpackError]]] = {}
         self._plan_thread: Optional[PlanThread] = None
         self._batch_thread: Optional[BatchThread] = None
         self._templates_root = ""
@@ -249,6 +249,9 @@ class MainWindow(QMainWindow):
                 self, self._t("MainWindow", "Error"),
                 describe_failure(self.translator, error),
             )
+            # Кнопка была погашена на время осмотра. Не вернуть её значит
+            # оставить пользователя с живым списком, который нельзя запустить.
+            self._rebuild_plan()
             return
         # Добавляем к уже осмотренному: окно не тупиковое, и второй набор
         # файлов дополняет список, а не стирает его.
@@ -276,7 +279,12 @@ class MainWindow(QMainWindow):
         Осмотр стоит секунд, построение плана — микросекунд, поэтому
         переключение «без демобаз» не трогает диск.
         """
+        previous = self._plan
         self._plan = self._build(self._inspected, self._settings())
+        if self._plan.items != previous.items:
+            # Исходы привязаны к объектам прежнего плана. Оставить их значит
+            # рисковать совпадением id у нового объекта на месте старого.
+            self._outcomes = {}
         self._fill_table()
         self._refresh_footer()
         self.btn_unpack.setEnabled(bool(self._plan.to_write) and not self._unpacking())
@@ -549,9 +557,19 @@ class MainWindow(QMainWindow):
             thread.wait()
 
 
-def _key(item: PlannedItem) -> Tuple[str, ...]:
-    """Тот же ключ, что в отчёте CLI: источник плюс назначение."""
-    return (item.origin,) + item.source + (item.destination,)
+def _key(item: PlannedItem) -> int:
+    """
+    Ключ исхода — тождество объекта, а не его поля.
+
+    В отчёте CLI хватает пары «источник плюс назначение»: там каждый файл
+    осматривается один раз. В окне тот же файл можно бросить дважды, и тогда
+    план несёт два одинаковых по полям элемента — отметка об исполнении одного
+    ставилась бы сразу на оба.
+
+    Исход привязан к текущему плану: при пересборке объекты создаются заново,
+    и `_outcomes` очищается вместе с ними.
+    """
+    return id(item)
 
 
 def _relative_to(destination: str, root: str) -> str:

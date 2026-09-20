@@ -430,7 +430,7 @@ def test_failed_folder_open_is_reported_with_the_path(qtbot, monkeypatch):
     window.open_output_folder()
 
     assert shown and os.path.join(os.sep, "t", "tmplts") in shown[0]
-    assert window.btn_open.isVisible() or True  # кнопка не прячется
+    assert not window.btn_open.isHidden(), "кнопка спряталась"
 
 
 def test_successful_folder_open_shows_nothing(qtbot, monkeypatch):
@@ -590,3 +590,87 @@ def test_closing_during_inspection_waits_for_the_thread(qtbot, monkeypatch):
 
     assert event.isAccepted()
     assert not window._plan_thread.isRunning(), "поток осмотра пережил окно"
+
+
+def test_inspection_error_keeps_the_existing_plan_runnable(qtbot, monkeypatch):
+    """
+    Отказ второго осмотра не должен гасить кнопку у уже готового плана.
+
+    Кнопка гасится на время осмотра; не вернуть её значит оставить
+    пользователя со списком, который видно, но нельзя запустить.
+    """
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.btn_unpack.isEnabled(), timeout=2000)
+
+    def boom(_paths):
+        raise RuntimeError("что-то сломалось")
+
+    window._inspect_files = boom
+    drop(window, ["/d/b.zip"])
+    qtbot.waitUntil(lambda: window._plan_thread is None, timeout=2000)
+
+    assert window.table.rowCount() == 1, "список стёрся"
+    assert window.btn_unpack.isEnabled(), "кнопка осталась погашенной"
+
+
+def test_same_file_twice_gives_rows_with_their_own_state(qtbot):
+    """
+    Один файл, брошенный дважды, даёт одинаковые по полям элементы.
+
+    Ключ по полям ставил отметку сразу на обе строки — пользователь видел бы
+    записанным то, что ещё не начиналось.
+    """
+    first, second = item(title="A"), item(title="A")
+    window = make_window(qtbot, plan=Plan(items=(first, second)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 2, timeout=2000)
+
+    window._item_finished(first, None)
+
+    assert window.table.item(0, 0).text() == MARK_DONE
+    assert window.table.item(1, 0).text() == MARK_WRITE, "отметка встала на обе строки"
+
+
+def test_rebuilding_the_plan_drops_stale_outcomes(qtbot):
+    """
+    Исходы привязаны к объектам плана.
+
+    После пересборки объекты создаются заново, и оставшийся исход мог бы
+    совпасть по id с новым объектом на месте старого.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+    window._item_finished(window._plan.items[0], None)
+    assert window._outcomes
+
+    window.calls["build"] = 0
+    window._build = lambda _inspected, _settings: Plan(items=(item(title="Другое"),))
+    window._rebuild_plan()
+
+    assert window._outcomes == {}, "исходы пережили пересборку плана"
+
+
+def test_batch_failure_does_not_rewrite_finished_outcomes(qtbot):
+    """
+    Запасной путь потока не должен объявлять отказом то, что уже записано.
+
+    Иначе пользователь увидит отказ у файла, который лежит на диске целым.
+    """
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(current.items[0]))
+        sink(ItemWritten(current.items[0]))
+        raise RuntimeError("сломалось после первого")
+
+    first, second = item(title="A"), item(title="B")
+    window = make_window(qtbot, plan=Plan(items=(first, second)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 2, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.table.item(0, 0).text() == MARK_DONE, "записанное объявлено отказом"
+    assert window.table.item(1, 0).text() == MARK_FAIL

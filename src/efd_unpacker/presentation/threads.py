@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -64,6 +64,10 @@ class BatchThread(QThread):
         self._writers = writers
         self._run_batch = run_batch
         self._cancelled = False
+        # Что уже завершилось. Нужно запасному пути: объявлять отказом
+        # записанное — врать пользователю о том, что лежит на диске.
+        self._written: List[object] = []
+        self._failed: List[Tuple[object, UnpackError]] = []
 
     def set_writers(self, writers) -> None:
         """
@@ -85,8 +89,10 @@ class BatchThread(QThread):
         if isinstance(event, ItemStarted):
             self.item_progress.emit(event.item)
         elif isinstance(event, ItemWritten):
+            self._written.append(event.item)
             self.item_finished.emit(event.item, None)
         elif isinstance(event, ItemFailed):
+            self._failed.append((event.item, event.error))
             self.item_finished.emit(event.item, event.error)
 
     def run(self) -> None:  # pragma: no cover - потоковая логика
@@ -106,9 +112,17 @@ class BatchThread(QThread):
             failure = UnpackError(
                 UnpackErrorCode.UNEXPECTED, {"error": str(exc) or type(exc).__name__}
             )
+            done = {id(item) for item in self._written}
+            done |= {id(item) for item, _error in self._failed}
             for planned in self._plan.to_write:
+                if id(planned) in done:
+                    # Этот элемент уже завершился, и его исход известен.
+                    # Пометить его отказом значит соврать про то, что лежит
+                    # на диске.
+                    continue
+                self._failed.append((planned, failure))
                 self.item_finished.emit(planned, failure)
-            result = BatchResult(failed=tuple((planned, failure) for planned in self._plan.to_write))
+            result = BatchResult(written=tuple(self._written), failed=tuple(self._failed))
         self.completed.emit(result)
 
 
