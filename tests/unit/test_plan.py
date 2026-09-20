@@ -279,3 +279,97 @@ def test_planning_never_touches_the_filesystem(tmp_path, monkeypatch):
     )
 
     assert list(tmp_path.iterdir()) == []
+
+
+# --- находки обзора ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "code",
+    [UnpackErrorCode.CORRUPTED_ARCHIVE, UnpackErrorCode.NESTING_TOO_DEEP,
+     UnpackErrorCode.UNSAFE_ENTRY, UnpackErrorCode.TOO_MANY_ENTRIES,
+     UnpackErrorCode.PERMISSION],
+    ids=lambda code: code.name,
+)
+def test_inspection_failure_is_not_disguised_as_a_skip(code):
+    """
+    Регресс: любой отказ осмотра превращался в пропуск «формат не поддержан».
+
+    Хуже всего выглядел UNSAFE_ENTRY — архив, пытавшийся выйти за каталог
+    распаковки, показывался как рядовой пропуск, а план казался исполнимым.
+    """
+    failure = UnpackError(code, {"entry": "x"})
+
+    plan = build_plan([Inspected(path="/d/x.zip", failure=failure)], settings())
+
+    item = plan.items[0]
+    assert item.action is Action.FAIL
+    assert item.reason is None
+    assert item.failure is failure
+    assert len(plan.failed) == 1
+
+
+@pytest.mark.parametrize(
+    "kind, reason",
+    [("rar", SkipReason.RAR_TOOL_MISSING), ("dmg", SkipReason.CONTAINER_UNSUPPORTED)],
+)
+def test_unsupported_format_stays_an_expected_skip(kind, reason):
+    """«Формат не поддержан» — ожидаемый исход, а не отказ, требующий решения."""
+    failure = UnpackError(UnpackErrorCode.CONTAINER_UNSUPPORTED, {"kind": kind})
+
+    plan = build_plan([Inspected(path="/d/x", failure=failure)], settings())
+
+    assert plan.items[0].action is Action.SKIP
+    assert plan.items[0].reason is reason
+    assert plan.failed == ()
+
+
+def test_supply_without_templates_keeps_its_row():
+    """
+    Регресс: поставка без шаблонов исчезала из плана целиком.
+
+    Оглавление прочитано, но устанавливать нечего — строка всё равно нужна,
+    иначе исходный файл молча пропадает.
+    """
+    from efd_unpacker.domain.supply import Catalog as EmptyCatalog
+
+    empty = FoundSupply(trail=("odd.zip", "1cv8.efd"),
+                        catalog=EmptyCatalog(header=1, supply_info=(), entries=(), templates=()))
+
+    plan = build_plan([Inspected(path="/d/odd.zip", supplies=(empty,))], settings())
+
+    assert len(plan.items) == 1
+    assert plan.items[0].action is Action.SKIP
+    assert plan.items[0].reason is SkipReason.NO_TEMPLATES
+    assert plan.items[0].source == ("odd.zip", "1cv8.efd")
+
+
+@pytest.mark.parametrize(
+    "name, version",
+    [
+        ("postgresql18-server-18.4-1PGDG.rhel9.x86_64.rpm", "18.4-1PGDG.rhel9"),
+        ("postgresql18-server-18.5-1PGDG.rhel9.x86_64.rpm", "18.5-1PGDG.rhel9"),
+        ("libpq5-18.4-1.1C.noarch.rpm", "18.4-1.1C"),
+        ("postgresql-18_18.4-1.1C_amd64.deb", "18.4-1.1C"),
+    ],
+    ids=["rpm 18.4", "rpm 18.5", "rpm noarch", "deb"],
+)
+def test_package_version_follows_the_naming_convention(name, version):
+    """
+    Регресс: у rpm подчёркиваний нет вовсе, и deb-правило давало пустую
+    версию — разные выпуски сходились в один каталог «unknown».
+    """
+    assert classify(files(name)).version == version
+
+
+def test_different_rpm_releases_do_not_share_a_destination():
+    first = build_plan(
+        [Inspected(path="/d/a.zip", files=files("postgresql18-server-18.4-1PGDG.rhel9.x86_64.rpm"))],
+        settings(),
+    )
+    second = build_plan(
+        [Inspected(path="/d/b.zip", files=files("postgresql18-server-18.5-1PGDG.rhel9.x86_64.rpm"))],
+        settings(),
+    )
+
+    assert first.items[0].destination != second.items[0].destination

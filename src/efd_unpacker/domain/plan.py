@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
 
-from .errors import UnpackError
+from .errors import UnpackError, UnpackErrorCode
 from .supply import Catalog, Template, safe_relative_parts
 
 
@@ -39,6 +39,7 @@ class ItemKind(Enum):
 class Action(Enum):
     WRITE = "write"
     SKIP = "skip"
+    FAIL = "fail"
 
 
 class SkipReason(Enum):
@@ -55,6 +56,7 @@ class SkipReason(Enum):
     CONTAINER_UNSUPPORTED = "container_unsupported"
     RAR_TOOL_MISSING = "rar_tool_missing"
     NOTHING_FOUND = "nothing_found"
+    NO_TEMPLATES = "no_templates"
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,7 @@ class PlannedItem:
     bytes_total: int
     action: Action
     reason: Optional[SkipReason] = None
+    failure: Optional[UnpackError] = None
     template: Optional[Template] = None
     files: Tuple[FoundFile, ...] = ()
 
@@ -118,6 +121,11 @@ class Plan:
     @property
     def to_write(self) -> Tuple[PlannedItem, ...]:
         return tuple(item for item in self.items if item.action is Action.WRITE)
+
+    @property
+    def failed(self) -> Tuple[PlannedItem, ...]:
+        """Отказы осмотра. Не то же самое, что пропуски: требуют решения."""
+        return tuple(item for item in self.items if item.action is Action.FAIL)
 
     @property
     def bytes_to_write(self) -> int:
@@ -151,7 +159,8 @@ _PLATFORM_PACKAGE = re.compile(
 )
 _PACKAGE = re.compile(r"\.(?:deb|rpm)$", re.I)
 _CONTENT = re.compile(r"\.(?:cf|cfu|cfe|dt|epf|erf)$", re.I)
-_ARCH = re.compile(r"(x86_64|amd64|aarch64|arm64|e2k|i386)", re.I)
+_ARCH = re.compile(r"(x86_64|amd64|aarch64|arm64|e2k|i386|noarch)", re.I)
+_ARCH_EXACT = re.compile(r"^(?:x86_64|amd64|aarch64|arm64|e2k|i386|noarch)$", re.I)
 _VERSION = re.compile(r"^\d+\.\d+(?:[.\-][\w.]+)*$")
 
 
@@ -228,15 +237,38 @@ def _product_of(packages: Sequence[FoundFile]) -> str:
 
 def _version_of(packages: Sequence[FoundFile]) -> str:
     """
-    Версия по соглашению имён deb и rpm: <имя>_<версия>_<архитектура>.deb.
+    Версия по соглашению имён пакета. У deb и rpm они разные.
+
+    deb: <имя>_<версия>_<архитектура>.deb
+    rpm: <имя>-<версия>-<выпуск>.<архитектура>.rpm — подчёркиваний нет вовсе,
+         поэтому разбор по deb-правилу давал пустую версию, и разные выпуски
+         сходились в один каталог «unknown».
 
     Общая регулярка тут не годится: на postgresql-18_18.4-1.1C_amd64.deb она
     захватывала «18.4-1.1C_amd64.deb» целиком.
     """
     for package in packages:
-        parts = package.name.rsplit(".", 1)[0].split("_")
-        if len(parts) >= 2 and _VERSION.match(parts[1]):
-            return parts[1]
+        name = package.name
+        version = _rpm_version(name) if name.lower().endswith(".rpm") else _deb_version(name)
+        if version:
+            return version
+    return ""
+
+
+def _deb_version(name: str) -> str:
+    parts = name.rsplit(".", 1)[0].split("_")
+    return parts[1] if len(parts) >= 2 and _VERSION.match(parts[1]) else ""
+
+
+def _rpm_version(name: str) -> str:
+    """Версия и выпуск из <имя>-<версия>-<выпуск>.<архитектура>.rpm."""
+    stem = name[: -len(".rpm")]
+    head, _, tail = stem.rpartition(".")
+    if head and _ARCH_EXACT.match(tail):
+        stem = head
+    fields = stem.split("-")
+    if len(fields) >= 3 and fields[-2][:1].isdigit():
+        return "-".join(fields[-2:])
     return ""
 
 
@@ -255,11 +287,24 @@ def _items_for(result: Inspected, settings: PlanSettings) -> List[PlannedItem]:
     if result.failure is not None:
         return [_failed_item(result)]
     if result.supplies:
-        return [
-            _supply_item(result, found, template, settings)
-            for found in result.supplies
-            for template in found.catalog.templates
-        ]
+        items: List[PlannedItem] = []
+        for found in result.supplies:
+            if not found.catalog.templates:
+                # Оглавление прочитано, но устанавливать нечего. Пропустить
+                # строку значило бы потерять исходный файл из плана целиком.
+                items.append(
+                    PlannedItem(
+                        kind=ItemKind.SUPPLY, title=result.name, version="",
+                        source=found.trail, destination="", bytes_total=0,
+                        action=Action.SKIP, reason=SkipReason.NO_TEMPLATES,
+                    )
+                )
+                continue
+            items.extend(
+                _supply_item(result, found, template, settings)
+                for template in found.catalog.templates
+            )
+        return items
     if result.files:
         return [_distribution_item(result, settings)]
     return [
@@ -271,14 +316,33 @@ def _items_for(result: Inspected, settings: PlanSettings) -> List[PlannedItem]:
 
 
 def _failed_item(result: Inspected) -> PlannedItem:
-    """Отказ осмотра — тоже строка плана: молча терять файл нельзя."""
+    """
+    Отказ осмотра — тоже строка плана: молча терять файл нельзя.
+
+    Но пропуск и отказ здесь различаются. «Формат не поддержан» — ожидаемый
+    исход, о нём достаточно сообщить. Повреждённый архив, слишком глубокая
+    вложенность или попытка выйти за каталог распаковки — это отказ, который
+    требует решения, и выдавать его за рядовой пропуск нельзя: план выглядел
+    бы исполнимым, а причина терялась.
+    """
     failure = result.failure
-    reason = SkipReason.CONTAINER_UNSUPPORTED
-    if failure is not None and (failure.details or {}).get("kind") == "rar":
-        reason = SkipReason.RAR_TOOL_MISSING
+    code = failure.code if failure is not None else None
+    details = (failure.details or {}) if failure is not None else {}
+
+    if code is UnpackErrorCode.CONTAINER_UNSUPPORTED:
+        reason = (
+            SkipReason.RAR_TOOL_MISSING
+            if details.get("kind") == "rar"
+            else SkipReason.CONTAINER_UNSUPPORTED
+        )
+        return PlannedItem(
+            kind=ItemKind.OTHER, title=result.name, version="", source=(result.name,),
+            destination="", bytes_total=0, action=Action.SKIP, reason=reason, failure=failure,
+        )
+
     return PlannedItem(
         kind=ItemKind.OTHER, title=result.name, version="", source=(result.name,),
-        destination="", bytes_total=0, action=Action.SKIP, reason=reason,
+        destination="", bytes_total=0, action=Action.FAIL, failure=failure,
     )
 
 
