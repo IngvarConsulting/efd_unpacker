@@ -1,21 +1,43 @@
+"""
+Тесты окна массовой распаковки.
+
+Осмотр, построение плана и исполнение внедряются, поэтому окно проверяется
+без диска и без ожидания настоящей распаковки. Что именно находит осмотр,
+проверяется в test_inspector, что пишет исполнитель — в test_executor.
+"""
+
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "minimal")
 os.environ.setdefault("QT_API", "pyqt5")
 
-import threading
 import time
 
 import pytest
-from PyQt5.QtCore import QObject
-from PyQt5.QtGui import QCloseEvent
-from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import Qt, QMimeData, QUrl
+from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QCloseEvent, QDropEvent
 
+from efd_unpacker.domain.batch import BatchResult, ItemFailed, ItemStarted, ItemWritten
+from efd_unpacker.domain.errors import (
+    FileValidationCode,
+    FileValidationError,
+    UnpackError,
+    UnpackErrorCode,
+)
 from efd_unpacker.domain.file_validator import FileValidator
-from efd_unpacker.infrastructure.settings_service import ORIGIN_LAST_USED, PathChoice
+from efd_unpacker.domain.plan import (
+    Action,
+    ItemKind,
+    Plan,
+    PlannedItem,
+    SkipReason,
+)
+from efd_unpacker.domain.supply import Entry, Template
 from efd_unpacker.domain.unpack_service import UnpackService
 from efd_unpacker.presentation import ui
-from efd_unpacker.presentation.ui import MainWindow, UnpackThread
+from efd_unpacker.presentation import rows as row_widgets
+from efd_unpacker.presentation.ui import MainWindow
 
 
 class DummyTranslator:
@@ -23,250 +45,827 @@ class DummyTranslator:
         return source
 
 
-class DummySettingsService:
+class DummySettings:
     def __init__(self) -> None:
-        self.path = "/tmp"
+        self.templates = os.path.join(os.sep, "t", "tmplts")
+        self.distributions = os.path.join(os.sep, "t", "dist")
+        self.saved = []
 
     def get_output_path(self) -> str:
-        return self.path
+        return self.templates
+
+    def get_distributions_path(self) -> str:
+        return self.distributions
 
     def set_output_path(self, path: str) -> None:
-        self.path = path
+        self.saved.append(path)
+        self.templates = path
 
-    def get_output_path_items(self, manual_selected_path=None):
-        base = manual_selected_path or self.path
-        return [PathChoice(path=base, origin=ORIGIN_LAST_USED, label=base)]
+
+class DummyValidator(FileValidator):
+    def __init__(self) -> None:
+        super().__init__()
+        # Список, а не последнее значение: проверка «лишний каталог не
+        # создаётся» иначе не видит лишнего вызова, если он был не последним.
+        self.prepared = []
+
+    def prepare_output_directory(self, output_dir: str) -> str:
+        self.prepared.append(output_dir)
+        return output_dir
 
 
 class DummyUnpackService(UnpackService):
     def __init__(self) -> None:
         pass
 
-    def unpack(self, input_file: str, output_dir: str) -> None:
-        self.last_call = (input_file, output_dir)
+
+def template(root=("1c", "Acc", "3_0"), files=(("1cv8.cf", 100), ("1cv8.dt", 900))):
+    entries = tuple(
+        Entry(path="/".join(root + (name,)), parts=root + (name,), modified_at=None, size=size)
+        for name, size in files
+    )
+    return Template(root=root, version="3.0", entries=entries)
 
 
-@pytest.mark.parametrize("initial_path", ["/tmp/test"])
-def test_main_window_initializes(qtbot, initial_path, monkeypatch):
-    translator = DummyTranslator()
-    settings = DummySettingsService()
-    settings.path = initial_path
+def item(title="Бухгалтерия", kind=ItemKind.SUPPLY, action=Action.WRITE, **kwargs):
+    defaults = dict(
+        kind=kind, title=title, version="3.0", source=(title + ".zip",),
+        origin=os.path.join(os.sep, "d", title + ".zip"),
+        destination=os.path.join(os.sep, "t", "tmplts", "1c", "Acc", "3_0"),
+        bytes_total=1000, action=action, template=template(),
+    )
+    defaults.update(kwargs)
+    return PlannedItem(**defaults)
+
+
+class _Writers:
+    """Запись подменена: сам батч тоже подменён, до неё дело не доходит."""
+
+    def unpack_supply(self, _item) -> None:  # pragma: no cover - не вызывается
+        raise AssertionError("запись не должна выполняться в этих тестах")
+
+    def extract_other(self, _item) -> None:  # pragma: no cover - не вызывается
+        raise AssertionError("запись не должна выполняться в этих тестах")
+
+
+def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, validator=None):
+    """Окно с подменённым осмотром, планом и исполнением."""
+    calls = {"inspect": [], "build": 0, "batch": []}
+    inspected = [object()] if inspected is None else inspected
+    plan = Plan(items=(item(),)) if plan is None else plan
+
+    def fake_inspect(paths):
+        calls["inspect"].append(tuple(paths))
+        return inspected
+
+    def fake_build(_inspected, _settings):
+        calls["build"] += 1
+        return plan
+
+    def fake_batch(current, sink, unpack_supply, extract_other, cancel_check=None):
+        calls["batch"].append(current)
+        if batch is not None:
+            return batch(current, sink, unpack_supply, extract_other, cancel_check)
+        for planned in current.to_write:
+            sink(ItemStarted(planned))
+            sink(ItemWritten(planned))
+        return BatchResult(written=current.to_write)
+
     window = MainWindow(
-        translator=translator,
-        settings_service=settings,
-        file_validator=FileValidator(),
+        translator=DummyTranslator(),
+        settings_service=settings or DummySettings(),
+        file_validator=validator or DummyValidator(),
         unpack_service=DummyUnpackService(),
+        inspect_files=fake_inspect,
+        build=fake_build,
+        batch=fake_batch,
+        make_writers=lambda *args, **kwargs: _Writers(),
     )
     qtbot.addWidget(window)
-    assert window.combo_output_paths.count() == 1
+    window.calls = calls
+    return window
 
 
-def test_unpack_finished_persists_actual_output_path(qtbot, monkeypatch):
-    translator = DummyTranslator()
-    settings = DummySettingsService()
-    chosen_output = "/chosen/output"
-
-    window = MainWindow(
-        translator=translator,
-        settings_service=settings,
-        file_validator=FileValidator(),
-        unpack_service=DummyUnpackService(),
+def drop(window, paths):
+    """Бросает файлы в окно так же, как это делает система."""
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(path) for path in paths])
+    event = QDropEvent(
+        window.rect().center(), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier
     )
-    qtbot.addWidget(window)
-
-    window.output_path = chosen_output
-    monkeypatch.setattr(window, "show_message", lambda *args, **kwargs: None)
-
-    window.unpack_finished(True, "done")
-
-    assert settings.path == chosen_output
+    window.dropEvent(event)
 
 
-class BlockingUnpackService(UnpackService):
-    """Распаковка, которая крутится, пока её не попросят остановиться."""
+# --- приём файлов ------------------------------------------------------------
 
-    def __init__(self) -> None:
-        self.started = threading.Event()
 
-    def unpack(self, input_file: str, output_dir: str, cancel_check=None) -> None:
-        self.started.set()
-        while cancel_check is None or not cancel_check():
+def test_dropping_files_fills_the_list(qtbot):
+    """Критерий #56: перетаскивание даёт список."""
+    window = make_window(qtbot)
+
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.calls["inspect"] == [("/d/a.zip",)]
+    assert window.button_unpack.isEnabled()
+
+
+def test_ten_files_go_to_inspection_in_one_call(qtbot):
+    """
+    Критерий #56: десять файлов дают список за время, неотличимое от
+    мгновенного. Осмотр уходит в поток одним вызовом, а не десятью.
+    """
+    paths = ["/d/f%d.zip" % index for index in range(10)]
+    window = make_window(qtbot)
+
+    started = time.monotonic()
+    drop(window, paths)
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.calls["inspect"] == [tuple(paths)]
+    assert time.monotonic() - started < 1.0
+
+
+def test_extension_is_not_checked_on_drop(qtbot):
+    """На вход годятся zip, dmg, rar — вид определяется содержимым."""
+    window = make_window(qtbot)
+
+    drop(window, ["/d/macos.client.dmg"])
+    qtbot.waitUntil(lambda: bool(window.calls["inspect"]), timeout=2000)
+
+    assert window.calls["inspect"][0][0].endswith(".dmg")
+
+
+def test_second_drop_adds_to_the_list(qtbot):
+    """
+    Критерий #56: после завершения окно принимает новые файлы без перезапуска.
+
+    Второй набор дополняет список, а не стирает его.
+    """
+    window = make_window(qtbot, inspected=[object()])
+
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    drop(window, ["/d/b.zip"])
+    qtbot.waitUntil(lambda: len(window.calls["inspect"]) == 2, timeout=2000)
+
+    assert len(window._inspected) == 2, "второй осмотр не дополнил первый"
+
+
+# --- показ состояния ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "planned, expected",
+    [
+        (item(), row_widgets.PENDING),
+        (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), row_widgets.UNAVAILABLE),
+        (item(action=Action.SKIP, reason=SkipReason.FILTERED_OUT), row_widgets.UNAVAILABLE),
+        (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)), row_widgets.FAILED),
+    ],
+)
+def test_state_is_encoded_by_shape(qtbot, planned, expected):
+    """
+    Состояние кодируется формой, а не только цветом.
+
+    Пропуск и отказ намеренно разные: «уже установлено» — нормальный исход,
+    а не проблема.
+    """
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].mark.state() == expected
+
+
+def test_row_names_the_role_not_the_whole_path(qtbot):
+    """
+    Общее начало пути вынесено в подвал.
+
+    Повторять «/t/tmplts» в каждой строке незачем — оно одно на все.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    where = window.rows[0].texts()[1]
+    assert where == "templates · " + "/".join(("1c", "Acc", "3_0"))
+    assert window.label_root.text() == os.path.join(os.sep, "t")
+    assert "tmplts" in window.label_inside.text()
+
+
+def test_skipped_row_shows_the_reason(qtbot):
+    window = make_window(
+        qtbot, plan=Plan(items=(item(action=Action.SKIP, reason=SkipReason.RAR_TOOL_MISSING),))
+    )
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].texts()[1] == "no program for .rar"
+
+
+def test_demo_size_is_shown_in_the_option(qtbot):
+    """
+    Опция заслужила место цифрой: .dt это почти половина объёма поставки.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert "900 Б" in window.check_only_cf.text()
+
+
+def test_toggling_the_option_rebuilds_without_inspecting_again(qtbot):
+    """
+    Осмотр стоит секунд, построение плана — микросекунд.
+
+    Переключение не должно трогать диск.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    before_inspect = len(window.calls["inspect"])
+    before_build = window.calls["build"]
+
+    window.check_only_cf.setChecked(True)
+
+    assert len(window.calls["inspect"]) == before_inspect, "осмотр повторился"
+    assert window.calls["build"] > before_build, "план не пересобран"
+
+
+# --- распаковка --------------------------------------------------------------
+
+
+def test_unpacking_marks_the_rows_done(qtbot):
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.DONE, timeout=2000)
+
+    assert window.button_clear.isEnabled()
+
+
+def test_failed_item_shows_its_reason_in_the_row(qtbot):
+    def batch(current, sink, _supply, _other, _cancel):
+        planned = current.items[0]
+        sink(ItemStarted(planned))
+        sink(ItemFailed(planned, UnpackError(UnpackErrorCode.PERMISSION)))
+        return BatchResult(failed=((planned, UnpackError(UnpackErrorCode.PERMISSION)),))
+
+    window = make_window(qtbot, batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.FAILED, timeout=2000)
+
+    assert "Permission error" in window.rows[0].texts()[1]
+
+
+def test_window_is_usable_again_after_unpacking(qtbot):
+    """
+    Критерий #56: окно не тупиковое.
+
+    После завершения список остаётся, кнопки живы, и можно бросить ещё файлы.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert len(window.rows) == 1, "список стёрся"
+    assert window.button_paths.isEnabled()
+    assert window.check_only_cf.isEnabled()
+    assert not window.rows[0].button_open.isHidden(), "в готовой строке нет «Открыть папку»"
+
+    drop(window, ["/d/b.zip"])
+    qtbot.waitUntil(lambda: len(window.calls["inspect"]) == 2, timeout=2000)
+
+
+def test_cancel_asks_the_batch_to_stop(qtbot):
+    """Критерий #56: отмена на середине останавливает батч."""
+    seen = {}
+
+    def batch(current, sink, _supply, _other, cancel_check):
+        planned = current.items[0]
+        sink(ItemStarted(planned))
+        for _ in range(200):
+            if cancel_check():
+                seen["cancelled"] = True
+                break
             time.sleep(0.005)
+        return BatchResult(cancelled=bool(seen))
+
+    window = make_window(qtbot, batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window.button_stop.isEnabled(), timeout=2000)
+    window.cancel()
+    qtbot.waitUntil(lambda: not window.button_stop.isEnabled(), timeout=3000)
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert seen.get("cancelled") is True
 
 
-def _window_with_running_unpack(qtbot, tmp_path):
-    window = MainWindow(
-        translator=DummyTranslator(),
-        settings_service=DummySettingsService(),
-        file_validator=FileValidator(),
-        unpack_service=BlockingUnpackService(),
+def test_unpack_does_nothing_while_busy(qtbot):
+    """Иначе ссылка на живой QThread потерялась бы и он был бы разрушен на ходу."""
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert len(window.calls["batch"]) == 1
+
+
+def test_unpreparable_output_directory_is_reported(qtbot, monkeypatch):
+    class FailingValidator(DummyValidator):
+        def prepare_output_directory(self, output_dir: str) -> str:
+            raise FileValidationError(FileValidationCode.OUTPUT_NOT_WRITABLE)
+
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: shown.append(args[2]))
+    window = make_window(qtbot, validator=FailingValidator())
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+
+    assert shown and "permission" in shown[0].lower()
+    assert not window.calls["batch"], "батч запустился при негодном каталоге"
+
+
+def test_output_path_is_saved_only_after_something_was_written(qtbot):
+    settings = DummySettings()
+    window = make_window(
+        qtbot, settings=settings,
+        batch=lambda *args, **kwargs: BatchResult(cancelled=True),
     )
-    qtbot.addWidget(window)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
-    source = tmp_path / "sample.efd"
-    source.write_text("payload", encoding="utf-8")
-    window.input_file = str(source)
-    window.combo_output_paths.clear()
-    window.combo_output_paths.addItem(str(tmp_path), str(tmp_path))
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
-    window.unpack_file()
-    assert window.unpack_service.started.wait(5)
-    return window
+    assert settings.saved == [], "путь сохранён, хотя ничего не записано"
 
 
-def test_window_stays_open_when_closing_is_declined(qtbot, tmp_path, monkeypatch):
-    window = _window_with_running_unpack(qtbot, tmp_path)
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
-
-    event = QCloseEvent()
-    window.closeEvent(event)
-
-    assert not event.isAccepted()
-    assert window._unpack_thread.isRunning()
-
-    window._unpack_thread.cancel()
-    window._unpack_thread.wait(5000)
+# --- папка и закрытие --------------------------------------------------------
 
 
-def test_confirmed_close_waits_for_the_thread(qtbot, tmp_path, monkeypatch):
-    window = _window_with_running_unpack(qtbot, tmp_path)
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
-    thread = window._unpack_thread
-
-    event = QCloseEvent()
-    window.closeEvent(event)
-
-    assert event.isAccepted()
-    assert not thread.isRunning()
-
-
-def test_close_without_running_thread_is_accepted(qtbot):
-    window = MainWindow(
-        translator=DummyTranslator(),
-        settings_service=DummySettingsService(),
-        file_validator=FileValidator(),
-        unpack_service=DummyUnpackService(),
-    )
-    qtbot.addWidget(window)
-
-    event = QCloseEvent()
-    window.closeEvent(event)
-
-    assert event.isAccepted()
-
-
-def test_qobject_thread_method_is_not_shadowed(qtbot):
-    """Поле self.thread затеняло встроенный QObject.thread() и давало TypeError."""
-    window = MainWindow(
-        translator=DummyTranslator(),
-        settings_service=DummySettingsService(),
-        file_validator=FileValidator(),
-        unpack_service=DummyUnpackService(),
-    )
-    qtbot.addWidget(window)
-
-    assert window.thread() is QObject.thread(window)
-
-
-def test_second_unpack_is_ignored_while_the_first_runs(qtbot, tmp_path, monkeypatch):
-    window = _window_with_running_unpack(qtbot, tmp_path)
-    thread = window._unpack_thread
-
-    window.unpack_file()
-
-    assert window._unpack_thread is thread
-
-    thread.cancel()
-    thread.wait(5000)
-
-
-def test_custom_signal_does_not_shadow_qthread_finished(qtbot):
-    thread = UnpackThread(DummyUnpackService(), DummyTranslator(), "in.efd", "/tmp")
-    qtbot.addWidget(QWidget())
-
-    assert hasattr(thread, "completed")
-    # Встроенный finished остался без аргументов, поэтому на него можно
-    # безопасно вешать deleteLater.
-    assert thread.metaObject().indexOfSignal("finished()") != -1
-
-
-def _plain_window(qtbot):
-    window = MainWindow(
-        translator=DummyTranslator(),
-        settings_service=DummySettingsService(),
-        file_validator=FileValidator(),
-        unpack_service=DummyUnpackService(),
-    )
-    qtbot.addWidget(window)
-    return window
-
-
-@pytest.mark.parametrize("success", [True, False], ids=["успех", "ошибка"])
-def test_window_shows_the_message_without_cli_markers(qtbot, success):
+def test_failed_folder_open_is_reported_with_the_path(qtbot, monkeypatch):
     """
-    Регресс: в окно протекали префиксы текстового протокола CLI, и русский
-    пользователь видел «[OK] Распаковка завершена успешно». Состояние и так
-    передаётся цветом label и UIState, а docs/CLI.md фиксирует маркеры только
-    для консольного вывода.
+    Регресс #18: показ через строку состояния прятал саму кнопку «Открыть
+    папку», и узнать каталог из окна было больше неоткуда.
     """
-    window = _plain_window(qtbot)
-
-    window.unpack_finished(success, "Распаковка завершена успешно")
-
-    shown = window.label_message.text()
-    assert shown == "Распаковка завершена успешно"
-    assert "[OK]" not in shown
-    assert "[ERROR]" not in shown
-
-
-def test_failed_folder_open_is_reported_to_the_user(qtbot, monkeypatch, tmp_path):
-    """
-    Регресс #18: open_folder возвращал False, а вызывающий код результат не читал.
-    В состоянии SUCCESS комбобокс с путём скрыт, так что при молчаливом отказе
-    каталог распаковки узнать из окна было негде.
-    """
-    window = _plain_window(qtbot)
-    window.output_path = str(tmp_path)
-    shown = {}
-
-    monkeypatch.setattr(ui.MainWindow, "_t", lambda _self, _ctx, text: text)
+    shown = []
     monkeypatch.setattr(ui, "open_folder", lambda _path: False)
-    monkeypatch.setattr(
-        ui.QMessageBox, "warning", lambda _parent, title, text: shown.update(title=title, text=text)
-    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: shown.append(args[2]))
+    window = make_window(qtbot)
 
     window.open_output_folder()
 
-    assert "Could not open the folder" in shown["text"]
-    assert str(tmp_path) in shown["text"], "путь должен быть в сообщении, чтобы его можно было скопировать"
+    assert shown and os.path.join(os.sep, "t", "tmplts") in shown[0]
 
 
-def test_successful_folder_open_is_silent(qtbot, monkeypatch, tmp_path):
-    window = _plain_window(qtbot)
-    window.output_path = str(tmp_path)
-    calls = []
-
+def test_successful_folder_open_shows_nothing(qtbot, monkeypatch):
+    shown = []
     monkeypatch.setattr(ui, "open_folder", lambda _path: True)
-    monkeypatch.setattr(ui.QMessageBox, "warning", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: shown.append(args[2]))
+    window = make_window(qtbot)
 
     window.open_output_folder()
 
-    assert calls == []
+    assert shown == []
 
 
-def test_failed_folder_open_keeps_the_window_in_success_state(qtbot, monkeypatch, tmp_path):
+def test_closing_during_unpacking_asks_first(qtbot, monkeypatch):
     """
-    show_message(..., is_error=True) перевёл бы окно в UIState.ERROR и спрятал
-    саму кнопку «Открыть папку» — поэтому здесь QMessageBox, а не он.
+    Регресс: окно закрывалось сразу, поток продолжал писать в уже
+    разрушаемом приложении, и каталог шаблона оставался неполным.
     """
-    window = _plain_window(qtbot)
-    window.unpack_finished(True, "Готово")
-    window.output_path = str(tmp_path)
+    def batch(current, sink, _supply, _other, cancel_check):
+        for _ in range(200):
+            if cancel_check():
+                break
+            time.sleep(0.005)
+        return BatchResult(cancelled=True)
 
-    monkeypatch.setattr(ui, "open_folder", lambda _path: False)
-    monkeypatch.setattr(ui.QMessageBox, "warning", lambda *a, **k: None)
+    asked = []
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *args, **kwargs: asked.append(args[1]) or QMessageBox.No,
+    )
+    window = make_window(qtbot, batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window.button_stop.isEnabled(), timeout=2000)
 
+    event = QCloseEvent()
+    window.closeEvent(event)
+
+    assert asked, "закрытие не спросило"
+    assert not event.isAccepted(), "окно закрылось посреди распаковки"
+
+    window.cancel()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+
+def test_closing_when_idle_does_not_ask(qtbot, monkeypatch):
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: asked.append(1))
+    window = make_window(qtbot)
+
+    event = QCloseEvent()
+    window.closeEvent(event)
+
+    assert asked == []
+    assert event.isAccepted()
+
+
+# --- находки обзора ----------------------------------------------------------
+
+
+def test_writers_get_the_cancellation_flag(qtbot):
+    """
+    Отмена должна доходить до писателя, а не только до батча.
+
+    Батч проверяет её на границе между элементами, а пачка из одного архива
+    там границы не имеет: после нажатия «Отмена» архив дописывался целиком.
+    """
+    seen = {}
+
+    def spy(_service, _root, _only_cf, cancel_check, on_progress=None):
+        seen["cancel_check"] = cancel_check
+        seen["on_progress"] = on_progress
+        return _Writers()
+
+    window = make_window(qtbot)
+    window._make_writers = spy
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert callable(seen.get("cancel_check")), "писателю передан не флаг отмены"
+    assert seen["cancel_check"]() is False
+    assert callable(seen.get("on_progress")), "писателю не передан обратный вызов хода"
+
+
+def test_distribution_only_batch_opens_the_distributions_folder(qtbot, monkeypatch):
+    """
+    Пачка из одних дистрибутивов пишет не в каталог шаблонов.
+
+    Открывать после неё каталог шаблонов значит показать пустую папку — и
+    создать её, если её не было.
+    """
+    settings = DummySettings()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    opened = []
+    monkeypatch.setattr(ui, "open_folder", lambda path: opened.append(path) or True)
     window.open_output_folder()
 
-    assert window.btn_open_folder.isVisible() or not window.isVisible()
-    assert window.btn_retry.isVisible() is False
+    assert opened == [settings.distributions]
+
+
+def test_templates_folder_is_not_created_for_a_distribution_only_batch(qtbot):
+    validator = DummyValidator()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), validator=validator)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert validator.prepared == [os.path.join(os.sep, "t", "dist")], validator.prepared
+
+
+def test_output_path_is_not_saved_for_a_distribution_only_batch(qtbot):
+    """Каталог шаблонов не трогали — запоминать нечего."""
+    settings = DummySettings()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert settings.saved == []
+
+
+def test_closing_during_inspection_waits_for_the_thread(qtbot, monkeypatch):
+    """
+    QThread, разрушенный на ходу, роняет приложение при выходе.
+
+    Осмотр ничего не пишет и спрашивать не о чем, но дождаться его надо.
+    """
+    started = {}
+
+    def slow_inspect(paths):
+        started["at"] = time.monotonic()
+        time.sleep(0.3)
+        return [object()]
+
+    window = make_window(qtbot)
+    window._inspect_files = slow_inspect
+    window.set_input_files(["/d/a.zip"])
+    qtbot.waitUntil(lambda: "at" in started, timeout=2000)
+
+    event = QCloseEvent()
+    window.closeEvent(event)
+
+    assert event.isAccepted()
+    assert not window._plan_thread.isRunning(), "поток осмотра пережил окно"
+
+
+def test_inspection_error_keeps_the_existing_plan_runnable(qtbot, monkeypatch):
+    """
+    Отказ второго осмотра не должен гасить кнопку у уже готового плана.
+
+    Кнопка гасится на время осмотра; не вернуть её значит оставить
+    пользователя со списком, который видно, но нельзя запустить.
+    """
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.button_unpack.isEnabled(), timeout=2000)
+
+    def boom(_paths):
+        raise RuntimeError("что-то сломалось")
+
+    window._inspect_files = boom
+    drop(window, ["/d/b.zip"])
+    qtbot.waitUntil(lambda: window._plan_thread is None, timeout=2000)
+
+    assert len(window.rows) == 1, "список стёрся"
+    assert window.button_unpack.isEnabled(), "кнопка осталась погашенной"
+
+
+def test_same_file_twice_gives_rows_with_their_own_state(qtbot):
+    """
+    Один файл, брошенный дважды, даёт одинаковые по полям элементы.
+
+    Ключ по полям ставил отметку сразу на обе строки — пользователь видел бы
+    записанным то, что ещё не начиналось.
+    """
+    first, second = item(title="A"), item(title="A")
+    window = make_window(qtbot, plan=Plan(items=(first, second)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window._item_finished(first, None)
+
+    assert window.rows[0].mark.state() == row_widgets.DONE
+    assert window.rows[1].mark.state() == row_widgets.PENDING, "отметка встала на обе строки"
+
+
+def test_rebuilding_the_plan_drops_stale_outcomes(qtbot):
+    """
+    Исходы привязаны к объектам плана.
+
+    После пересборки объекты создаются заново, и оставшийся исход мог бы
+    совпасть по id с новым объектом на месте старого.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window._item_finished(window._plan.items[0], None)
+    assert window.rows[0].state() == row_widgets.DONE
+
+    window.calls["build"] = 0
+    window._build = lambda _inspected, _settings: Plan(items=(item(title="Другое"),))
+    window._rebuild_plan()
+
+    assert window.rows[0].state() == row_widgets.PENDING, "исход пережил пересборку плана"
+
+
+def test_batch_failure_does_not_rewrite_finished_outcomes(qtbot):
+    """
+    Запасной путь потока не должен объявлять отказом то, что уже записано.
+
+    Иначе пользователь увидит отказ у файла, который лежит на диске целым.
+    """
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(current.items[0]))
+        sink(ItemWritten(current.items[0]))
+        raise RuntimeError("сломалось после первого")
+
+    first, second = item(title="A"), item(title="B")
+    window = make_window(qtbot, plan=Plan(items=(first, second)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.rows[0].mark.state() == row_widgets.DONE, "записанное объявлено отказом"
+    assert window.rows[1].mark.state() == row_widgets.FAILED
+
+
+# --- находки обзора оформления ----------------------------------------------
+
+
+def test_mark_is_reachable_from_the_keyboard(qtbot):
+    """
+    Строку надо уметь отметить без мыши.
+
+    Голый виджет со щелчком по mousePressEvent не брал фокус и не отвечал на
+    пробел — отметить строку с клавиатуры было нельзя вовсе.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    mark = window.rows[0].mark
+
+    assert mark.focusPolicy() != Qt.NoFocus, "знак не берёт фокус"
+    assert mark.accessibleName(), "у знака нет имени для средств доступности"
+
+    mark.click()  # то же, что пробел или Enter на кнопке
+    assert mark.state() == row_widgets.UNCHECKED
+
+
+def test_unavailable_mark_cannot_be_toggled(qtbot):
+    """«Уже установлено» не переключить ни мышью, ни клавишей."""
+    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    mark = window.rows[0].mark
+    assert not mark.isEnabled()
+    mark.click()
+    assert mark.state() == row_widgets.UNAVAILABLE
+
+
+def test_duplicate_rows_keep_their_own_marks(qtbot):
+    """
+    Один файл, брошенный дважды, даёт совпадающие по полям элементы.
+
+    Ключа по полям мало: снятая отметка у второго переезжала на первый при
+    пересборке плана, и снятыми оказывались обе строки.
+    """
+    first, second = item(title="A"), item(title="A")
+    window = make_window(qtbot, plan=Plan(items=(first, second)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.rows[1].mark.click()
+    assert [row.mark.state() for row in window.rows] == [
+        row_widgets.PENDING, row_widgets.UNCHECKED,
+    ]
+
+    window._rebuild_plan()
+
+    assert [row.mark.state() for row in window.rows] == [
+        row_widgets.PENDING, row_widgets.UNCHECKED,
+    ], "снятая отметка переехала на соседнюю строку"
+
+
+def test_unrelated_roots_are_not_shown_as_one(qtbot):
+    """
+    Вложенность каталогов считается по частям пути.
+
+    startswith считает «/tmp/dist» лежащим внутри «/t» — ровно та ошибка, от
+    которой уходили в resolve_entry_path.
+    """
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "t", "tmplts")
+    settings.distributions = os.path.join(os.sep, "tmp", "dist")
+    window = make_window(qtbot, settings=settings)
+
+    assert window.label_root.text() == settings.templates
+    assert window.label_inside.text() == settings.distributions
+
+
+def test_footer_names_both_folders_under_a_shared_root(qtbot):
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "home", "u", "1cv8", "tmplts")
+    settings.distributions = os.path.join(os.sep, "home", "u", "1cv8", "dist")
+    window = make_window(qtbot, settings=settings)
+
+    assert window.label_root.text() == os.path.join(os.sep, "home", "u", "1cv8")
+    assert ",," not in window.label_inside.text(), "запятая задвоилась"
+    assert window.label_inside.text().count(",") == 1, window.label_inside.text()
+    assert "tmplts" in window.label_inside.text()
+    assert "dist" in window.label_inside.text()
+
+
+def test_status_is_cleared_when_nothing_was_written(qtbot):
+    """
+    Батч, в котором всё отказало, не должен оставлять счёт оставшегося времени.
+
+    Элемент успевает сообщить о части байт и упасть — остаток времени от него
+    врёт: работы больше нет.
+    """
+    planned = item()
+
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(planned))
+        sink(ItemFailed(planned, UnpackError(UnpackErrorCode.PERMISSION)))
+        return BatchResult(failed=((planned, UnpackError(UnpackErrorCode.PERMISSION)),))
+
+    window = make_window(qtbot, plan=Plan(items=(planned,)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.label_status.setText("осталось ≈ 4 мин")
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.label_status.text() == "", "в шапке остался счёт времени"
+
+
+def test_finished_row_cannot_be_toggled_back(qtbot):
+    """
+    Готовую строку не переключить.
+
+    Знак гасится не только при создании, но и при смене состояния: иначе
+    после распаковки по нему можно было щёлкнуть и снять отметку с того, что
+    уже лежит на диске.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    mark = window.rows[0].mark
+    assert mark.state() == row_widgets.DONE
+    assert not mark.isEnabled(), "готовую строку можно переключить"
+
+
+def test_partial_progress_before_a_failure_does_not_leave_an_eta(qtbot):
+    """
+    Элемент успел сообщить часть байт и упал.
+
+    Остаток времени считается от записанного, и после отказа он врёт: работы
+    больше нет. Без части байт этот случай не воспроизводится — ноль
+    записанного и так очищает строку состояния.
+    """
+    planned = item()
+    failure = UnpackError(UnpackErrorCode.PERMISSION)
+
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(planned))
+        window._item_bytes(planned, planned.bytes_total // 2, "1cv8.cf")
+        sink(ItemFailed(planned, failure))
+        return BatchResult(failed=((planned, failure),))
+
+    window = make_window(qtbot, plan=Plan(items=(planned,)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.label_status.text() == "", "в шапке остался счёт времени"
+
+
+def test_russian_footer_reads_as_one_sentence(qtbot):
+    """
+    Подвал проверяется на настоящем каталоге переводов, а не на заглушке.
+
+    Пунктуация живёт в строке формата, но перевод может принести свою: так и
+    вышло — «для шаблонов,» плюс запятая формата давали «для шаблонов,,».
+    С подставным переводчиком этого не видно, потому что он отдаёт исходную
+    строку без запятой.
+    """
+    from efd_unpacker.localization.translator import Translator
+
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "home", "u", "1cv8", "tmplts")
+    settings.distributions = os.path.join(os.sep, "home", "u", "1cv8", "dist")
+    window = MainWindow(
+        translator=Translator(lang="ru"),
+        settings_service=settings,
+        file_validator=DummyValidator(),
+        unpack_service=DummyUnpackService(),
+        inspect_files=lambda paths: [],
+        build=lambda _i, _s: Plan(),
+        batch=lambda *args, **kwargs: BatchResult(),
+        make_writers=lambda *args, **kwargs: _Writers(),
+    )
+    qtbot.addWidget(window)
+
+    text = window.label_inside.text()
+    assert text.count(",") == 1, text
+    assert "шаблонов" in text and "дистрибутивов" in text

@@ -42,11 +42,15 @@ class Writers:
         templates_root: str,
         only_configuration: bool = False,
         cancel_check: Optional[Callable[[], bool]] = None,
+        on_progress: Optional[Callable[[int, str], None]] = None,
     ) -> None:
         self._service = unpack_service
         self._templates_root = templates_root
         self._only_configuration = only_configuration
         self._cancel_check = cancel_check
+        # Ход внутри элемента: сколько байт уже легло и что пишется сейчас.
+        # Окну этого не хватало — оно видело только «начал» и «закончил».
+        self._on_progress = on_progress
 
     def unpack_supply(self, item: PlannedItem) -> None:
         """
@@ -61,7 +65,8 @@ class Writers:
             handle = self._pick(leaves, item)
             with handle:
                 self._service.unpack_stream(
-                    handle, self._templates_root, self._cancel_check, keep=keep
+                    handle, self._templates_root, self._cancel_check, keep=keep,
+                    on_progress=self._on_progress,
                 )
 
     def extract_other(self, item: PlannedItem) -> None:
@@ -77,10 +82,14 @@ class Writers:
             reject_conflicting_entries(
                 [leaf.display_path for leaf in chosen], [list(parts) for parts in names]
             )
+            done = 0
             for leaf, parts in zip(chosen, names):
                 self._raise_if_cancelled()
                 self._write_leaf(leaf, item.destination, parts)
                 written += 1
+                done += leaf.size
+                if self._on_progress is not None:
+                    self._on_progress(done, leaf.name)
 
         if written != len(wanted):
             # Между осмотром и записью файл успел измениться, либо внешняя
