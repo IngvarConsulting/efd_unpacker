@@ -28,6 +28,9 @@ UNPACK_KEYS = {
     UnpackErrorCode.UNSAFE_ENTRY: "Archive rejected: it tries to write outside the output folder",
     UnpackErrorCode.TOO_LARGE: "Archive rejected: unpacked size exceeds the allowed limit",
     UnpackErrorCode.CORRUPTED_ARCHIVE: "Archive is damaged or incomplete: %1",
+    UnpackErrorCode.CONTAINER_UNSUPPORTED: "This archive format is not supported: %1",
+    UnpackErrorCode.NESTING_TOO_DEEP: "Archive rejected: too many nested archives",
+    UnpackErrorCode.TOO_MANY_ENTRIES: "Archive rejected: too many files inside",
     UnpackErrorCode.CANCELLED: "Unpacking was stopped, some files were not extracted",
     UnpackErrorCode.UNEXPECTED: "Unexpected error: %1",
 }
@@ -83,6 +86,8 @@ def _substitute(message: str, detail: str) -> str:
 def _unpack_detail(translator: Translator, error: UnpackError) -> str:
     """Короткое пояснение к ошибке распаковки для подстановки вместо %1."""
     details = error.details or {}
+    if error.code is UnpackErrorCode.CONTAINER_UNSUPPORTED:
+        return str(details.get("kind", ""))
     if error.code is UnpackErrorCode.CORRUPTED_ARCHIVE:
         reason = CORRUPTED_ARCHIVE_REASONS.get(details.get("reason"))
         return translator.translate("UnpackService", reason) if reason else ""

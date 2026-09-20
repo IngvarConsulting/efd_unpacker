@@ -126,6 +126,18 @@
         <translation>Архив повреждён или неполон: %1</translation>
     </message>
     <message>
+        <source>This archive format is not supported: %1</source>
+        <translation>Этот формат архива не поддерживается: %1</translation>
+    </message>
+    <message>
+        <source>Archive rejected: too many nested archives</source>
+        <translation>Архив отклонён: слишком много вложенных архивов</translation>
+    </message>
+    <message>
+        <source>Archive rejected: too many files inside</source>
+        <translation>Архив отклонён: слишком много файлов внутри</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="24"/>
         <source>the file is incomplete, most likely the download was interrupted</source>
         <translation>файл неполный, скорее всего загрузка оборвалась</translation>
