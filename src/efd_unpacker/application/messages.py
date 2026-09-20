@@ -41,6 +41,7 @@ CORRUPTED_ARCHIVE_REASONS = {
     "broken_container": "the archive could not be read, most likely the download was interrupted",
     "truncated_header": "the file is too short to be an EFD archive",
     "unsupported_header": "unsupported format version",
+    "broken_entry_name": "a file name inside the archive is unreadable",
     "truncated_entry": "a file inside the archive is shorter than declared",
     "duplicate_entry": "the archive contains two files with the same name",
     "entry_is_also_directory": "a file name in the archive conflicts with a folder name",

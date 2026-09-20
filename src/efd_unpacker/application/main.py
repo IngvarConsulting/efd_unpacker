@@ -18,7 +18,7 @@ from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import create_translator
 from ..presentation.ui import MainWindow
 from ..runtime import detect_system_language, install_cli_launcher
-from .cli import CLIApplication, wants_help
+from .cli import CLIApplication, is_read_only_command, wants_help
 from .help_text import format_help_text
 
 
@@ -128,12 +128,26 @@ class FileAssociationApp(QApplication):
             self.pending_files.clear()
 
 
+def should_install_launcher(argv: list) -> bool:
+    """
+    Регистрировать ли команду в PATH при этом запуске.
+
+    Регистрация пишет на диск: создаёт launcher и дописывает экспорт PATH в
+    профили оболочки, с резервной копией. Для info это недопустимо — команда
+    обещает не создавать ни байта, и обещание должно держаться и на собранном
+    приложении, где launcher вообще существует. Проверено на dev-запуске быть
+    не может: resolve_cli_launcher_target() отдаёт None вне бандла.
+    """
+    return not is_read_only_command(argv)
+
+
 def main() -> None:  # pragma: no cover - интеграция с PyQt
-    try:
-        install_cli_launcher()
-    except Exception:
-        # Регистрация команды в PATH — удобство, а не условие запуска.
-        pass
+    if should_install_launcher(sys.argv):
+        try:
+            install_cli_launcher()
+        except Exception:
+            # Регистрация команды в PATH — удобство, а не условие запуска.
+            pass
 
     translator = create_translator(detect_system_language())
 

@@ -161,6 +161,10 @@
         <translation>неподдерживаемая версия формата</translation>
     </message>
     <message>
+        <source>a file name inside the archive is unreadable</source>
+        <translation>имя файла внутри архива не читается</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="30"/>
         <source>a file inside the archive is shorter than declared</source>
         <translation>файл внутри архива короче заявленного размера</translation>
@@ -271,8 +275,99 @@
         <translation>2. Консольный режим: распаковать напрямую в консоли</translation>
     </message>
     <message>
+        <source>3. Inspect mode: show what is inside without unpacking</source>
+        <translation>3. Режим осмотра: показать состав, ничего не распаковывая</translation>
+    </message>
+    <message>
         <source>Usage:</source>
         <translation>Использование:</translation>
+    </message>
+</context>
+<context>
+    <name>Report</name>
+    <message>
+        <source>paths:</source>
+        <translation>пути:</translation>
+    </message>
+    <message>
+        <source>template</source>
+        <translation>шаблон</translation>
+    </message>
+    <message>
+        <source>distribution</source>
+        <translation>дистрибутив</translation>
+    </message>
+    <message>
+        <source>packages</source>
+        <translation>пакеты</translation>
+    </message>
+    <message>
+        <source>content</source>
+        <translation>содержимое</translation>
+    </message>
+    <message>
+        <source>other</source>
+        <translation>прочее</translation>
+    </message>
+    <message>
+        <source>skipped</source>
+        <translation>пропуск</translation>
+    </message>
+    <message>
+        <source>error</source>
+        <translation>отказ</translation>
+    </message>
+    <message>
+        <source>already installed</source>
+        <translation>уже установлено</translation>
+    </message>
+    <message>
+        <source>excluded by filter</source>
+        <translation>отфильтровано</translation>
+    </message>
+    <message>
+        <source>format is not supported</source>
+        <translation>формат не поддержан</translation>
+    </message>
+    <message>
+        <source>no program for .rar</source>
+        <translation>нет программы для .rar</translation>
+    </message>
+    <message>
+        <source>nothing found inside</source>
+        <translation>внутри ничего не найдено</translation>
+    </message>
+    <message>
+        <source>no templates inside</source>
+        <translation>нет шаблонов внутри</translation>
+    </message>
+    <message>
+        <source>files:</source>
+        <translation>файлов:</translation>
+    </message>
+    <message>
+        <source>templates:</source>
+        <translation>шаблонов:</translation>
+    </message>
+    <message>
+        <source>distributions:</source>
+        <translation>дистрибутивов:</translation>
+    </message>
+    <message>
+        <source>other:</source>
+        <translation>прочего:</translation>
+    </message>
+    <message>
+        <source>skipped:</source>
+        <translation>пропущено:</translation>
+    </message>
+    <message>
+        <source>errors:</source>
+        <translation>отказов:</translation>
+    </message>
+    <message>
+        <source>to write:</source>
+        <translation>к записи:</translation>
     </message>
 </context>
 </TS>

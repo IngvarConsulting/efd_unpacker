@@ -17,10 +17,12 @@ def format_help_text(translator) -> str:
         translator.translate("CLIHelp", "CLI modes:"),
         f"  {translator.translate('CLIHelp', '1. GUI mode: open the window and preselect the input file')}",
         f"  {translator.translate('CLIHelp', '2. Headless mode: unpack directly in the console')}",
+        f"  {translator.translate('CLIHelp', '3. Inspect mode: show what is inside without unpacking')}",
         "",
         translator.translate("CLIHelp", "Usage:"),
         "  efd_unpacker [--help|-h]",
         "  efd_unpacker <input_file.efd>",
         "  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>",
+        "  efd_unpacker info <file>... [--json] [-tmplts <dir>] [-dist <dir>]",
     ]
     return "\n".join(lines)
