@@ -334,3 +334,28 @@ def test_outcome_key_separates_files_with_the_same_name():
     assert len(rows) == 2
     assert rows[0].startswith("written") and "A" in rows[0]
     assert rows[1].startswith("error") and "B" in rows[1]
+
+
+def test_template_emptied_by_the_filter_is_counted_as_skipped():
+    """
+    Шаблон, у которого фильтр унёс единственную конфигурацию, в «templates»
+    попадать не должен: на диск он не поедет.
+
+    Счётчики читают исход элемента, а не его вид, — и эта правка проверяет
+    ровно то, что они не разойдутся с тем, что лежит на диске.
+    """
+    current = plan(
+        item(title="Демо", action=Action.SKIP, reason=SkipReason.FILTERED_OUT, bytes_total=0),
+        item(title="Комплексная автоматизация"),
+    )
+
+    table = format_plan(Passthrough(), current, source_count=1, elapsed=0.1)
+    machine = json.loads(format_json(current, source_count=1, elapsed=0.1))
+
+    assert "templates: 1" in table
+    assert "skipped: 1" in table
+    # В JSON ключи по исходу, а не по виду: write/skip/fail.
+    assert machine["totals"]["write"] == 1
+    assert machine["totals"]["skip"] == 1
+    # Объём — только то, что поедет: пропущенный шаблон в него не входит.
+    assert machine["totals"]["bytes"] == 1024

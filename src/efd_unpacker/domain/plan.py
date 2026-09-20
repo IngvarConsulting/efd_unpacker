@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from .errors import UnpackError, UnpackErrorCode
-from .supply import Catalog, Template, safe_relative_parts
+from .supply import Catalog, Entry, Template, safe_relative_parts
 
 
 class ItemKind(Enum):
@@ -372,7 +372,7 @@ def _supply_item(
     action, reason = Action.WRITE, None
     if settings.is_installed(destination):
         action, reason = Action.SKIP, SkipReason.ALREADY_INSTALLED
-    elif not kept:
+    elif not kept or _filter_took_everything(entries, kept):
         action, reason = Action.SKIP, SkipReason.FILTERED_OUT
 
     return PlannedItem(
@@ -387,6 +387,30 @@ def _supply_item(
         reason=reason,
         template=template,
         file_count=len(kept),
+    )
+
+
+def _filter_took_everything(entries: Sequence[Entry], kept: Sequence[Entry]) -> bool:
+    """
+    Унёс ли фильтр ВСЕ файлы, ради которых шаблон существует.
+
+    Шаблон, у которого единственная конфигурация лежит в .dt, при «без
+    демобаз» записывался каталогом с манифестом и ReadMe — и отчитывался как
+    успешный. В 1С такой шаблон виден пунктом, который ничего не создаёт, и
+    человек узнаёт об этом уже там, без единого намёка на причину. Настоящий
+    случай: Platform8Demo/1_0_41_3 из demo.zip платформы 8.3.27.
+
+    Условие нарочно с двух сторон — было и не осталось. «Не осталось» одного
+    мало: шаблон, в котором знакомого расширения не было вовсе, пропускать
+    нельзя, иначе незнакомый вид поставки уезжал бы молча.
+
+    Отдельной проверки «включён ли фильтр» здесь нет: без него kept и есть
+    entries, и «было, но не осталось» на одном и том же наборе не сходится
+    никогда.
+    """
+    return (
+        any(is_configuration(entry.path) for entry in entries)
+        and not any(is_configuration(entry.path) for entry in kept)
     )
 
 
@@ -422,6 +446,22 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
 #: далеко не всегда. Правило «выбросить .dt», а не «оставить .cf»: в шаблоне
 #: лежат ещё манифест, ReadMe и ресурсы, и без них 1С покажет неполный шаблон.
 DATA_SUFFIXES = (".dt",)
+
+#: То, из чего 1С делает базу: конфигурация, выгрузка, файл обновления. Ровно
+#: на такой файл указывает Source в манифесте, и без хотя бы одного из них в
+#: каталоге шаблона 1С покажет пункт, который ничего не создаёт, — сколько бы
+#: ресурсов и документации рядом ни лежало.
+#:
+#: Список намеренно короткий и используется ТОЛЬКО чтобы заметить, что фильтр
+#: унёс всё: незнакомое расширение просто не попадёт под правило, и шаблон
+#: запишется как раньше. Ошибиться в сторону лишней записи здесь безопаснее,
+#: чем молча пропустить нужное.
+CONFIGURATION_SUFFIXES = (".cf", ".dt", ".cfu")
+
+
+def is_configuration(path: str) -> bool:
+    """Файл, ради которого шаблон и существует."""
+    return path.lower().endswith(CONFIGURATION_SUFFIXES)
 
 
 def keeps_configuration(path: str) -> bool:
