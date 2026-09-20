@@ -1,4 +1,5 @@
 import datetime as dt
+import io
 import os
 import tempfile
 import unittest
@@ -188,3 +189,66 @@ def test_unexpected_error_prefers_the_exception_text_when_there_is_one(tmp_path)
         UnpackService(reader_factory=Boom).unpack(str(sample), str(tmp_path / "out"))
 
     assert ctx.value.details["error"] == "что-то конкретное"
+
+
+def test_unpack_stream_reads_an_efd_straight_out_of_a_container(tmp_path):
+    """
+    Ради этого и разрезан вход: .efd читается из zip без копии на диске.
+
+    У самой большой из исследованных поставок такая копия весила бы 2.4 ГБ.
+    """
+    import io
+    import zipfile
+
+    sample = Path(__file__).resolve().parents[1] / "data" / "1cv8.efd"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("1cv8.efd", sample.read_bytes())
+    buffer.seek(0)
+
+    output_dir = tmp_path / "out"
+    with zipfile.ZipFile(buffer) as archive:
+        with archive.open("1cv8.efd") as handle:
+            UnpackService().unpack_stream(handle, str(output_dir))
+
+    unpacked = sorted(p.name for p in output_dir.rglob("*") if p.is_file())
+    assert unpacked == ["1Cv8.cf", "1Cv8.dt", "1Cv8snc.1CD", "1cv8.mft"]
+    assert not list(tmp_path.glob("*.efd")), "копия .efd не должна появляться на диске"
+
+
+def test_unpack_stream_wraps_failures_the_same_way(tmp_path):
+    """Обёртка ошибок у потокового входа такая же, как у файлового."""
+
+    class Boom:
+        def __init__(self, _handle):
+            pass
+
+        def unpack(self, _output_dir):
+            raise MemoryError()
+
+    with pytest.raises(UnpackError) as ctx:
+        UnpackService(reader_factory=Boom).unpack_stream(io.BytesIO(b"x"), str(tmp_path / "out"))
+
+    assert ctx.value.code is UnpackErrorCode.UNEXPECTED
+    assert ctx.value.details["error"] == "MemoryError"
+
+
+def test_unpack_stream_passes_cancellation_to_the_reader(tmp_path):
+    seen = []
+
+    class Recorder:
+        def __init__(self, _handle):
+            pass
+
+        def set_cancel_check(self, cancel_check):
+            seen.append(cancel_check)
+
+        def unpack(self, _output_dir):
+            pass
+
+    def never():
+        return False
+
+    UnpackService(reader_factory=Recorder).unpack_stream(io.BytesIO(b"x"), str(tmp_path), never)
+
+    assert seen == [never]
