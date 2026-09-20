@@ -82,6 +82,7 @@ def _source_keys():
     keys |= _message_layer_keys()
     keys |= _report_layer_keys()
     keys |= _settings_layer_keys()
+    keys |= _window_layer_keys()
     return keys
 
 
@@ -168,6 +169,19 @@ def _settings_layer_keys():
     from efd_unpacker.infrastructure.settings_service import ORIGIN_KEYS
 
     return {("SettingsService", key) for key in ORIGIN_KEYS.values()}
+
+
+def _window_layer_keys():
+    """
+    Ключи окна, которые берутся из таблиц и констант, а не из литералов:
+    заголовки колонок, роли каталогов и причины пропуска.
+    """
+    from efd_unpacker.presentation import ui
+
+    keys = {("Report", column) for column in ui.COLUMNS if column}
+    keys |= {("MainWindow", ui.ROLE_TEMPLATES), ("MainWindow", ui.ROLE_DISTRIBUTIONS)}
+    keys |= {("Report", key) for key in ui.REASON_KEYS.values()}
+    return keys
 
 
 def _catalog():

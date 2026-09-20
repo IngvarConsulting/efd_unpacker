@@ -1,360 +1,469 @@
 """
-PyQt UI, использующий доменные сервисы и переводчик через DI.
+Окно массовой распаковки.
+
+Строка списка — это шаблон, а не файл. Иначе список врёт: demo.zip несёт два
+шаблона разных продуктов, а server64_*.zip в каталог шаблонов не попадёт
+вовсе. План из #51 уже устроен так же, окно просто его показывает.
+
+Окно не тупиковое: после распаковки список остаётся, и можно бросить ещё
+файлы, не перезапуская приложение.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from PyQt5.QtCore import QThread, QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QCursor, QDragEnterEvent, QDropEvent, QMovie
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 from PyQt5.QtWidgets import (
-    QComboBox,
+    QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from ..application.messages import format_unpack_result, format_validation_error
-from ..constants import FileExtensions, Styles, UIConstants, UIState
+from ..application.executor import Writers
+from ..application.inspector import inspect_all
+from ..application.messages import format_validation_error
+from ..application.report import human_bytes
+from ..constants import Styles, UIConstants
+from ..domain.batch import run as run_batch
 from ..domain.errors import FileValidationError, UnpackError
 from ..domain.file_validator import FileValidator
+from ..domain.plan import (
+    Action,
+    ItemKind,
+    Plan,
+    PlanSettings,
+    PlannedItem,
+    SkipReason,
+    build_plan,
+    keeps_configuration,
+)
 from ..domain.unpack_service import UnpackService
 from ..infrastructure.os_utils import open_folder
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import Translator
-from ..runtime import resource_path
+from .threads import BatchThread, PlanThread, describe_failure
 
+#: Состояние строки кодируется формой, а не только цветом: залитый квадрат
+#: будет распакован, пустой — отфильтрован, прочерк — пропуск по делу,
+#: круг — отказ. Пропуск и отказ намеренно разные: «уже установлено» —
+#: нормальный исход, а не проблема.
+MARK_WRITE = "■"
+MARK_FILTERED = "□"
+MARK_SKIP = "—"
+MARK_FAIL = "●"
+MARK_RUNNING = "▶"
+MARK_DONE = "✓"
 
-class UnpackThread(QThread):
-    # Именно completed, а не finished: одноимённый сигнал затенял бы встроенный
-    # QThread.finished, и повесить на него deleteLater было бы нельзя — кастомный
-    # сигнал эмитится ещё до фактического выхода из потока.
-    completed = pyqtSignal(bool, str)
+ROLE_TEMPLATES = "templates"
+ROLE_DISTRIBUTIONS = "distributions"
 
-    def __init__(self, unpack_service: UnpackService, translator: Translator, input_file: str, output_dir: str) -> None:
-        super().__init__()
-        self.unpack_service = unpack_service
-        self.translator = translator
-        self.input_file = input_file
-        self.output_dir = output_dir
-        self._cancelled = False
+REASON_KEYS = {
+    SkipReason.ALREADY_INSTALLED: "already installed",
+    SkipReason.FILTERED_OUT: "excluded by filter",
+    SkipReason.CONTAINER_UNSUPPORTED: "format is not supported",
+    SkipReason.RAR_TOOL_MISSING: "no program for .rar",
+    SkipReason.NOTHING_FOUND: "nothing found inside",
+    SkipReason.NO_TEMPLATES: "no templates inside",
+}
 
-    def cancel(self) -> None:
-        """Просит распаковку остановиться на ближайшей границе между файлами."""
-        self._cancelled = True
-
-    def run(self) -> None:  # pragma: no cover - потоковая логика
-        try:
-            self.unpack_service.unpack(
-                self.input_file,
-                self.output_dir,
-                cancel_check=lambda: self._cancelled,
-            )
-            message = format_unpack_result(self.translator, success=True)
-            self.completed.emit(True, message)
-        except UnpackError as exc:
-            message = format_unpack_result(self.translator, success=False, error=exc)
-            self.completed.emit(False, message)
+COLUMNS = ("", "name", "version", "size", "where")
 
 
 class MainWindow(QMainWindow):
+    """Окно списка и распаковки."""
+
     def __init__(
         self,
         translator: Translator,
         settings_service: SettingsService,
         file_validator: FileValidator,
         unpack_service: UnpackService,
+        inspect_files=inspect_all,
+        build=build_plan,
+        batch=run_batch,
+        make_writers=Writers,
     ) -> None:
         super().__init__()
         self.translator = translator
         self.settings_service = settings_service
         self.file_validator = file_validator
         self.unpack_service = unpack_service
+        # Осмотр, построение плана и исполнение внедряются: окно проверяется
+        # без диска и без ожидания настоящей распаковки.
+        self._inspect_files = inspect_files
+        self._build = build
+        self._batch = batch
+        self._make_writers = make_writers
 
-        self.output_path = self.settings_service.get_output_path()
-        self.manual_selected_path: Optional[str] = None
-        self.input_file: Optional[str] = None
-        self._unpack_thread: Optional[UnpackThread] = None
+        self._inspected: List = []
+        self._plan = Plan()
+        self._outcomes: Dict[Tuple[str, ...], Tuple[str, Optional[UnpackError]]] = {}
+        self._plan_thread: Optional[PlanThread] = None
+        self._batch_thread: Optional[BatchThread] = None
+        self._written_root = ""
 
-        self._init_window_properties()
-        self._init_ui_elements()
-        self._init_layout()
-        self._connect_signals()
-        self.update_output_paths_combobox()
+        self._build_ui()
+        self._refresh_footer()
+
+    # --- построение окна -----------------------------------------------------
 
     def _t(self, context: str, text: str) -> str:
         return self.translator.translate(context, text)
 
-    def _init_window_properties(self) -> None:
+    def _build_ui(self) -> None:
         self.setWindowTitle(self._t("MainWindow", "EFD Unpacker"))
-        self.resize(UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
+        self.setMinimumSize(UIConstants.WINDOW_WIDTH + 420, UIConstants.WINDOW_HEIGHT + 240)
         self.setAcceptDrops(True)
 
-    def _init_ui_elements(self) -> None:
-        self.label_input = QLabel(self._t("MainWindow", "Drag .efd file here or click to choose"))
+        self.label_input = QLabel(self._t("MainWindow", "Drag files here or click to choose"))
         self.label_input.setAlignment(Qt.AlignCenter)
         self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
-        self.label_input.setCursor(QCursor(Qt.PointingHandCursor))
-        self.label_input.mousePressEvent = self.open_file_dialog  # type: ignore
+        self.label_input.mousePressEvent = self.open_file_dialog
 
-        self.combo_output_paths = QComboBox()
-        self.combo_output_paths.setToolTip(self._t("MainWindow", "Reset to Default"))
-        self.combo_output_paths.setEditable(False)
-        self.combo_output_paths.setMinimumWidth(UIConstants.COMBO_MIN_WIDTH)
+        self.table = QTableWidget(0, len(COLUMNS))
+        self.table.setHorizontalHeaderLabels(
+            [self._t("Report", key) if key else "" for key in COLUMNS]
+        )
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
 
-        self.btn_browse = QPushButton(self._t("MainWindow", "Select Folder"))
+        self.check_only_cf = QCheckBox(self._t("MainWindow", "Without demo databases"))
+        self.check_only_cf.stateChanged.connect(self._rebuild_plan)
+
+        self.label_roots = QLabel("")
+        self.label_roots.setStyleSheet("color: #5E6A72;")
+        self.label_roots.setWordWrap(True)
+
+        self.btn_paths = QPushButton(self._t("MainWindow", "Change folders…"))
+        self.btn_paths.clicked.connect(self.browse_output_path)
         self.btn_unpack = QPushButton(self._t("MainWindow", "Unpack"))
+        self.btn_unpack.clicked.connect(self.unpack)
         self.btn_unpack.setEnabled(False)
+        self.btn_cancel = QPushButton(self._t("MainWindow", "Cancel"))
+        self.btn_cancel.clicked.connect(self.cancel)
+        self.btn_cancel.setEnabled(False)
+        self.btn_open = QPushButton(self._t("MainWindow", "Open Folder"))
+        self.btn_open.clicked.connect(self.open_output_folder)
+        self.btn_open.setEnabled(False)
 
-        self.loading_label = QLabel()
-        self.loading_movie = QMovie(resource_path("resources", "loading.gif"))
-        self.loading_movie.setCacheMode(QMovie.CacheAll)
-        self.loading_movie.setScaledSize(QSize(UIConstants.LOADING_ICON_SIZE, UIConstants.LOADING_ICON_SIZE))
-        self.loading_label.setMovie(self.loading_movie)
-        self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.setStyleSheet(Styles.LOADING_LABEL)
-        self.loading_label.setVisible(False)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.btn_paths)
+        buttons.addStretch()
+        buttons.addWidget(self.btn_open)
+        buttons.addWidget(self.btn_cancel)
+        buttons.addWidget(self.btn_unpack)
 
-        self.label_message = QLabel()
-        self.label_message.setAlignment(Qt.AlignCenter)
-        self.label_message.setWordWrap(True)
-        self.label_message.setVisible(False)
-
-        self.btn_retry = QPushButton(self._t("MainWindow", "Retry"))
-        self.btn_retry.setVisible(False)
-
-        self.btn_open_folder = QPushButton(self._t("MainWindow", "Open Folder"))
-        self.btn_open_folder.setVisible(False)
-
-        self.btn_close = QPushButton(self._t("MainWindow", "Close"))
-        self.btn_close.setVisible(False)
-
-    def _init_layout(self) -> None:
         layout = QVBoxLayout()
         layout.addWidget(self.label_input)
+        layout.addWidget(self.table)
+        layout.addWidget(self.check_only_cf)
+        layout.addWidget(self.label_roots)
+        layout.addLayout(buttons)
 
-        output_layout = QHBoxLayout()
-        output_layout.addWidget(self.combo_output_paths)
-        output_layout.addWidget(self.btn_browse)
-        layout.addLayout(output_layout)
+        central = QWidget()
+        central.setLayout(layout)
+        self.setCentralWidget(central)
 
-        layout.addWidget(self.btn_unpack)
-        layout.addWidget(self.loading_label)
-        layout.addWidget(self.label_message)
-        layout.addWidget(self.btn_retry)
+    # --- приём файлов --------------------------------------------------------
 
-        success_buttons_layout = QHBoxLayout()
-        success_buttons_layout.addWidget(self.btn_open_folder)
-        success_buttons_layout.addWidget(self.btn_close)
-        layout.addLayout(success_buttons_layout)
-
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
-
-    def _connect_signals(self) -> None:
-        self.combo_output_paths.activated.connect(self.on_output_path_selected)
-        self.btn_browse.clicked.connect(self.browse_output_path)
-        self.btn_unpack.clicked.connect(self.unpack_file)
-        self.btn_retry.clicked.connect(self.reset_ui)
-        self.btn_open_folder.clicked.connect(self.open_output_folder)
-        self.btn_close.clicked.connect(self.close)
-
-    def update_output_paths_combobox(self) -> None:
-        self.combo_output_paths.clear()
-        items = self.settings_service.get_output_path_items(self.manual_selected_path)
-        for choice in items:
-            self.combo_output_paths.addItem(choice.label, choice.path)
-
-        current_path = self.manual_selected_path or self.settings_service.get_output_path()
-        if current_path:
-            idx = self.combo_output_paths.findData(current_path)
-            if idx != -1:
-                self.combo_output_paths.setCurrentIndex(idx)
-
-    def on_output_path_selected(self, index: int) -> None:
-        path = self.combo_output_paths.itemData(index)
-        if path:
-            self.output_path = path
-            if self.manual_selected_path and os.path.normpath(path) != os.path.normpath(self.manual_selected_path):
-                self.manual_selected_path = None
-                self.update_output_paths_combobox()
-
-    def set_ui_state(self, state: UIState) -> None:
-        for widget in [
-            self.label_input,
-            self.combo_output_paths,
-            self.btn_browse,
-            self.btn_unpack,
-            self.loading_label,
-            self.label_message,
-            self.btn_retry,
-            self.btn_open_folder,
-            self.btn_close,
-        ]:
-            widget.setVisible(False)
-
-        self.loading_movie.stop()
-
-        if state == UIState.NORMAL:
-            self.label_input.setVisible(True)
-            self.combo_output_paths.setVisible(True)
-            self.btn_browse.setVisible(True)
-            self.btn_unpack.setVisible(True)
-        elif state == UIState.LOADING:
-            self.loading_label.setVisible(True)
-            self.loading_movie.start()
-        elif state == UIState.SUCCESS:
-            self.label_message.setVisible(True)
-            self.btn_open_folder.setVisible(True)
-            self.btn_close.setVisible(True)
-        elif state == UIState.ERROR:
-            self.label_message.setVisible(True)
-            self.btn_retry.setVisible(True)
-
-    def show_message(self, text: str, is_error: bool = False) -> None:
-        self.label_message.setText(text)
-        self.label_message.setStyleSheet(Styles.MESSAGE_ERROR if is_error else Styles.MESSAGE_SUCCESS)
-        self.set_ui_state(UIState.ERROR if is_error else UIState.SUCCESS)
-
-    def reset_ui(self) -> None:
-        self.input_file = None
-        self.label_input.setText(self._t("MainWindow", "Drag .efd file here or click to choose"))
-        self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
-        self.set_ui_state(UIState.NORMAL)
-        self.btn_unpack.setEnabled(False)
-        self.btn_browse.setEnabled(True)
-        self.combo_output_paths.setEnabled(True)
-
-    # Drag & drop
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        mime = event.mimeData()
-        if mime and hasattr(mime, "urls"):
-            for url in mime.urls():
-                if url.isLocalFile() and url.toLocalFile().lower().endswith(FileExtensions.EFD):
-                    event.acceptProposedAction()
-                    self._set_drag_active(True)
-                    break
+        # Расширение больше не проверяется: на вход годятся zip, dmg, rar и
+        # голый .efd, а вид определяется содержимым при осмотре.
+        if self._dropped_paths(event):
+            event.acceptProposedAction()
+            self._set_drag_active(True)
 
     def dragLeaveEvent(self, event) -> None:
         self._set_drag_active(False)
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._set_drag_active(False)
+        paths = self._dropped_paths(event)
+        if paths:
+            self.set_input_files(paths)
+
+    @staticmethod
+    def _dropped_paths(event) -> List[str]:
         mime = event.mimeData()
-        if mime and hasattr(mime, "urls"):
-            for url in mime.urls():
-                if url.isLocalFile() and url.toLocalFile().lower().endswith(FileExtensions.EFD):
-                    self.set_input_file(url.toLocalFile())
-                    break
+        if not mime or not hasattr(mime, "urls"):
+            return []
+        return [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
 
     def _set_drag_active(self, active: bool) -> None:
         if active:
-            self.label_input.setText(self._t("MainWindow", "Drop file to upload"))
+            self.label_input.setText(self._t("MainWindow", "Drop files to inspect"))
             self.label_input.setStyleSheet(Styles.INPUT_DRAG)
         else:
-            self.label_input.setText(self._t("MainWindow", "Drag .efd file here or click to choose"))
+            self.label_input.setText(self._t("MainWindow", "Drag files here or click to choose"))
             self.label_input.setStyleSheet(Styles.INPUT_NORMAL)
 
+    def open_file_dialog(self, _event) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, self._t("MainWindow", "Select files"), "",
+            self._t("MainWindow", "Supply and distribution files (*.efd *.zip *.rar *.dmg *.tar *.gz *.bz2 *.xz)"),
+        )
+        if paths:
+            self.set_input_files(paths)
+
     def set_input_file(self, file_path: str) -> bool:
-        """Принимает файл. Возвращает False, показав причину отказа пользователю."""
-        try:
-            normalized = self.file_validator.validate_input_file(file_path)
-        except FileValidationError as exc:
-            message = format_validation_error(self.translator, exc)
-            QMessageBox.warning(self, self._t("MainWindow", "Error"), message)
-            self.btn_unpack.setEnabled(False)
+        """Один файл. Оставлен для файловых ассоциаций и аргумента запуска."""
+        return self.set_input_files([file_path])
+
+    def set_input_files(self, paths: Sequence[str]) -> bool:
+        """Осматривает файлы в фоне и показывает список."""
+        if not paths or self._running(self._plan_thread) or self._unpacking():
             return False
 
-        self.input_file = normalized
-        self.label_input.setText(normalized)
-        self.label_input.setStyleSheet(Styles.INPUT_SUCCESS)
-        self.btn_unpack.setEnabled(True)
+        self.label_input.setText(self._t("MainWindow", "Inspecting…"))
+        self.btn_unpack.setEnabled(False)
+        thread = PlanThread(paths, self._inspect_files)
+        thread.ready.connect(self._inspection_ready)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._forget_plan_thread)
+        self._plan_thread = thread
+        thread.start()
         return True
 
-    def browse_output_path(self) -> None:
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            self._t("MainWindow", "Select output folder"),
-            self.combo_output_paths.currentData(),
-        )
-        if directory:
-            self.manual_selected_path = directory
-            self.output_path = directory
-            self.update_output_paths_combobox()
-            idx = self.combo_output_paths.findData(directory)
-            if idx != -1:
-                self.combo_output_paths.setCurrentIndex(idx)
-
-    def open_file_dialog(self, _event) -> None:
-        file_filter = self._t("MainWindow", "EFD Files (*.efd)")
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            self._t("MainWindow", "Select .efd file"),
-            "",
-            file_filter,
-        )
-        if file_path:
-            self.set_input_file(file_path)
-
-    def unpack_file(self) -> None:
-        if self._unpack_thread is not None and self._unpack_thread.isRunning():
-            # Пока предыдущая распаковка жива, поле перезаписывать нельзя:
-            # ссылка на QThread потеряется, и он будет разрушен на ходу.
+    def _inspection_ready(self, inspected, error: Optional[UnpackError]) -> None:
+        self._set_drag_active(False)
+        if error is not None:
+            QMessageBox.warning(
+                self, self._t("MainWindow", "Error"),
+                describe_failure(self.translator, error),
+            )
             return
+        # Добавляем к уже осмотренному: окно не тупиковое, и второй набор
+        # файлов дополняет список, а не стирает его.
+        self._inspected = list(self._inspected) + list(inspected)
+        self._outcomes = {}
+        self._rebuild_plan()
 
-        if not self.input_file:
-            QMessageBox.warning(self, self._t("MainWindow", "Error"), self._t("MainWindow", "No .efd file selected"))
+    def _forget_plan_thread(self) -> None:
+        self._plan_thread = None
+
+    # --- план ----------------------------------------------------------------
+
+    def _settings(self) -> PlanSettings:
+        return PlanSettings(
+            templates_root=self.settings_service.get_output_path(),
+            distributions_root=self.settings_service.get_distributions_path(),
+            only_configuration=self.check_only_cf.isChecked(),
+            is_installed=os.path.isdir,
+        )
+
+    def _rebuild_plan(self) -> None:
+        """
+        Пересобирает план из уже осмотренного.
+
+        Осмотр стоит секунд, построение плана — микросекунд, поэтому
+        переключение «без демобаз» не трогает диск.
+        """
+        self._plan = self._build(self._inspected, self._settings())
+        self._fill_table()
+        self._refresh_footer()
+        self.btn_unpack.setEnabled(bool(self._plan.to_write) and not self._unpacking())
+
+    def _fill_table(self) -> None:
+        self.table.setRowCount(len(self._plan.items))
+        for row, item in enumerate(self._plan.items):
+            for column, text in enumerate(self._row_cells(item)):
+                cell = QTableWidgetItem(text)
+                if column in (0, 3):
+                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(row, column, cell)
+
+    def _row_cells(self, item: PlannedItem) -> Tuple[str, ...]:
+        return (
+            self._mark(item),
+            item.title,
+            item.version,
+            human_bytes(item.bytes_total) if item.bytes_total else "",
+            self._where(item),
+        )
+
+    def _mark(self, item: PlannedItem) -> str:
+        outcome, _error = self._outcomes.get(_key(item), (None, None))
+        if outcome == "running":
+            return MARK_RUNNING
+        if outcome == "written":
+            return MARK_DONE
+        if outcome == "failed":
+            return MARK_FAIL
+        if item.action is Action.FAIL:
+            return MARK_FAIL
+        if item.action is Action.SKIP:
+            return MARK_FILTERED if item.reason is SkipReason.FILTERED_OUT else MARK_SKIP
+        return MARK_WRITE
+
+    def _where(self, item: PlannedItem) -> str:
+        """
+        Роль каталога и путь внутри него, без общего начала.
+
+        Повторять «/Users/…/tmplts» в каждой строке незачем: оно одно на все
+        и вынесено в подвал.
+        """
+        _outcome, error = self._outcomes.get(_key(item), (None, None))
+        if error is not None:
+            return describe_failure(self.translator, error)
+        if item.action is Action.FAIL:
+            return describe_failure(self.translator, item.failure)
+        if item.action is Action.SKIP:
+            key = REASON_KEYS.get(item.reason) if item.reason else None
+            return self._t("Report", key) if key else ""
+
+        role, root = (
+            (ROLE_TEMPLATES, self.settings_service.get_output_path())
+            if item.kind is ItemKind.SUPPLY
+            else (ROLE_DISTRIBUTIONS, self.settings_service.get_distributions_path())
+        )
+        return "%s · %s" % (self._t("MainWindow", role), _relative_to(item.destination, root))
+
+    def _refresh_footer(self) -> None:
+        saved = _demo_bytes(self._plan)
+        self.check_only_cf.setText(
+            "%s — %s" % (
+                self._t("MainWindow", "Without demo databases"),
+                self._t("MainWindow", "saves %s") % human_bytes(saved),
+            )
+            if saved
+            else self._t("MainWindow", "Without demo databases")
+        )
+        self.label_roots.setText(
+            "%s → %s\n%s → %s" % (
+                self._t("MainWindow", ROLE_TEMPLATES),
+                self.settings_service.get_output_path(),
+                self._t("MainWindow", ROLE_DISTRIBUTIONS),
+                self.settings_service.get_distributions_path(),
+            )
+        )
+
+    # --- распаковка ----------------------------------------------------------
+
+    @staticmethod
+    def _running(thread) -> bool:
+        return thread is not None and thread.isRunning()
+
+    def _unpacking(self) -> bool:
+        """
+        Идёт ли распаковка. Только она и мешает начать новую.
+
+        Поток осмотра сюда не входит намеренно: сигнал о готовности приходит
+        из run(), а QThread до выхода из него ещё числится живым. Считая его
+        занятостью, окно блокировало кнопку «Распаковать» ровно в тот момент,
+        когда список уже показан, — и разблокировать её было некому.
+        """
+        return self._running(self._batch_thread)
+
+    def unpack(self) -> None:
+        if self._unpacking() or not self._plan.to_write:
             return
 
         try:
-            prepared_output = self.file_validator.prepare_output_directory(self.combo_output_paths.currentData())
+            root = self.file_validator.prepare_output_directory(
+                self.settings_service.get_output_path()
+            )
         except FileValidationError as exc:
-            message = format_validation_error(self.translator, exc)
-            QMessageBox.warning(self, self._t("MainWindow", "Error"), message)
+            QMessageBox.warning(
+                self, self._t("MainWindow", "Error"),
+                format_validation_error(self.translator, exc),
+            )
             return
 
-        self.output_path = prepared_output
+        self._written_root = root
+        self._outcomes = {}
+        writers = self._make_writers(
+            self.unpack_service, root, self.check_only_cf.isChecked(), None
+        )
 
-        self.set_ui_state(UIState.LOADING)
-        self.btn_unpack.setEnabled(False)
-        self.btn_browse.setEnabled(False)
-        self.combo_output_paths.setEnabled(False)
-
-        thread = UnpackThread(self.unpack_service, self.translator, self.input_file, prepared_output)
-        thread.completed.connect(self.unpack_finished)
+        thread = BatchThread(self._plan, writers, self._batch)
+        thread.item_progress.connect(self._item_started)
+        thread.item_finished.connect(self._item_finished)
+        thread.completed.connect(self._batch_finished)
         # Настоящий QThread.finished, а не наш completed: он приходит после
         # фактического выхода из run(), когда объект уже можно удалять.
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._forget_unpack_thread)
-        self._unpack_thread = thread
+        thread.finished.connect(self._forget_batch_thread)
+        self._batch_thread = thread
+
+        self.btn_unpack.setEnabled(False)
+        self.btn_paths.setEnabled(False)
+        self.check_only_cf.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
         thread.start()
 
-    def unpack_finished(self, success: bool, message: str) -> None:
-        self.btn_unpack.setEnabled(True)
-        self.btn_browse.setEnabled(True)
-        self.combo_output_paths.setEnabled(True)
+    def cancel(self) -> None:
+        thread = self._batch_thread
+        if thread is not None and thread.isRunning():
+            thread.cancel()
+            self.btn_cancel.setEnabled(False)
 
-        if success:
-            self.settings_service.set_output_path(self.output_path)
-            self.manual_selected_path = None
-            self.update_output_paths_combobox()
-            # Без маркера успеха: это часть текстового протокола CLI, который
-            # зафиксирован в docs/CLI.md. В окне состояние видно по цвету label
-            # и по UIState, а русскому пользователю латинский маркер ничего не даёт.
-            self.show_message(message, is_error=False)
-        else:
-            self.show_message(message, is_error=True)
+    def _item_started(self, item: PlannedItem) -> None:
+        self._outcomes[_key(item)] = ("running", None)
+        self._fill_table()
 
-    def _forget_unpack_thread(self) -> None:
-        self._unpack_thread = None
+    def _item_finished(self, item: PlannedItem, error: Optional[UnpackError]) -> None:
+        self._outcomes[_key(item)] = ("failed" if error is not None else "written", error)
+        self._fill_table()
+
+    def _batch_finished(self, result) -> None:
+        self.btn_paths.setEnabled(True)
+        self.check_only_cf.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
+        self.btn_open.setEnabled(bool(result.written))
+        # Кнопка распаковки снова доступна: окно не тупиковое, и повтор после
+        # отмены или отказа не требует перезапуска.
+        self.btn_unpack.setEnabled(bool(self._plan.to_write))
+        self.label_input.setText(self._t("MainWindow", "Drag files here or click to choose"))
+
+        if result.written:
+            self.settings_service.set_output_path(self._written_root)
+
+    def _forget_batch_thread(self) -> None:
+        self._batch_thread = None
+
+    # --- пути и папка --------------------------------------------------------
+
+    def browse_output_path(self) -> None:
+        directory = QFileDialog.getExistingDirectory(
+            self, self._t("MainWindow", "Select output folder"),
+            self.settings_service.get_output_path(),
+        )
+        if not directory:
+            return
+        self.settings_service.set_output_path(directory)
+        self._rebuild_plan()
+
+    def open_output_folder(self) -> None:
+        root = self._written_root or self.settings_service.get_output_path()
+        if not root:
+            return
+        if open_folder(root):
+            return
+        # QMessageBox, а не строка состояния: та прятала саму кнопку «Открыть
+        # папку». Путь в тексте — чтобы его можно было скопировать.
+        QMessageBox.warning(
+            self, self._t("MainWindow", "Error"),
+            "%s\n\n%s" % (self._t("MainWindow", "Could not open the folder"), root),
+        )
+
+    # --- закрытие ------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
         """
@@ -364,7 +473,7 @@ class MainWindow(QMainWindow):
         разрушаемом приложении, и пользователь получал каталог шаблона,
         в котором часть файлов отсутствует.
         """
-        thread = self._unpack_thread
+        thread = self._batch_thread
         if thread is None or not thread.isRunning():
             event.accept()
             return
@@ -390,17 +499,33 @@ class MainWindow(QMainWindow):
 
         event.accept()
 
-    def open_output_folder(self) -> None:
-        if not self.output_path:
-            return
-        if open_folder(self.output_path):
-            return
-        # QMessageBox, а не show_message: последний переводит окно в UIState.ERROR
-        # и прячет саму кнопку «Открыть папку». Путь в тексте — чтобы его можно
-        # было скопировать: в состоянии SUCCESS комбобокс с путём скрыт, и узнать
-        # каталог распаковки из окна больше неоткуда.
-        QMessageBox.warning(
-            self,
-            self._t("MainWindow", "Error"),
-            "{}\n\n{}".format(self._t("MainWindow", "Could not open the folder"), self.output_path),
+
+def _key(item: PlannedItem) -> Tuple[str, ...]:
+    """Тот же ключ, что в отчёте CLI: источник плюс назначение."""
+    return (item.origin,) + item.source + (item.destination,)
+
+
+def _relative_to(destination: str, root: str) -> str:
+    """Путь внутри каталога роли, без общего начала."""
+    normalized_root = os.path.normpath(root).replace("\\", "/").rstrip("/")
+    normalized = os.path.normpath(destination).replace("\\", "/")
+    if normalized_root and normalized.startswith(normalized_root + "/"):
+        return normalized[len(normalized_root) + 1:]
+    return normalized
+
+
+def _demo_bytes(plan: Plan) -> int:
+    """
+    Сколько весят выгрузки .dt во всём плане.
+
+    Цифра заслуживает места в подписи: у исследованных поставок .cf занимает
+    50.5% объёма, .dt — 48.3%, всё остальное 1.2%.
+    """
+    total = 0
+    for item in plan.items:
+        if item.template is None:
+            continue
+        total += sum(
+            entry.size for entry in item.template.entries if not keeps_configuration(entry.path)
         )
+    return total

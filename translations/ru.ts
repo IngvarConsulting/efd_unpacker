@@ -9,41 +9,14 @@
         <translation>EFD Unpacker</translation>
     </message>
     <message>
-        <location filename="../ui.py" line="40"/>
-        <location filename="../ui.py" line="207"/>
-        <location filename="../ui.py" line="241"/>
-        <source>Drag .efd file here or click to choose</source>
-        <translation>Перетащите .efd файл сюда или нажмите для выбора</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="47"/>
-        <source>Reset to Default</source>
-        <translation>Восстановить по-умолчанию</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="52"/>
-        <source>Select Folder</source>
-        <translation>Выбрать папку</translation>
-    </message>
-    <message>
         <location filename="../ui.py" line="53"/>
         <source>Unpack</source>
         <translation>Распаковать</translation>
     </message>
     <message>
-        <location filename="../ui.py" line="79"/>
-        <source>Retry</source>
-        <translation>Повторить</translation>
-    </message>
-    <message>
         <location filename="../ui.py" line="83"/>
         <source>Open Folder</source>
         <translation>Открыть папку</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="86"/>
-        <source>Close</source>
-        <translation>Закрыть</translation>
     </message>
     <message>
         <location filename="../ui.py" line="238"/>
@@ -54,11 +27,6 @@
         <location filename="../ui.py" line="0"/>
         <source>Unpacking is not finished. Stop it and close the window?</source>
         <translation>Распаковка ещё идёт. Остановить её и закрыть окно?</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="0"/>
-        <source>Drop file to upload</source>
-        <translation>Отпустите файл для загрузки</translation>
     </message>
     <message>
         <location filename="../ui.py" line="246"/>
@@ -74,23 +42,52 @@
         <translation>Выбрать папку для распаковки</translation>
     </message>
     <message>
-        <location filename="../ui.py" line="273"/>
-        <source>EFD Files (*.efd)</source>
-        <translation>Файл EFD (*.efd)</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="273"/>
-        <source>Select .efd file</source>
-        <translation>Выбрать .efd файл</translation>
-    </message>
-    <message>
-        <location filename="../ui.py" line="279"/>
-        <source>No .efd file selected</source>
-        <translation>Не выбран файл .efd</translation>
-    </message>
-    <message>
         <source>Could not open the folder</source>
         <translation>Не удалось открыть папку</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Change folders…</source>
+        <translation>Сменить папки…</translation>
+    </message>
+    <message>
+        <source>Drag files here or click to choose</source>
+        <translation>Перетащите файлы сюда или нажмите для выбора</translation>
+    </message>
+    <message>
+        <source>Drop files to inspect</source>
+        <translation>Отпустите файлы для осмотра</translation>
+    </message>
+    <message>
+        <source>Inspecting…</source>
+        <translation>Осмотр…</translation>
+    </message>
+    <message>
+        <source>Select files</source>
+        <translation>Выбрать файлы</translation>
+    </message>
+    <message>
+        <source>Supply and distribution files (*.efd *.zip *.rar *.dmg *.tar *.gz *.bz2 *.xz)</source>
+        <translation>Поставки и дистрибутивы (*.efd *.zip *.rar *.dmg *.tar *.gz *.bz2 *.xz)</translation>
+    </message>
+    <message>
+        <source>Without demo databases</source>
+        <translation>Без демобаз</translation>
+    </message>
+    <message>
+        <source>saves %s</source>
+        <translation>на %s меньше</translation>
+    </message>
+    <message>
+        <source>templates</source>
+        <translation>шаблоны</translation>
+    </message>
+    <message>
+        <source>distributions</source>
+        <translation>дистрибутивы</translation>
     </message>
 </context>
 <context>
@@ -289,6 +286,22 @@
 </context>
 <context>
     <name>Report</name>
+    <message>
+        <source>name</source>
+        <translation>наименование</translation>
+    </message>
+    <message>
+        <source>version</source>
+        <translation>версия</translation>
+    </message>
+    <message>
+        <source>size</source>
+        <translation>размер</translation>
+    </message>
+    <message>
+        <source>where</source>
+        <translation>куда</translation>
+    </message>
     <message>
         <source>paths:</source>
         <translation>пути:</translation>
