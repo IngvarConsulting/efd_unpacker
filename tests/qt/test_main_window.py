@@ -1217,7 +1217,7 @@ def test_finished_supply_row_says_what_appears_in_1c(qtbot):
     assert "In 1C it will appear as:" in row.texts()[1]
     # Полное название — в подсказке: в строку оно влезает не всегда, а узнать
     # его целиком человек должен без распаковки заново.
-    assert row.label_detail.toolTip() == "1С:Комплексная автоматизация 2 → КА 2"
+    assert "1С:Комплексная автоматизация 2 → КА 2" in row.label_detail.toolTip()
 
     # Начало названия видно и в укороченной строке: узнать продукт по нему
     # можно, а дочитать до конца — в подсказке.
@@ -1285,7 +1285,21 @@ def test_markup_in_a_configuration_name_is_not_rendered(qtbot):
     qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
 
     # Видимый текст, а не исходник: разметка проверяется тем, что показано.
-    assert name in _rendered(window.rows[0].label_detail)
+    label = window.rows[0].label_detail
+    assert name in _rendered(label)
+    # И в подсказке тоже: у неё нет режима «только текст», Qt решает сам —
+    # и голый «<img>» превратился бы в попытку нарисовать картинку ровно там,
+    # где обещано полное название.
+    assert name in _tooltip_text(label)
+
+
+def _tooltip_text(widget) -> str:
+    """Что человек увидит в подсказке, а не что ей передали."""
+    from PyQt5.QtGui import QTextDocument
+
+    document = QTextDocument()
+    document.setHtml(widget.toolTip())
+    return document.toPlainText()
 
 
 def _rendered(label) -> str:
@@ -1423,4 +1437,20 @@ def test_long_configuration_name_is_shortened_with_an_ellipsis(qtbot):
     label = window.rows[0].label_detail
     label.resize(400, label.height())
     assert "…" in label.text()
-    assert label.toolTip().startswith("Демонстрационные конфигурации мобильного приложения")
+    assert "Демонстрационные конфигурации мобильного приложения" in label.toolTip()
+
+
+def test_markup_in_a_supply_name_is_not_rendered_in_the_tooltip(qtbot):
+    """
+    Наименование поставки тоже из чужого файла, и тоже уходит в подсказку.
+
+    У знака состояния она называет строку целиком — и «<b>» в наименовании
+    превращало бы её в жирный шрифт, а «<img>» — в попытку нарисовать
+    картинку.
+    """
+    name = "<img src=x> Бухгалтерия <b>КОРП"
+    window = make_window(qtbot, plan=Plan(items=(item(title=name),)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert name in _tooltip_text(window.rows[0].mark)

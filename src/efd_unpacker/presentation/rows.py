@@ -118,6 +118,23 @@ class Mark(QAbstractButton):
         painter.drawPath(path)
 
 
+def literal_tooltip(*lines: str) -> str:
+    """
+    Подсказка, которая показывает текст буквально.
+
+    Qt решает сам, считать ли подсказку разметкой: у неё нет режима «только
+    текст», а Qt.mightBeRichText() отвечает «да» на любой текст с угловой
+    скобкой. Название конфигурации и наименование поставки приходят из чужих
+    файлов, и «<b>» в них превращало подсказку в жирный шрифт, а «<img>» —
+    в попытку нарисовать картинку. Ровно там, где обещано полное название.
+
+    Поэтому решаем за Qt: экранируем и оборачиваем в <qt>. Разметкой подсказка
+    будет всегда, но своей — и покажет ровно то, что в файле.
+    """
+    body = "<br>".join(html.escape(line) for line in lines if line)
+    return "<qt>%s</qt>" % body if body else ""
+
+
 def _font(mono: bool, size: int) -> QFont:
     """QFont из тех же гарнитур, что и таблица стилей, но с точным размером."""
     font = QFont()
@@ -167,7 +184,7 @@ class DetailLabel(QLabel):
         self.setTextFormat(Qt.RichText)
         # Целиком — в подсказке: в строку название влезает не всегда, а узнать
         # его полностью человек должен без распаковки заново.
-        self.setToolTip("\n".join(values))
+        self.setToolTip(literal_tooltip(*values))
         self._draw()
 
     def resizeEvent(self, event) -> None:
@@ -212,7 +229,9 @@ class PlanRow(QWidget):
 
         self.mark = Mark(state)
         self.mark.setAccessibleName(title)
-        self.mark.setToolTip(title)
+        # Наименование приходит из поставки, то есть из чужого файла: в голой
+        # подсказке Qt приняло бы его за разметку.
+        self.mark.setToolTip(literal_tooltip(title))
         self.mark.clicked.connect(self._toggle)
 
         self.label_title = QLabel(title)
