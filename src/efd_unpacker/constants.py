@@ -41,7 +41,10 @@ class Styles:
 class CLICommands:
     """Команды командной строки"""
     UNPACK = "unpack"
+    INFO = "info"
     OUTPUT_FLAG = "-tmplts"
+    DIST_FLAG = "-dist"
+    JSON_FLAG = "--json"
     HELP_FLAGS = ("--help", "-h")
     # Код 2 для ошибки синтаксиса — соглашение getopt и argparse; 1 остаётся
     # за содержательным отказом (файл не найден, архив повреждён).

@@ -21,7 +21,7 @@ import zlib
 import io
 from dataclasses import dataclass
 from struct import unpack
-from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
+from typing import BinaryIO, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .errors import UnpackError, UnpackErrorCode
 
@@ -48,6 +48,12 @@ CATALOG_PREFIX_LIMIT = 8 * 1024 * 1024
 
 # Порция, которую zlib отдаёт за один вызов: удерживает пиковую память.
 CATALOG_CHUNK = 1024 * 1024
+
+# Шаг разжатия, после которого делается попытка разобрать оглавление.
+# Мелкий намеренно: у всех исследованных поставок оглавление укладывается в
+# первые килобайты, поэтому типичный файл разбирается за одну порцию. Раньше
+# разжималось сразу CATALOG_PREFIX_LIMIT — на 22 архивах это 72 МиБ вместо 30 КиБ.
+CATALOG_STEP = 64 * 1024
 
 # Каталог версии записан с подчёркиваниями вместо точек — тоже требование
 # стандарта. Обратное преобразование делаем только для того, что на версию похоже.
@@ -161,7 +167,19 @@ class _StrictReader:
 
     def wide_string(self, errors: str = "strict") -> str:
         length = self.uint32()
-        return self.read(length * 2).decode("utf-16", errors)
+        raw = self.read(length * 2)
+        try:
+            return raw.decode("utf-16", errors)
+        except UnicodeDecodeError as exc:
+            # Наружу должен уходить код домена, а не UnicodeDecodeError:
+            # осмотр ловит доменные ошибки и превращает их в строку плана,
+            # а голый UnicodeDecodeError обрывал осмотр всех остальных файлов.
+            # Длина строки известна заранее, поэтому обрезанная на границе
+            # порции запись даёт truncated_header, а не этот отказ.
+            raise UnpackError(
+                UnpackErrorCode.CORRUPTED_ARCHIVE,
+                {"reason": "broken_entry_name", "error": str(exc)},
+            ) from exc
 
 
 def parse_catalog(stream: BinaryIO) -> Catalog:
@@ -241,7 +259,12 @@ def group_templates(entries: Sequence[Entry]) -> Tuple[Template, ...]:
         roots = {_common_directory(entries)}
     roots.discard(())
 
-    grouped: Dict[Tuple[str, ...], List[Entry]] = {root: [] for root in roots}
+    # sorted, а не просто roots: множество обходится в порядке хешей, а они
+    # солятся при каждом запуске. Порядок шаблонов уезжал бы от запуска к
+    # запуску — проверено на demo.zip при разных PYTHONHASHSEED. Для --json и
+    # для сравнения выводов в CI это означало бы разный ответ на один и тот же
+    # файл.
+    grouped: Dict[Tuple[str, ...], List[Entry]] = {root: [] for root in sorted(roots)}
     for entry in entries:
         root = _longest_root(roots, entry.parts)
         if root is not None:
@@ -342,25 +365,37 @@ def read_catalog(handle: BinaryIO, limit: int = CATALOG_PREFIX_LIMIT) -> Catalog
     Именно это делает осмотр дешёвым: пятнадцать дистрибутивов общим весом
     19 ГБ разбираются за доли секунды, и на диск не попадает ни байта.
     """
-    prefix, stream_ended = _inflate_prefix(handle, limit)
-    try:
-        return parse_catalog(io.BytesIO(prefix))
-    except UnpackError as exc:
-        truncated = (exc.details or {}).get("reason") == "truncated_header"
-        if truncated and not stream_ended:
-            # Данных не хватило не потому, что архив обрезан, а потому что мы
-            # сами остановились. Путать эти два случая нельзя: первый — порча
-            # файла, второй — наш предел.
-            raise UnpackError(
-                UnpackErrorCode.CORRUPTED_ARCHIVE,
-                {"reason": "catalog_too_large", "limit": limit},
-            ) from exc
-        raise
+    last_error: Optional[UnpackError] = None
+    for prefix, stream_ended in _inflate_steps(handle, limit):
+        try:
+            return parse_catalog(io.BytesIO(prefix))
+        except UnpackError as exc:
+            truncated = (exc.details or {}).get("reason") == "truncated_header"
+            if not truncated or stream_ended:
+                # Оглавление обрезано по-настоящему: данные кончились, а его
+                # всё нет. Либо отказ вовсе не про нехватку данных.
+                raise
+            last_error = exc  # мало данных — берём следующую порцию
+
+    # Данных не хватило не потому, что архив обрезан, а потому что мы сами
+    # остановились. Путать эти два случая нельзя: первый — порча файла,
+    # второй — наш предел.
+    raise UnpackError(
+        UnpackErrorCode.CORRUPTED_ARCHIVE,
+        {"reason": "catalog_too_large", "limit": limit},
+    ) from last_error
 
 
-def _inflate_prefix(handle: BinaryIO, limit: int) -> Tuple[bytes, bool]:
+def _inflate_steps(handle: BinaryIO, limit: int) -> Iterator[Tuple[bytes, bool]]:
     """
-    Разжимает начало потока. Возвращает данные и признак «поток кончился».
+    Разжимает поток порциями, отдавая накопленное после каждой.
+
+    Порциями, а не разом до предела: разбор пробуется на каждом шаге, и для
+    обычной поставки всё заканчивается на первой порции. Второе значение —
+    «поток кончился», и оно отличает обрезанный архив от нашей остановки.
+
+    Разжатое ограничено max_length у decompress: без него килобайт входных
+    данных мог бы развернуться в гигабайт.
 
     Отказ zlib переводится в доменную ошибку: наружу должен уходить код
     CORRUPTED_ARCHIVE, а не деталь реализации. Иначе осмотр падал бы
@@ -368,25 +403,28 @@ def _inflate_prefix(handle: BinaryIO, limit: int) -> Tuple[bytes, bool]:
     """
     decompressor = zlib.decompressobj(-15)
     out = bytearray()
+    source_ended = False
 
     try:
         while len(out) < limit:
-            chunk = handle.read(CATALOG_CHUNK)
-            if not chunk:
-                return bytes(out), True
-            data = decompressor.decompress(chunk, limit - len(out))
-            while data:
-                out += data
+            target = min(len(out) + CATALOG_STEP, limit)
+            while len(out) < target and not decompressor.eof:
                 tail = decompressor.unconsumed_tail
-                if not tail or len(out) >= limit:
+                if tail:
+                    out += decompressor.decompress(tail, target - len(out))
+                    continue
+                chunk = handle.read(CATALOG_CHUNK)
+                if not chunk:
+                    source_ended = True
                     break
-                data = decompressor.decompress(tail, limit - len(out))
-            if decompressor.eof:
-                return bytes(out), True
+                out += decompressor.decompress(chunk, target - len(out))
+
+            ended = decompressor.eof or (source_ended and not decompressor.unconsumed_tail)
+            yield bytes(out), ended
+            if ended:
+                return
     except zlib.error as exc:
         raise UnpackError(
             UnpackErrorCode.CORRUPTED_ARCHIVE,
             {"reason": "broken_stream", "error": str(exc)},
         ) from exc
-
-    return bytes(out), False

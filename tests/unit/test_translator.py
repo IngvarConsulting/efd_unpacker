@@ -10,6 +10,8 @@ from efd_unpacker.application.messages import (
     format_unpack_result,
     format_validation_error,
 )
+from efd_unpacker.application.report import format_plan
+from efd_unpacker.domain.plan import Action, ItemKind, Plan, PlannedItem, SkipReason
 from efd_unpacker.domain.errors import (
     FileValidationCode,
     FileValidationError,
@@ -77,6 +79,7 @@ def _source_keys():
             keys.add((context, source))
 
     keys |= _message_layer_keys()
+    keys |= _report_layer_keys()
     return keys
 
 
@@ -106,6 +109,41 @@ def _message_layer_keys():
             success=False,
             error=UnpackError(UnpackErrorCode.CORRUPTED_ARCHIVE, {"reason": reason}),
         )
+    return recorder.asked
+
+
+def _report_layer_keys():
+    """
+    Всё, что report.py способен спросить.
+
+    Ключи там лежат в таблицах по членам enum, а не в литеральных вызовах, и
+    регулярка их не видит. Поэтому план собирается из всех видов, всех причин
+    пропуска и отказа, и прогоняется через записывающий переводчик — новый член
+    enum без перевода упадёт здесь, а не у пользователя.
+    """
+    recorder = RecordingTranslator()
+    items = [
+        PlannedItem(
+            kind=kind, title="t", version="1", source=("a",),
+            destination="/root/sub/%s" % kind.value, bytes_total=1, action=Action.WRITE,
+        )
+        for kind in ItemKind
+    ]
+    items += [
+        PlannedItem(
+            kind=ItemKind.OTHER, title="t", version="", source=("a",),
+            destination="", bytes_total=0, action=Action.SKIP, reason=reason,
+        )
+        for reason in SkipReason
+    ]
+    items.append(
+        PlannedItem(
+            kind=ItemKind.OTHER, title="t", version="", source=("a",),
+            destination="", bytes_total=0, action=Action.FAIL,
+            failure=UnpackError(UnpackErrorCode.UNEXPECTED, {"error": "x"}),
+        )
+    )
+    format_plan(recorder, Plan(items=tuple(items)), source_count=1, elapsed=0.0)
     return recorder.asked
 
 
