@@ -15,6 +15,7 @@ import zipfile
 import pytest
 
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
+from efd_unpacker.infrastructure import containers
 from efd_unpacker.infrastructure.containers import (
     MAX_DEPTH,
     Leaf,
@@ -355,13 +356,18 @@ def test_tar_duplicate_names_keep_their_own_content(tmp_path):
     assert read == [b"FIRST", b"SECOND-LONGER"]
 
 
-def test_descriptors_are_released_without_waiting_for_the_collector(tmp_path):
+def test_descriptors_are_released_without_waiting_for_the_collector(tmp_path, monkeypatch):
     """
     Регресс: каждый вложенный архив держал дескриптор до сборки мусора.
 
     Измерено на 120 вложенных архивах: 5 дескрипторов превращались в 245.
     zipfile не закрывает переданный ему поток, а подмена handle.close
     замыканием создавала ссылочный цикл.
+
+    Считаем не дескрипторы процесса, а сами потоки: каталога /dev/fd нет на
+    Windows, а незакрытый поток одинаково виден везде. Модуль зовёт open по
+    глобальному имени, поэтому подмена атрибута модуля перехватывает все
+    открытия, включая те, что делают повторные вызовы opener.
     """
     inner = _zip_bytes([("payload.txt", b"x")])
     path = _write(
@@ -369,19 +375,31 @@ def test_descriptors_are_released_without_waiting_for_the_collector(tmp_path):
         _zip_bytes([("nested%03d.zip" % index, inner) for index in range(120)]),
     )
 
+    opened = []
+    real_open = open
+
+    def tracking_open(*args, **kwargs):
+        handle = real_open(*args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(containers, "open", tracking_open, raising=False)
+
     gc.disable()
     try:
-        before = len(os.listdir("/dev/fd"))
         leaves = list(walk(path))
         for leaf in leaves:
             with leaf.opener() as handle:
                 handle.read()
-        after = len(os.listdir("/dev/fd"))
+        unclosed = [handle for handle in opened if not handle.closed]
     finally:
         gc.enable()
+        for handle in opened:
+            handle.close()
 
     assert len(leaves) == 120
-    assert after == before, "дескрипторы держатся до сборки мусора"
+    assert opened, "подмена open не сработала — счётчик ничего не видел"
+    assert not unclosed, "дескрипторы держатся до сборки мусора"
 
 
 @pytest.mark.skipif(not dmg_supported(), reason="hdiutil есть только на macOS")
