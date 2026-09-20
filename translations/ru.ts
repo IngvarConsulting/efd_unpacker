@@ -95,7 +95,7 @@
     </message>
     <message>
         <source>for templates</source>
-        <translation>для шаблонов,</translation>
+        <translation>для шаблонов</translation>
     </message>
     <message>
         <source>for distributions</source>

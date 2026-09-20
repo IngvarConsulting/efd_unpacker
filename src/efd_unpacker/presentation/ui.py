@@ -482,12 +482,32 @@ class MainWindow(QMainWindow):
         self.body.setCurrentIndex(1 if self.rows else 0)
         self.summary.setVisible(bool(self.rows))
 
+    def _mark_key(self, item: PlannedItem) -> Tuple:
+        """
+        Ключ снятой отметки, различающий одинаковые строки.
+
+        Один файл, брошенный дважды, даёт два совпадающих по полям элемента.
+        Ключа по полям мало: снятая отметка у второго переезжала на первый при
+        пересборке плана, и снятыми оказывались обе строки.
+
+        Номер вхождения считается в порядке плана — том же, в каком строки
+        стоят на экране.
+        """
+        key = _key(item)
+        occurrence = 0
+        for other in self._plan.items:
+            if other is item:
+                break
+            if _key(other) == key:
+                occurrence += 1
+        return (key, occurrence)
+
     def _initial_state(self, item: PlannedItem) -> str:
         if item.action is Action.FAIL:
             return rows.FAILED
         if item.action is Action.SKIP:
             return rows.UNAVAILABLE
-        return rows.UNCHECKED if _key(item) in self._unchecked else rows.PENDING
+        return rows.UNCHECKED if self._mark_key(item) in self._unchecked else rows.PENDING
 
     def _detail(self, item: PlannedItem) -> str:
         """Нижний ярус: куда поедет или почему не поедет."""
@@ -518,7 +538,7 @@ class MainWindow(QMainWindow):
             row = self._row_of.get(id(item))
             if row is not None and row.state() == rows.PENDING:
                 row.set_state(rows.UNCHECKED)
-                self._unchecked.add(_key(item))
+                self._unchecked.add(self._mark_key(item))
         self._refresh()
 
     def _clear_list(self) -> None:
@@ -551,9 +571,9 @@ class MainWindow(QMainWindow):
             if row is None:
                 continue
             if row.state() == rows.UNCHECKED:
-                self._unchecked.add(_key(item))
+                self._unchecked.add(self._mark_key(item))
             elif row.state() == rows.PENDING:
-                self._unchecked.discard(_key(item))
+                self._unchecked.discard(self._mark_key(item))
 
     def _counts_text(self) -> str:
         kinds = {kind: 0 for kind in ItemKind}
@@ -589,8 +609,8 @@ class MainWindow(QMainWindow):
     def _refresh_footer(self) -> None:
         templates = self.settings_service.get_output_path()
         distributions = self.settings_service.get_distributions_path()
-        shared = os.path.dirname(templates.rstrip("/\\")) or templates
-        if not distributions.startswith(shared):
+        shared = os.path.dirname(os.path.normpath(templates)) or templates
+        if not _inside(distributions, shared):
             # Каталоги развели вручную — общего корня нет, показываем оба.
             self.label_root.setText(templates)
             self.label_inside.setText(distributions)
@@ -768,6 +788,10 @@ class MainWindow(QMainWindow):
             )
         elif result.cancelled:
             self.label_status.setText(self._t("MainWindow", "stopped"))
+        else:
+            # Ничего не записано и не отменяли — значит всё отказало. Остаток
+            # времени от последнего элемента здесь врёт: работы больше нет.
+            self.label_status.setText("")
         self._refresh()
 
     def _forget_batch_thread(self) -> None:
@@ -877,6 +901,22 @@ def _minutes(translator: Translator, seconds: float) -> str:
     if seconds < 60:
         return "%d %s" % (max(int(seconds), 1), translator.translate("MainWindow", "sec"))
     return "%d %s" % (round(seconds / 60), translator.translate("MainWindow", "min"))
+
+
+def _inside(path: str, root: str) -> bool:
+    """
+    Лежит ли путь внутри корня. По частям пути, а не по префиксу строки.
+
+    startswith считает «/tmp/dist» лежащим внутри «/t»: ровно та ошибка, от
+    которой уходили в resolve_entry_path, и здесь она повторилась.
+    """
+    try:
+        return os.path.commonpath(
+            [os.path.normpath(root), os.path.normpath(path)]
+        ) == os.path.normpath(root)
+    except ValueError:
+        # Разные диски на Windows или смесь абсолютного и относительного пути.
+        return False
 
 
 def _relative_to(destination: str, root: str) -> str:

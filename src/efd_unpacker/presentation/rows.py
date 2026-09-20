@@ -15,7 +15,15 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QRectF, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QAbstractButton,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import style
 
@@ -29,27 +37,34 @@ DONE = "done"
 FAILED = "failed"
 
 
-class Mark(QWidget):
-    """Знак состояния 16×16."""
+class Mark(QAbstractButton):
+    """
+    Знак состояния 16×16.
 
-    clicked = pyqtSignal()
+    Кнопка, а не голый виджет: от QAbstractButton достаются фокус, пробел и
+    Enter, и имя для средств доступности. Мышью-то щёлкнуть можно и по
+    виджету, а вот с клавиатуры строку было не отметить вовсе.
+
+    Недоступные состояния гасятся: выключенная кнопка не берёт фокус и не
+    срабатывает, так что «уже установлено» и отказ не переключить ни мышью,
+    ни клавишей.
+    """
 
     def __init__(self, state: str = PENDING) -> None:
         super().__init__()
         self._state = state
         self.setFixedSize(style.MARK_SIZE, style.MARK_SIZE)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setEnabled(state in (PENDING, UNCHECKED))
 
     def set_state(self, state: str) -> None:
         if state != self._state:
             self._state = state
+            self.setEnabled(state in (PENDING, UNCHECKED))
             self.update()
 
     def state(self) -> str:
         return self._state
-
-    def mousePressEvent(self, event) -> None:
-        if self._state in (PENDING, UNCHECKED):
-            self.clicked.emit()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -111,6 +126,8 @@ class PlanRow(QWidget):
         self._state = state
 
         self.mark = Mark(state)
+        self.mark.setAccessibleName(title)
+        self.mark.setToolTip(title)
         self.mark.clicked.connect(self._toggle)
 
         self.label_title = QLabel(title)

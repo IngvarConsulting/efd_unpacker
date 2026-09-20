@@ -678,3 +678,194 @@ def test_batch_failure_does_not_rewrite_finished_outcomes(qtbot):
 
     assert window.rows[0].mark.state() == row_widgets.DONE, "записанное объявлено отказом"
     assert window.rows[1].mark.state() == row_widgets.FAILED
+
+
+# --- находки обзора оформления ----------------------------------------------
+
+
+def test_mark_is_reachable_from_the_keyboard(qtbot):
+    """
+    Строку надо уметь отметить без мыши.
+
+    Голый виджет со щелчком по mousePressEvent не брал фокус и не отвечал на
+    пробел — отметить строку с клавиатуры было нельзя вовсе.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    mark = window.rows[0].mark
+
+    assert mark.focusPolicy() != Qt.NoFocus, "знак не берёт фокус"
+    assert mark.accessibleName(), "у знака нет имени для средств доступности"
+
+    mark.click()  # то же, что пробел или Enter на кнопке
+    assert mark.state() == row_widgets.UNCHECKED
+
+
+def test_unavailable_mark_cannot_be_toggled(qtbot):
+    """«Уже установлено» не переключить ни мышью, ни клавишей."""
+    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    mark = window.rows[0].mark
+    assert not mark.isEnabled()
+    mark.click()
+    assert mark.state() == row_widgets.UNAVAILABLE
+
+
+def test_duplicate_rows_keep_their_own_marks(qtbot):
+    """
+    Один файл, брошенный дважды, даёт совпадающие по полям элементы.
+
+    Ключа по полям мало: снятая отметка у второго переезжала на первый при
+    пересборке плана, и снятыми оказывались обе строки.
+    """
+    first, second = item(title="A"), item(title="A")
+    window = make_window(qtbot, plan=Plan(items=(first, second)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.rows[1].mark.click()
+    assert [row.mark.state() for row in window.rows] == [
+        row_widgets.PENDING, row_widgets.UNCHECKED,
+    ]
+
+    window._rebuild_plan()
+
+    assert [row.mark.state() for row in window.rows] == [
+        row_widgets.PENDING, row_widgets.UNCHECKED,
+    ], "снятая отметка переехала на соседнюю строку"
+
+
+def test_unrelated_roots_are_not_shown_as_one(qtbot):
+    """
+    Вложенность каталогов считается по частям пути.
+
+    startswith считает «/tmp/dist» лежащим внутри «/t» — ровно та ошибка, от
+    которой уходили в resolve_entry_path.
+    """
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "t", "tmplts")
+    settings.distributions = os.path.join(os.sep, "tmp", "dist")
+    window = make_window(qtbot, settings=settings)
+
+    assert window.label_root.text() == settings.templates
+    assert window.label_inside.text() == settings.distributions
+
+
+def test_footer_names_both_folders_under_a_shared_root(qtbot):
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "home", "u", "1cv8", "tmplts")
+    settings.distributions = os.path.join(os.sep, "home", "u", "1cv8", "dist")
+    window = make_window(qtbot, settings=settings)
+
+    assert window.label_root.text() == os.path.join(os.sep, "home", "u", "1cv8")
+    assert ",," not in window.label_inside.text(), "запятая задвоилась"
+    assert window.label_inside.text().count(",") == 1, window.label_inside.text()
+    assert "tmplts" in window.label_inside.text()
+    assert "dist" in window.label_inside.text()
+
+
+def test_status_is_cleared_when_nothing_was_written(qtbot):
+    """
+    Батч, в котором всё отказало, не должен оставлять счёт оставшегося времени.
+
+    Элемент успевает сообщить о части байт и упасть — остаток времени от него
+    врёт: работы больше нет.
+    """
+    planned = item()
+
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(planned))
+        sink(ItemFailed(planned, UnpackError(UnpackErrorCode.PERMISSION)))
+        return BatchResult(failed=((planned, UnpackError(UnpackErrorCode.PERMISSION)),))
+
+    window = make_window(qtbot, plan=Plan(items=(planned,)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.label_status.setText("осталось ≈ 4 мин")
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.label_status.text() == "", "в шапке остался счёт времени"
+
+
+def test_finished_row_cannot_be_toggled_back(qtbot):
+    """
+    Готовую строку не переключить.
+
+    Знак гасится не только при создании, но и при смене состояния: иначе
+    после распаковки по нему можно было щёлкнуть и снять отметку с того, что
+    уже лежит на диске.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    mark = window.rows[0].mark
+    assert mark.state() == row_widgets.DONE
+    assert not mark.isEnabled(), "готовую строку можно переключить"
+
+
+def test_partial_progress_before_a_failure_does_not_leave_an_eta(qtbot):
+    """
+    Элемент успел сообщить часть байт и упал.
+
+    Остаток времени считается от записанного, и после отказа он врёт: работы
+    больше нет. Без части байт этот случай не воспроизводится — ноль
+    записанного и так очищает строку состояния.
+    """
+    planned = item()
+    failure = UnpackError(UnpackErrorCode.PERMISSION)
+
+    def batch(current, sink, _supply, _other, _cancel):
+        sink(ItemStarted(planned))
+        window._item_bytes(planned, planned.bytes_total // 2, "1cv8.cf")
+        sink(ItemFailed(planned, failure))
+        return BatchResult(failed=((planned, failure),))
+
+    window = make_window(qtbot, plan=Plan(items=(planned,)), batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.label_status.text() == "", "в шапке остался счёт времени"
+
+
+def test_russian_footer_reads_as_one_sentence(qtbot):
+    """
+    Подвал проверяется на настоящем каталоге переводов, а не на заглушке.
+
+    Пунктуация живёт в строке формата, но перевод может принести свою: так и
+    вышло — «для шаблонов,» плюс запятая формата давали «для шаблонов,,».
+    С подставным переводчиком этого не видно, потому что он отдаёт исходную
+    строку без запятой.
+    """
+    from efd_unpacker.localization.translator import Translator
+
+    settings = DummySettings()
+    settings.templates = os.path.join(os.sep, "home", "u", "1cv8", "tmplts")
+    settings.distributions = os.path.join(os.sep, "home", "u", "1cv8", "dist")
+    window = MainWindow(
+        translator=Translator(lang="ru"),
+        settings_service=settings,
+        file_validator=DummyValidator(),
+        unpack_service=DummyUnpackService(),
+        inspect_files=lambda paths: [],
+        build=lambda _i, _s: Plan(),
+        batch=lambda *args, **kwargs: BatchResult(),
+        make_writers=lambda *args, **kwargs: _Writers(),
+    )
+    qtbot.addWidget(window)
+
+    text = window.label_inside.text()
+    assert text.count(",") == 1, text
+    assert "шаблонов" in text and "дистрибутивов" in text
