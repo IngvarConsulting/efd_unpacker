@@ -327,7 +327,10 @@ def test_open_folder_swallows_launcher_failure(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "templates_root, expected",
     [
-        (os.path.join("/a", "b", "tmplts"), os.path.join("/a", "b", "dist")),
+        # Ожидания через normpath: функция возвращает канонический путь, то есть
+        # с разделителями системы. На Windows "/a/b" превращается в "\\a\\b", и
+        # собранное вручную ожидание из смеси разделителей сравнивало бы не то.
+        (os.path.join("/a", "b", "tmplts"), os.path.normpath("/a/b/dist")),
         # normpath убирает «./» — путь тот же, запись короче.
         (os.path.join(".", "tmplts"), "dist"),
         # Корень файловой системы: без normpath получался относительный «dist».

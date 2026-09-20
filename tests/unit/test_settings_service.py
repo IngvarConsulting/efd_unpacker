@@ -147,10 +147,10 @@ def test_distributions_follow_the_templates_root(tmp_path, monkeypatch):
     service = _service(tmp_path, monkeypatch)
 
     service.set_output_path("/srv/1c/tmplts")
-    assert service.get_distributions_path() == os.path.join("/srv/1c", "dist")
+    assert service.get_distributions_path() == os.path.normpath("/srv/1c/dist")
 
     service.set_output_path("/mnt/other/tmplts")
-    assert service.get_distributions_path() == os.path.join("/mnt/other", "dist")
+    assert service.get_distributions_path() == os.path.normpath("/mnt/other/dist")
 
 
 def test_explicit_distributions_root_stops_following(tmp_path, monkeypatch):
@@ -178,13 +178,14 @@ def test_clearing_the_explicit_root_returns_to_following(tmp_path, monkeypatch):
     service.set_distributions_path("")
 
     assert service.distributions_path_is_explicit() is False
-    assert service.get_distributions_path() == os.path.join("/srv/1c", "dist")
+    assert service.get_distributions_path() == os.path.normpath("/srv/1c/dist")
 
 
 @pytest.mark.parametrize(
     "templates_root, expected",
     [
-        ("/tmplts", os.path.join(os.sep, "dist")),
+        # Ожидания через normpath: путь возвращается каноническим.
+        ("/tmplts", os.path.normpath("/dist")),
         (os.path.join(os.sep, "srv", "шаблоны"), os.path.join(os.sep, "srv", "dist")),
         (os.sep, os.path.join(os.sep, "dist")),
     ],
@@ -212,7 +213,7 @@ def test_non_string_distributions_setting_falls_back_to_the_computed_one(tmp_pat
     )
     assert not isinstance(service.settings.value("dist_path"), str), "иначе тест проверяет не то"
 
-    assert service.get_distributions_path() == os.path.join("/srv/1c", "dist")
+    assert service.get_distributions_path() == os.path.normpath("/srv/1c/dist")
     assert service.distributions_path_is_explicit() is False
 
 
@@ -229,7 +230,7 @@ def test_settings_from_1x_are_read_without_losing_the_output_path(tmp_path, monk
 
     assert service.settings.value("settings_version") is None, "иначе это не настройки 1.x"
     assert service.get_output_path() == "/Volumes/Share/tmplts"
-    assert service.get_distributions_path() == os.path.join("/Volumes/Share", "dist")
+    assert service.get_distributions_path() == os.path.normpath("/Volumes/Share/dist")
 
 
 def test_fresh_profile_does_not_claim_a_path_was_used_before(tmp_path, monkeypatch):
