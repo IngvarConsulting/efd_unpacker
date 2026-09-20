@@ -68,8 +68,11 @@ class SettingsService:
     # --- каталог шаблонов ----------------------------------------------------
 
     def get_output_path(self) -> str:
-        default = get_1c_configuration_location_default()
-        return self._string(OUTPUT_KEY, default)
+        return self._stored(OUTPUT_KEY) or get_1c_configuration_location_default()
+
+    def output_path_is_stored(self) -> bool:
+        """Выбирал ли пользователь каталог шаблонов хоть раз."""
+        return self._stored(OUTPUT_KEY) is not None
 
     def set_output_path(self, path: str) -> None:
         self.settings.setValue(OUTPUT_KEY, path)
@@ -84,8 +87,9 @@ class SettingsService:
         Вычисление при каждом чтении, а не однократная запись: иначе смена
         каталога шаблонов оставила бы дистрибутивы у прежнего соседа.
         """
-        computed = get_distributions_location_default(self.get_output_path())
-        return self._string(DIST_KEY, computed)
+        return self._stored(DIST_KEY) or get_distributions_location_default(
+            self.get_output_path()
+        )
 
     def set_distributions_path(self, path: Optional[str]) -> None:
         """
@@ -102,8 +106,7 @@ class SettingsService:
 
     def distributions_path_is_explicit(self) -> bool:
         """Задан ли каталог дистрибутивов вручную. Окну нужно для подписи."""
-        value = self.settings.value(DIST_KEY, None)
-        return isinstance(value, str) and bool(value)
+        return self._stored(DIST_KEY) is not None
 
     # --- варианты для выбора -------------------------------------------------
 
@@ -132,7 +135,12 @@ class SettingsService:
             os.path.normpath(manual_selected_path) != os.path.normpath(last_used)
         ):
             add(manual_selected_path, ORIGIN_MANUAL)
-        add(last_used, ORIGIN_LAST_USED)
+        if self.output_path_is_stored():
+            # Только когда путь действительно сохранён. На чистом профиле
+            # get_output_path отдаёт вычисленное умолчание, и помечать его как
+            # «использовался прошлый раз» — враньё: им ещё ни разу не
+            # пользовались, а запись про умолчание пропадала как дубль.
+            add(last_used, ORIGIN_LAST_USED)
         for path in get_1c_configuration_location_from_1cestart():
             add(path, ORIGIN_FROM_1CESTART)
         add(get_1c_configuration_location_default(), ORIGIN_DEFAULT)
@@ -148,17 +156,20 @@ class SettingsService:
 
     # --- чтение ---------------------------------------------------------------
 
-    def _string(self, key: str, default: str) -> str:
+    def _stored(self, key: str) -> Optional[str]:
         """
-        Значение ключа, если это непустая строка, иначе умолчание.
+        Сохранённое значение ключа, если это непустая строка, иначе None.
 
         QSettings отдаёт то, что лежит в файле: конфиг, правленный извне,
         миграция или REG_MULTI_SZ дают list, а os.path.normpath дальше роняет
         запуск ещё до window.show() — без окна и без сообщения.
         ','.join тут нельзя: Qt при разборе срезает пробел после запятой,
         и склейка даст молча неверный каталог вместо честного отката.
+
+        None, а не умолчание: вызывающему нужно отличать «не настроено» от
+        «настроено ровно так же, как по умолчанию».
         """
-        value = self.settings.value(key, default)
+        value = self.settings.value(key, None)
         if not isinstance(value, str) or not value:
-            return default
+            return None
         return value

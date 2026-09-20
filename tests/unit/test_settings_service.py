@@ -93,12 +93,12 @@ def test_non_string_setting_falls_back_to_default(tmp_path, monkeypatch):
     service = SettingsService(translator=_DummyTranslator(), settings=settings)
 
     assert service.get_output_path() == "/default/tmplts"
-    # Происхождение именно «использовался прошлый раз»: откат отдаёт тот же
-    # путь, что и умолчание, ветка last_used срабатывает первой и занимает его.
-    # Это существующее поведение разметки, а не следствие отката.
+    # Происхождение именно «по умолчанию»: сохранённого значения нет — оно
+    # отвергнуто как не-строка, — и помечать откат как «использовался прошлый
+    # раз» было бы враньём.
     items = service.get_output_path_items()
     assert [(choice.path, choice.origin) for choice in items] == [
-        ("/default/tmplts", "last_used")
+        ("/default/tmplts", "default")
     ]
 
 
@@ -230,3 +230,33 @@ def test_settings_from_1x_are_read_without_losing_the_output_path(tmp_path, monk
     assert service.settings.value("settings_version") is None, "иначе это не настройки 1.x"
     assert service.get_output_path() == "/Volumes/Share/tmplts"
     assert service.get_distributions_path() == os.path.join("/Volumes/Share", "dist")
+
+
+def test_fresh_profile_does_not_claim_a_path_was_used_before(tmp_path, monkeypatch):
+    """
+    На чистом профиле единственный вариант — «по умолчанию».
+
+    get_output_path отдаёт вычисленное умолчание и когда ничего не сохранено;
+    пометить его как «использовался прошлый раз» значит соврать, а запись про
+    умолчание при этом пропадала как дубль.
+    """
+    service = _service(tmp_path, monkeypatch)
+
+    items = service.get_output_path_items()
+
+    assert [(choice.path, choice.origin) for choice in items] == [
+        ("/default/tmplts", "default")
+    ]
+    assert service.output_path_is_stored() is False
+
+
+def test_saved_path_becomes_the_last_used_one(tmp_path, monkeypatch):
+    service = _service(tmp_path, monkeypatch)
+    service.set_output_path("/Volumes/Share/tmplts")
+
+    items = service.get_output_path_items()
+
+    assert [(choice.path, choice.origin) for choice in items] == [
+        ("/Volumes/Share/tmplts", "last_used"),
+        ("/default/tmplts", "default"),
+    ]
