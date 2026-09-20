@@ -136,6 +136,12 @@ def fake_tool(tmp_path, behaviour="good", name="bsdtar"):
                 prefix=(sys.executable,))
 
 
+def _entry(tool, name):
+    """Запись из оглавления этой программы — ровно то, что получает опенер."""
+    entries = rar.list_entries(tool, "any.rar") or ()
+    return next(item for item in entries if item.name == name)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_discovery(monkeypatch):
     """
@@ -308,7 +314,7 @@ def test_broken_listing_falls_through_to_the_next_tool(tmp_path, monkeypatch):
     good = fake_tool(tmp_path, "good")
     monkeypatch.setattr(rar, "discover", lambda extra=None: (broken, good))
 
-    entries = rar.read_entries("any.rar")
+    _tool, entries = rar.read_entries("any.rar")
 
     assert [entry.name for entry in entries] == [
         "data/a.txt", "data/файл с пробелом.txt", "data/link",
@@ -503,21 +509,34 @@ def test_version_of_a_missing_program_is_empty():
 
 
 def test_extract_entry_uses_the_tool_that_read_the_listing(tmp_path, monkeypatch):
-    good = fake_tool(tmp_path, "good")
-    monkeypatch.setattr(rar, "discover", lambda extra=None: (good,))
+    tool = fake_tool(tmp_path, "good")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
     destination = tmp_path / "one"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "data/a.txt") is True
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "data/a.txt")) is True
     assert (destination / "data" / "a.txt").read_bytes() == b"12345"
     assert not (destination / "data" / "файл с пробелом.txt").exists(), "извлеклось лишнее"
 
 
-def test_extract_entry_reports_failure_when_no_tool_works(tmp_path, monkeypatch):
-    broken = fake_tool(tmp_path, "broken_list", name="badtar")
-    monkeypatch.setattr(rar, "discover", lambda extra=None: (broken,))
+def test_leaf_is_filled_by_the_tool_that_listed_it(tmp_path, monkeypatch):
+    """
+    Лист, созданный по оглавлению одной программы, не наполняется другой.
 
-    assert rar.extract_entry("any.rar", str(tmp_path), "data/a.txt") is False
+    Воспроизведено: первая перечисляла запись как 100 байт и не умела
+    распаковывать, вторая перечисляла её же как 6 байт и умела — лист заявлял
+    100, а отдавал 6. Теперь программа и запись фиксируются при создании листа,
+    и при отказе лист честно отказывает.
+    """
+    listing_only = fake_tool(tmp_path, "list_only", name="listonly")
+    working = fake_tool(tmp_path, "good", name="working")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (listing_only, working))
+    destination = tmp_path / "one"
+    destination.mkdir()
+    entry = _entry(listing_only, "data/a.txt")
+
+    assert rar.extract_entry(listing_only, "any.rar", str(destination), entry) is False
+    assert not list(destination.iterdir()), "вторая программа всё-таки наполнила лист"
 
 
 # --- настройка на весь запуск ------------------------------------------------
@@ -646,29 +665,28 @@ def test_empty_archive_is_not_an_unsupported_format(tmp_path, monkeypatch):
     tool = fake_tool(tmp_path, "empty", name="emptytar")
     monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
 
-    assert rar.read_entries("any.rar") == ()
+    assert rar.read_entries("any.rar")[1] == ()
 
 
 def test_extract_entry_checks_what_the_tool_produced(tmp_path, monkeypatch):
     """
     Код возврата ноль без файла успехом не считается.
 
-    Иначе очередь не дошла бы до следующей программы, а поток записи упал бы
-    голым FileNotFoundError вместо доменного отказа.
+    Иначе поток записи упал бы голым FileNotFoundError вместо доменного отказа.
     """
-    silent = fake_tool(tmp_path, "silent", name="silenttar")
-    monkeypatch.setattr(rar, "discover", lambda extra=None: (silent,))
+    tool = fake_tool(tmp_path, "silent", name="silenttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
 
-    assert rar.extract_entry("any.rar", str(tmp_path), "data/a.txt") is False
+    assert rar.extract_entry(tool, "any.rar", str(tmp_path), _entry(tool, "data/a.txt")) is False
 
 
 def test_extract_entry_refuses_a_short_file(tmp_path, monkeypatch):
-    short = fake_tool(tmp_path, "short", name="shorttar")
-    monkeypatch.setattr(rar, "discover", lambda extra=None: (short,))
+    tool = fake_tool(tmp_path, "short", name="shorttar")
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
     destination = tmp_path / "out"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "data/a.txt") is False
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "data/a.txt")) is False
 
 
 def test_extracted_symlink_is_not_accepted_as_content(tmp_path, monkeypatch):
@@ -685,7 +703,7 @@ def test_extracted_symlink_is_not_accepted_as_content(tmp_path, monkeypatch):
     destination = tmp_path / "out"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "payload.efd")) is False
 
 
 def test_symlink_whose_target_matches_the_declared_size_is_still_refused(tmp_path, monkeypatch):
@@ -705,7 +723,7 @@ def test_symlink_whose_target_matches_the_declared_size_is_still_refused(tmp_pat
     destination = tmp_path / "out"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "payload.efd")) is False
 
 
 def test_regular_file_reached_through_a_symlinked_directory_is_refused(tmp_path, monkeypatch):
@@ -724,7 +742,7 @@ def test_regular_file_reached_through_a_symlinked_directory_is_refused(tmp_path,
     destination = tmp_path / "out"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "data/a.txt") is False
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "data/a.txt")) is False
 
 
 def test_extraction_that_misses_a_file_is_not_accepted(tmp_path, monkeypatch):
@@ -759,4 +777,4 @@ def test_symlink_pointing_inside_the_destination_is_still_refused(tmp_path, monk
     destination = tmp_path / "out"
     destination.mkdir()
 
-    assert rar.extract_entry("any.rar", str(destination), "payload.efd") is False
+    assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "payload.efd")) is False

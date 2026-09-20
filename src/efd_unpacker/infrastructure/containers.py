@@ -128,7 +128,7 @@ def _rar_leaves(path: str, name: str) -> Iterator[Leaf]:
     архиву на каждую запись. Настоящие дистрибутивы плоские — 44 файла
     .msi/.exe/.ini/.cab.
     """
-    entries = rar.read_entries(path)
+    tool, entries = rar.read_entries(path)
     _check_count(len(entries), (name,))
     for entry in entries:
         if entry.link:
@@ -143,13 +143,16 @@ def _rar_leaves(path: str, name: str) -> Iterator[Leaf]:
         yield Leaf(
             trail=(name, entry.name),
             size=entry.size,
-            opener=_rar_opener(path, entry.name),
+            opener=_rar_opener(tool, path, entry),
         )
 
 
-def _rar_opener(archive: str, entry: str) -> Callable[[], BinaryIO]:
+def _rar_opener(tool, archive: str, entry) -> Callable[[], BinaryIO]:
     """
     Поток одной записи: извлекаем её во временный каталог и отдаём файл.
+
+    Программа и запись фиксируются здесь, в момент создания листа: размер в
+    Leaf объявила эта программа, и наполнять лист должна она же.
 
     Каталог удаляется при закрытии потока — тем же механизмом владения, что у
     вложенных архивов, поэтому дескриптор и временные файлы не ждут сборщика.
@@ -158,14 +161,14 @@ def _rar_opener(archive: str, entry: str) -> Callable[[], BinaryIO]:
     def open_entry() -> BinaryIO:
         probe = tempfile.mkdtemp(prefix="efd-rar-entry-")
         try:
-            if not rar.extract_entry(archive, probe, entry):
+            if not rar.extract_entry(tool, archive, probe, entry):
                 raise UnpackError(
                     UnpackErrorCode.CORRUPTED_ARCHIVE,
-                    {"reason": "broken_container", "entry": entry},
+                    {"reason": "broken_container", "entry": entry.name},
                 )
             # extract_entry уже убедился, что это обычный файл внутри probe;
             # открываем ровно тот путь, который он проверил.
-            handle = open(os.path.join(probe, *entry.split("/")), "rb")
+            handle = open(os.path.join(probe, *entry.name.split("/")), "rb")
         except BaseException:
             shutil.rmtree(probe, ignore_errors=True)
             raise

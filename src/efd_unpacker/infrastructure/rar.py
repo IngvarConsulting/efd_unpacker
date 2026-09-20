@@ -237,9 +237,16 @@ def _version(path: str, family: str, prefix: Sequence[str] = ()) -> str:
 # --- оглавление --------------------------------------------------------------
 
 
-def read_entries(archive: str, extra: Optional[str] = None) -> Tuple[RarEntry, ...]:
+def read_entries(
+    archive: str, extra: Optional[str] = None
+) -> Tuple[Tool, Tuple[RarEntry, ...]]:
     """
     Оглавление архива первой программой, которая смогла его прочитать.
+
+    Возвращает и саму программу: размеры записей объявила именно она, и
+    извлекать запись потом должна она же. Иначе лист, созданный по оглавлению
+    одной программы, мог бы наполниться другой — с другим объявленным
+    размером. Воспроизведено: лист заявлял 100 байт и отдавал 6.
 
     Чтение оглавления и есть проверка пригодности: отдельного пробного запуска
     нет, потому что результат нужен в любом случае. На настоящем
@@ -252,7 +259,7 @@ def read_entries(archive: str, extra: Optional[str] = None) -> Tuple[RarEntry, .
     for tool in discover(extra):
         entries = list_entries(tool, archive)
         if entries is not None:
-            return _checked(entries)
+            return tool, _checked(entries)
     raise UnpackError(
         UnpackErrorCode.CONTAINER_UNSUPPORTED,
         {"entry": os.path.basename(archive), "kind": "rar", "hint": install_hint()},
@@ -526,24 +533,19 @@ def install_hint() -> str:
     return _HINTS.get(sys.platform, _HINTS["linux"])
 
 
-def extract_entry(archive: str, destination: str, entry: str) -> bool:
+def extract_entry(tool: Tool, archive: str, destination: str, entry: RarEntry) -> bool:
     """
-    Извлекает одну запись. Программа берётся та же, что прочитала оглавление.
+    Извлекает одну запись той программой, которая её и перечислила.
 
-    Нужна для потока отдельной записи: осмотру хватает имён и размеров, но
-    Leaf обязан уметь открыться, если внутри .rar окажется .efd.
+    Именно ей, без перебора: размер записи объявила она, и проверять результат
+    надо против её же числа. Перебор означал бы, что лист, созданный по
+    оглавлению одной программы, наполняется другой — с другим размером.
+    Резерв здесь не нужен: если перечислившая программа не справилась с
+    распаковкой, лист честно отказывает, а перебор с проверкой всего архива
+    делает extract.
 
     Результат проверяется, а не принимается по коду возврата: программа,
     которая вышла с нулём и ничего не создала, иначе считалась бы успешной,
-    очередь не дошла бы до следующей, а поток упал бы голым FileNotFoundError.
+    а поток падал бы голым FileNotFoundError.
     """
-    for tool in discover():
-        entries = list_entries(tool, archive)
-        if entries is None:
-            continue
-        wanted = next((item for item in _checked(entries) if item.name == entry), None)
-        if wanted is None:
-            continue
-        if _extract_with(tool, archive, destination, entry) and _produced(destination, wanted):
-            return True
-    return False
+    return _extract_with(tool, archive, destination, entry.name) and _produced(destination, entry)

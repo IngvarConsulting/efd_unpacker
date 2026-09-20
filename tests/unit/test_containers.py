@@ -9,6 +9,7 @@ zip с .efd в корне, zip в zip, tar с пакетами внутри.
 import gc
 import io
 import os
+import sys
 import tarfile
 import zipfile
 
@@ -459,6 +460,11 @@ def test_symlink_inside_the_image_is_not_listed_twice(tmp_path):
 # --- .rar через внешнюю программу --------------------------------------------
 
 
+#: Программа, которую «выбрало» оглавление. Реальной здесь не нужно: спуск по
+#: контейнерам только передаёт её опенеру, не запуская.
+_FAKE_TOOL = rar_module.Tool(path="fake", family=rar_module.LIBARCHIVE)
+
+
 def _rar_file(tmp_path, name="tc.rar"):
     """Файл с сигнатурой RAR5. Содержимое неважно — читает его не наш код."""
     return _write(tmp_path, name, b"Rar!\x1a\x07\x01\x00" + b"\x00" * 600)
@@ -466,9 +472,9 @@ def _rar_file(tmp_path, name="tc.rar"):
 
 def test_rar_entries_come_from_the_external_tool(tmp_path, monkeypatch):
     path = _rar_file(tmp_path)
-    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (_FAKE_TOOL, (
         rar_module.RarEntry("setup.exe", 100), rar_module.RarEntry("data/1cv8.msi", 200),
-    ))
+    )))
 
     leaves = list(walk(path))
 
@@ -505,7 +511,7 @@ def test_rar_entry_name_is_sanitised(tmp_path, monkeypatch):
     """
     path = _rar_file(tmp_path)
     monkeypatch.setattr(containers.rar, "read_entries",
-                        lambda _p: (rar_module.RarEntry("../../etc/passwd", 1),))
+                        lambda _p: (_FAKE_TOOL, (rar_module.RarEntry("../../etc/passwd", 1),)))
 
     with pytest.raises(UnpackError) as caught:
         list(walk(path))
@@ -515,9 +521,9 @@ def test_rar_entry_name_is_sanitised(tmp_path, monkeypatch):
 
 def test_too_many_rar_entries_are_refused(tmp_path, monkeypatch):
     path = _rar_file(tmp_path)
-    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: tuple(
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (_FAKE_TOOL, tuple(
         rar_module.RarEntry("f%d" % index, 1) for index in range(containers.MAX_ENTRIES + 1)
-    ))
+    )))
 
     with pytest.raises(UnpackError) as caught:
         list(walk(path))
@@ -529,12 +535,12 @@ def test_rar_entry_stream_cleans_up_its_temporary_directory(tmp_path, monkeypatc
     """Временный каталог живёт ровно столько, сколько открытый поток."""
     path = _rar_file(tmp_path)
     monkeypatch.setattr(containers.rar, "read_entries",
-                        lambda _p: (rar_module.RarEntry("a.txt", 5),))
+                        lambda _p: (_FAKE_TOOL, (rar_module.RarEntry("a.txt", 5),)))
     created = []
 
-    def fake_extract(_archive, destination, entry):
+    def fake_extract(_tool, _archive, destination, entry):
         created.append(destination)
-        target = os.path.join(destination, entry)
+        target = os.path.join(destination, entry.name)
         with open(target, "wb") as handle:
             handle.write(b"12345")
         return True
@@ -552,10 +558,10 @@ def test_rar_entry_stream_cleans_up_its_temporary_directory(tmp_path, monkeypatc
 def test_failed_rar_extraction_does_not_leave_a_directory(tmp_path, monkeypatch):
     path = _rar_file(tmp_path)
     monkeypatch.setattr(containers.rar, "read_entries",
-                        lambda _p: (rar_module.RarEntry("a.txt", 5),))
+                        lambda _p: (_FAKE_TOOL, (rar_module.RarEntry("a.txt", 5),)))
     created = []
 
-    def fail(_archive, destination, _entry):
+    def fail(_tool, _archive, destination, _entry):
         created.append(destination)
         return False
 
@@ -577,11 +583,107 @@ def test_rar_symlink_never_becomes_a_leaf(tmp_path, monkeypatch):
     архива.
     """
     path = _rar_file(tmp_path)
-    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (_FAKE_TOOL, (
         rar_module.RarEntry("payload.efd", 20, link=True),
         rar_module.RarEntry("real.txt", 6),
-    ))
+    )))
 
     leaves = list(walk(path))
 
     assert [leaf.name for leaf in leaves] == ["real.txt"]
+
+
+# Подставные программы для сквозной проверки: первая умеет только перечислять
+# и объявляет другой размер, вторая умеет всё. Настоящий путь целиком —
+# read_entries, Leaf, opener, — без подмены rar.read_entries.
+_LISTER = '''
+import sys
+args = sys.argv[1:]
+if args and args[0] == "-tvf":
+    sys.stdout.buffer.write(b"-rw-r--r--  0 u g  100 Jan  1 00:00 a.txt\\n")
+    sys.exit(0)
+if args and args[0] == "-xf":
+    sys.exit(1)
+sys.exit(2)
+'''
+
+_WORKER = '''
+import os
+import sys
+args = sys.argv[1:]
+if args and args[0] == "-tvf":
+    sys.stdout.buffer.write(b"-rw-r--r--  0 u g  6 Jan  1 00:00 a.txt\\n")
+    sys.exit(0)
+if args and args[0] == "-xf":
+    destination = args[args.index("-C") + 1]
+    with open(os.path.join(destination, "a.txt"), "wb") as handle:
+        handle.write(b"normal")
+    sys.exit(0)
+sys.exit(2)
+'''
+
+
+def _script(tmp_path, name, source):
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return rar_module.Tool(path=str(path), family=rar_module.LIBARCHIVE,
+                           prefix=(sys.executable,))
+
+
+def test_leaf_refuses_rather_than_taking_content_from_another_tool(tmp_path, monkeypatch):
+    """
+    Лист наполняет та программа, что его и перечислила.
+
+    Воспроизведено на настоящем пути: первая программа объявляла запись в
+    100 байт и не умела распаковывать, вторая объявляла её же в 6 байт и
+    умела — лист заявлял 100, а отдавал 6. Теперь при отказе первой лист
+    честно отказывает, а не подменяет содержимое.
+    """
+    path = _rar_file(tmp_path)
+    lister = _script(tmp_path, "lister.py", _LISTER)
+    worker = _script(tmp_path, "worker.py", _WORKER)
+    monkeypatch.setattr(containers.rar, "discover", lambda extra=None: (lister, worker))
+
+    leaf = next(iter(walk(path)))
+
+    assert leaf.size == 100, "оглавление взято не у первой программы"
+    with pytest.raises(UnpackError) as caught:
+        leaf.opener()
+    assert caught.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+
+
+def _worker(payload):
+    """Программа, перечисляющая одну запись и кладущая в неё своё содержимое."""
+    return '''
+import os
+import sys
+args = sys.argv[1:]
+PAYLOAD = %r
+if args and args[0] == "-tvf":
+    sys.stdout.buffer.write(b"-rw-r--r--  0 u g  6 Jan  1 00:00 a.txt\\n")
+    sys.exit(0)
+if args and args[0] == "-xf":
+    destination = args[args.index("-C") + 1]
+    with open(os.path.join(destination, "a.txt"), "wb") as handle:
+        handle.write(PAYLOAD)
+    sys.exit(0)
+sys.exit(2)
+''' % payload
+
+
+def test_leaf_content_comes_from_the_tool_that_listed_it(tmp_path, monkeypatch):
+    """
+    Различается именно содержимое, а не только размер.
+
+    Обе программы объявляют запись в шесть байт и обе умеют распаковывать —
+    значит проверка размера пройдёт у любой. Отличить, чья программа наполнила
+    лист, можно только по содержимому.
+    """
+    path = _rar_file(tmp_path)
+    first = _script(tmp_path, "first.py", _worker(b"first!"))
+    second = _script(tmp_path, "second.py", _worker(b"second"))
+    monkeypatch.setattr(containers.rar, "discover", lambda extra=None: (first, second))
+
+    leaf = next(iter(walk(path)))
+    with leaf.opener() as handle:
+        assert handle.read() == b"first!", "лист наполнила не та программа, что его перечислила"
