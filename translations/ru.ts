@@ -147,6 +147,10 @@
         <translation>файл не является архивом EFD или его содержимое повреждено</translation>
     </message>
     <message>
+        <source>the archive could not be read, most likely the download was interrupted</source>
+        <translation>архив не удалось прочитать, скорее всего загрузка оборвалась</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="26"/>
         <source>the file is too short to be an EFD archive</source>
         <translation>файл слишком короткий для архива EFD</translation>

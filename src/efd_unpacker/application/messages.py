@@ -38,6 +38,7 @@ UNPACK_KEYS = {
 CORRUPTED_ARCHIVE_REASONS = {
     "truncated_stream": "the file is incomplete, most likely the download was interrupted",
     "broken_stream": "the file is not an EFD archive or its contents are damaged",
+    "broken_container": "the archive could not be read, most likely the download was interrupted",
     "truncated_header": "the file is too short to be an EFD archive",
     "unsupported_header": "unsupported format version",
     "truncated_entry": "a file inside the archive is shorter than declared",

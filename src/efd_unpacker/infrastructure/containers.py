@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import io
+import lzma
 import os
 import platform
 import shutil
@@ -29,6 +31,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import BinaryIO, Callable, Iterator, List, Optional, Sequence, Tuple
@@ -132,13 +135,25 @@ def _descend(
             yield from _descend(child_opener, child_trail, child_kind, depth_left - 1)
 
 
+#: Отказы разборщиков, которые означают «файл повреждён», а не ошибку в коде.
+_BROKEN = (zipfile.BadZipFile, tarfile.ReadError, zlib.error, lzma.LZMAError, EOFError)
+
+
 def _entries(
     opener: Callable[[], BinaryIO], trail: Tuple[str, ...], kind: str
 ) -> List[Tuple[str, int, bytes, Callable[[], BinaryIO]]]:
-    if kind == "zip":
-        return _zip_entries(opener, trail)
-    if kind in ("tar", "tar.gz", "tar.bz2", "tar.xz"):
-        return _tar_entries(opener, trail)
+    try:
+        if kind == "zip":
+            return _zip_entries(opener, trail)
+        if kind in ("tar", "tar.gz", "tar.bz2", "tar.xz"):
+            return _tar_entries(opener, trail)
+    except _BROKEN as exc:
+        # Недокачанный архив — обычное дело, и выглядеть он должен как порча
+        # файла, а не как BadZipFile наружу.
+        raise UnpackError(
+            UnpackErrorCode.CORRUPTED_ARCHIVE,
+            {"reason": "broken_container", "entry": " → ".join(trail), "error": str(exc)},
+        ) from exc
     raise UnpackError(
         UnpackErrorCode.CONTAINER_UNSUPPORTED,
         {"entry": " → ".join(trail), "kind": kind},
@@ -162,28 +177,32 @@ def _zip_entries(
     ZipExtFile перематываемый, поэтому буферизовать вложенный zip целиком не
     нужно: demo_1_0_41_3.zip на 28 МБ открывается с пиком памяти в 16 МБ.
     """
-    with zipfile.ZipFile(opener()) as archive:
-        infos = [info for info in archive.infolist() if not info.is_dir()]
-        _check_count(len(infos), trail)
-        heads = {}
-        for info in infos:
-            with archive.open(info) as entry:
-                heads[info.filename] = entry.read(_PROBE_SIZE)
+    source = opener()
+    heads = []
+    try:
+        with zipfile.ZipFile(source) as archive:
+            infos = [info for info in archive.infolist() if not info.is_dir()]
+            _check_count(len(infos), trail)
+            for info in infos:
+                with archive.open(info) as entry:
+                    heads.append(entry.read(_PROBE_SIZE))
+    finally:
+        source.close()
 
-    def make(name: str) -> Callable[[], BinaryIO]:
+    def make(info: zipfile.ZipInfo) -> Callable[[], BinaryIO]:
         def open_entry() -> BinaryIO:
-            # Свой ZipFile на каждое открытие: поток чтения нельзя делить
-            # между потребителями, а закрывать чужой мы не вправе.
-            archive = zipfile.ZipFile(opener())
-            handle = archive.open(name)
-            _close_with(handle, archive)
-            return handle
+            # Открываем по самой записи, а не по имени: в zip допустимы
+            # одинаковые имена, и открытие по имени отдавало бы последнюю
+            # запись под видом первой — с чужим размером и содержимым.
+            nested = opener()
+            archive = zipfile.ZipFile(nested)
+            return _OwnedStream(archive.open(info), archive, nested)
 
         return open_entry
 
     return [
-        (info.filename, info.file_size, heads[info.filename], make(info.filename))
-        for info in infos
+        (info.filename, info.file_size, head, make(info))
+        for info, head in zip(infos, heads)
     ]
 
 
@@ -197,45 +216,86 @@ def _tar_entries(
     снимаются за тот же единственный проход. Отдельный проход на каждую запись
     стоил 4.13 с на postgresql_*.tar.bz2 против 0.2 с сейчас.
     """
-    sizes: List[Tuple[str, int]] = []
-    heads = {}
-    with tarfile.open(fileobj=opener(), mode="r:*") as archive:
-        for member in archive:
-            if not member.isfile():
-                continue
-            sizes.append((member.name, member.size))
-            _check_count(len(sizes), trail)
-            handle = archive.extractfile(member)
-            heads[member.name] = handle.read(_PROBE_SIZE) if handle is not None else b""
+    members: List[tarfile.TarInfo] = []
+    heads: List[bytes] = []
+    source = opener()
+    try:
+        with tarfile.open(fileobj=source, mode="r:*") as archive:
+            for member in archive:
+                if not member.isfile():
+                    continue
+                members.append(member)
+                _check_count(len(members), trail)
+                handle = archive.extractfile(member)
+                heads.append(handle.read(_PROBE_SIZE) if handle is not None else b"")
+    finally:
+        source.close()
 
-    def make(name: str) -> Callable[[], BinaryIO]:
+    def make(member: tarfile.TarInfo) -> Callable[[], BinaryIO]:
         def open_entry() -> BinaryIO:
-            archive = tarfile.open(fileobj=opener(), mode="r:*")
-            handle = archive.extractfile(name)
-            if handle is None:  # pragma: no cover - getmembers уже отфильтровал
+            # По самой записи, а не по имени: одинаковые имена в tar допустимы.
+            nested = opener()
+            archive = tarfile.open(fileobj=nested, mode="r:*")
+            handle = archive.extractfile(member)
+            if handle is None:  # pragma: no cover - isfile уже отфильтровал
+                archive.close()
+                nested.close()
                 raise UnpackError(
                     UnpackErrorCode.CORRUPTED_ARCHIVE,
-                    {"reason": "truncated_entry", "entry": name},
+                    {"reason": "truncated_entry", "entry": member.name},
                 )
-            _close_with(handle, archive)
-            return handle
+            return _OwnedStream(handle, archive, nested)
 
         return open_entry
 
-    return [(name, size, heads[name], make(name)) for name, size in sizes]
+    return [
+        (member.name, member.size, head, make(member))
+        for member, head in zip(members, heads)
+    ]
 
 
-def _close_with(handle: BinaryIO, archive) -> None:
-    """Закрывает контейнер вместе с записью, чтобы не течь дескрипторами."""
-    original = handle.close
+class _OwnedStream(io.BufferedIOBase):
+    """
+    Поток записи, владеющий контейнером и исходным потоком.
 
-    def close() -> None:
+    zipfile и tarfile не закрывают поток, который им передали, а подмена
+    handle.close замыканием создавала ссылочный цикл: дескрипторы держались
+    до сборки мусора. Измерено на 120 вложенных архивах — 5 дескрипторов
+    превращались в 245.
+    """
+
+    def __init__(self, inner: BinaryIO, *owned) -> None:
+        self._inner = inner
+        self._owned = owned
+
+    def read(self, size: int = -1) -> bytes:
+        return self._inner.read(size)
+
+    def read1(self, size: int = -1) -> bytes:
+        reader = getattr(self._inner, "read1", None)
+        return reader(size) if reader is not None else self._inner.read(size)
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return self._inner.seekable()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._inner.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._inner.tell()
+
+    def close(self) -> None:
         try:
-            original()
+            self._inner.close()
         finally:
-            archive.close()
-
-    handle.close = close  # type: ignore[method-assign]
+            for resource in reversed(self._owned):
+                try:
+                    resource.close()
+                except Exception:  # pragma: no cover - закрытие не должно мешать
+                    pass
 
 
 def dmg_supported() -> bool:
@@ -272,10 +332,16 @@ def open_dmg(path: str) -> Iterator[Tuple[Leaf, ...]]:
         )
         attached = True
         name = os.path.basename(path)
+        root_real = os.path.realpath(mount_point)
         leaves = []
         for root, _dirs, files in os.walk(mount_point):
             for filename in sorted(files):
                 full = os.path.join(root, filename)
+                if not _inside(full, root_real):
+                    # Симлинк из образа на файл хоста выдал бы /etc/hosts за
+                    # содержимое архива. Проверено: os.walk отдаёт такую ссылку
+                    # как обычный файл, а getsize и чтение идут по ней.
+                    continue
                 leaves.append(
                     Leaf(
                         trail=(name, os.path.relpath(full, mount_point)),
@@ -288,6 +354,16 @@ def open_dmg(path: str) -> Iterator[Tuple[Leaf, ...]]:
         if attached:
             subprocess.run(["hdiutil", "detach", mount_point, "-quiet"], capture_output=True)
         shutil.rmtree(mount_point, ignore_errors=True)
+
+
+def _inside(path: str, root_real: str) -> bool:
+    """Лежит ли файл внутри смонтированного образа, а не за его пределами."""
+    if os.path.islink(path):
+        return False
+    try:
+        return os.path.commonpath([root_real, os.path.realpath(path)]) == root_real
+    except ValueError:  # pragma: no cover - разные тома на Windows
+        return False
 
 
 def _file_opener(path: str) -> Callable[[], BinaryIO]:
