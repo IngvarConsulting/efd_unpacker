@@ -6,6 +6,7 @@
 zip с .efd в корне, zip в zip, tar с пакетами внутри.
 """
 
+import gc
 import io
 import os
 import tarfile
@@ -291,3 +292,146 @@ def test_leaf_display_path_reads_as_a_trail():
 
     assert leaf.display_path == "demo.zip → inner.zip → 1cv8.efd"
     assert leaf.name == "1cv8.efd"
+
+
+# --- находки обзора ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"PK\x03\x04" + b"\x00" * 60, b"BZh9" + b"\xff" * 60, b"\x1f\x8b" + b"\xff" * 60],
+    ids=["обрезанный zip", "обрезанный tar.bz2", "обрезанный tar.gz"],
+)
+def test_broken_container_becomes_a_domain_error(tmp_path, data):
+    """
+    Регресс: BadZipFile и ReadError уходили наружу как есть.
+
+    Недокачанный архив — обычное дело, и выглядеть он должен как порча файла
+    с локализованным сообщением, а не как исключение разборщика.
+    """
+    path = _write(tmp_path, "broken.zip", data)
+
+    with pytest.raises(UnpackError) as ctx:
+        list(walk(path))
+
+    assert ctx.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+    assert ctx.value.details["reason"] == "broken_container"
+
+
+def test_duplicate_names_keep_their_own_content(tmp_path):
+    """
+    Регресс: открытие по имени отдавало последнюю запись под видом первой.
+
+    Лист заявлял 5 байт, а читал 13 — и оба листа возвращали одно и то же.
+    Открываем по самой записи, а не по имени.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("dup.txt", b"FIRST")
+        archive.writestr("dup.txt", b"SECOND-LONGER")
+    path = _write(tmp_path, "dup.zip", buffer.getvalue())
+
+    read = []
+    for leaf in walk(path):
+        with leaf.opener() as handle:
+            data = handle.read()
+        assert len(data) == leaf.size
+        read.append(data)
+
+    assert read == [b"FIRST", b"SECOND-LONGER"]
+
+
+def test_tar_duplicate_names_keep_their_own_content(tmp_path):
+    path = _write(
+        tmp_path, "dup.tar.gz",
+        _tar_bytes([("dup.txt", b"FIRST"), ("dup.txt", b"SECOND-LONGER")], mode="w:gz"),
+    )
+
+    read = []
+    for leaf in walk(path):
+        with leaf.opener() as handle:
+            read.append(handle.read())
+
+    assert read == [b"FIRST", b"SECOND-LONGER"]
+
+
+def test_descriptors_are_released_without_waiting_for_the_collector(tmp_path):
+    """
+    Регресс: каждый вложенный архив держал дескриптор до сборки мусора.
+
+    Измерено на 120 вложенных архивах: 5 дескрипторов превращались в 245.
+    zipfile не закрывает переданный ему поток, а подмена handle.close
+    замыканием создавала ссылочный цикл.
+    """
+    inner = _zip_bytes([("payload.txt", b"x")])
+    path = _write(
+        tmp_path, "many.zip",
+        _zip_bytes([("nested%03d.zip" % index, inner) for index in range(120)]),
+    )
+
+    gc.disable()
+    try:
+        before = len(os.listdir("/dev/fd"))
+        leaves = list(walk(path))
+        for leaf in leaves:
+            with leaf.opener() as handle:
+                handle.read()
+        after = len(os.listdir("/dev/fd"))
+    finally:
+        gc.enable()
+
+    assert len(leaves) == 120
+    assert after == before, "дескрипторы держатся до сборки мусора"
+
+
+@pytest.mark.skipif(not dmg_supported(), reason="hdiutil есть только на macOS")
+def test_symlink_out_of_the_image_is_not_exposed(tmp_path):
+    """
+    Регресс: симлинк из образа отдавал файл хоста как содержимое архива.
+
+    os.walk возвращает такую ссылку обычным файлом, а getsize и чтение идут
+    по ней: /etc/hosts приходил 213 байтами «из архива».
+    """
+    import subprocess
+
+    source = tmp_path / "content"
+    source.mkdir()
+    (source / "real.txt").write_text("inside", encoding="utf-8")
+    os.symlink("/etc/hosts", source / "escape.txt")
+    image = tmp_path / "sym.dmg"
+    subprocess.run(
+        ["hdiutil", "create", "-quiet", "-srcfolder", str(source), "-format", "UDZO", str(image)],
+        check=True, capture_output=True,
+    )
+
+    with open_dmg(str(image)) as leaves:
+        names = [leaf.trail[-1] for leaf in leaves]
+
+    assert names == ["real.txt"]
+
+
+@pytest.mark.skipif(not dmg_supported(), reason="hdiutil есть только на macOS")
+def test_symlink_inside_the_image_is_not_listed_twice(tmp_path):
+    """
+    Ссылка внутрь образа отбрасывается отдельно от проверки на выход наружу.
+
+    realpath её пропускает — цель лежит внутри, — но лист был бы вторым
+    именем того же файла. Цель при этом перечисляется сама по себе, так что
+    ничего не теряется. Типичный случай — ярлык Applications в дистрибутивах.
+    """
+    import subprocess
+
+    source = tmp_path / "content"
+    source.mkdir()
+    (source / "real.pkg").write_text("payload", encoding="utf-8")
+    os.symlink("real.pkg", source / "latest.pkg")
+    image = tmp_path / "inner.dmg"
+    subprocess.run(
+        ["hdiutil", "create", "-quiet", "-srcfolder", str(source), "-format", "UDZO", str(image)],
+        check=True, capture_output=True,
+    )
+
+    with open_dmg(str(image)) as leaves:
+        names = sorted(leaf.trail[-1] for leaf in leaves)
+
+    assert names == ["real.pkg"]
