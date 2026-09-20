@@ -37,11 +37,6 @@
         <translation>Ошибка</translation>
     </message>
     <message>
-        <location filename="../ui.py" line="259"/>
-        <source>Select output folder</source>
-        <translation>Выбрать папку для распаковки</translation>
-    </message>
-    <message>
         <source>Could not open the folder</source>
         <translation>Не удалось открыть папку</translation>
     </message>
@@ -118,14 +113,6 @@
         <translation>О программе</translation>
     </message>
     <message>
-        <source>Cross-platform unpacker for 1C supply files</source>
-        <translation>Кроссплатформенный распаковщик файлов поставки 1С</translation>
-    </message>
-    <message>
-        <source>Change folders…</source>
-        <translation>Сменить папки…</translation>
-    </message>
-    <message>
         <source>about</source>
         <translation>осталось ≈</translation>
     </message>
@@ -144,6 +131,22 @@
     <message>
         <source>stopped</source>
         <translation>остановлено</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Настройки</translation>
+    </message>
+    <message>
+        <source>Where to unpack…</source>
+        <translation>Куда распаковывать…</translation>
+    </message>
+    <message>
+        <source>Tools for .rar</source>
+        <translation>Инструменты для .rar</translation>
+    </message>
+    <message>
+        <source>Tools…</source>
+        <translation>Инструменты…</translation>
     </message>
 </context>
 <context>
@@ -437,6 +440,165 @@
     <message>
         <source>to write:</source>
         <translation>к записи:</translation>
+    </message>
+</context>
+<context>
+    <name>Screens</name>
+    <message>
+        <source>Back</source>
+        <translation>Назад</translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation>Ошибка</translation>
+    </message>
+    <message>
+        <source>Could not open the link</source>
+        <translation>Не удалось открыть ссылку</translation>
+    </message>
+    <message>
+        <source>Where to unpack</source>
+        <translation>Куда распаковывать</translation>
+    </message>
+    <message>
+        <source>Configuration templates</source>
+        <translation>Шаблоны конфигураций</translation>
+    </message>
+    <message>
+        <source>The folder is dictated by 1C. Inside it the application creates 1c/&lt;product&gt;/&lt;version&gt; — that is what the supply standard requires.</source>
+        <translation>Каталог задаёт 1С. Внутри приложение создаёт 1c/&lt;продукт&gt;/&lt;версия&gt; — так требует стандарт поставки.</translation>
+    </message>
+    <message>
+        <source>Platform and DBMS distributions</source>
+        <translation>Дистрибутивы платформы и СУБД</translation>
+    </message>
+    <message>
+        <source>Here 1C dictates nothing. By default it sits next to the templates, in a neighbouring folder: change the templates folder and this one follows.</source>
+        <translation>Тут 1С ничего не диктует. По умолчанию — рядом с шаблонами, в соседней папке: сменится каталог шаблонов, сменится и этот.</translation>
+    </message>
+    <message>
+        <source>next to the templates</source>
+        <translation>рядом с шаблонами</translation>
+    </message>
+    <message>
+        <source>chosen manually</source>
+        <translation>выбран вручную</translation>
+    </message>
+    <message>
+        <source>Choose another folder…</source>
+        <translation>Выбрать другую папку…</translation>
+    </message>
+    <message>
+        <source>Select the templates folder</source>
+        <translation>Выберите каталог шаблонов</translation>
+    </message>
+    <message>
+        <source>Select the distributions folder</source>
+        <translation>Выберите каталог дистрибутивов</translation>
+    </message>
+    <message>
+        <source>free</source>
+        <translation>свободно</translation>
+    </message>
+    <message>
+        <source>needed</source>
+        <translation>нужно</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Unpacking tools</source>
+        <translation>Инструменты распаковки</translation>
+    </message>
+    <message>
+        <source>Archives in .rar are unpacked by an external program. The application neither installs it nor ships it — it only finds it and calls it.</source>
+        <translation>Архивы .rar распаковываются внешней программой. Приложение её не устанавливает и не включает в свою поставку — только находит и вызывает.</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>Ищем…</translation>
+    </message>
+    <message>
+        <source>IN USE</source>
+        <translation>ИСПОЛЬЗУЕТСЯ</translation>
+    </message>
+    <message>
+        <source>spare</source>
+        <translation>про запас</translation>
+    </message>
+    <message>
+        <source>not found</source>
+        <translation>не найден</translation>
+    </message>
+    <message>
+        <source>searched as %s</source>
+        <translation>ищется как %s</translation>
+    </message>
+    <message>
+        <source>checked on %s: %d entries</source>
+        <translation>проверена на %s: записей — %d</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
+    </message>
+    <message>
+        <source>Copied</source>
+        <translation>Скопировано</translation>
+    </message>
+    <message>
+        <source>Fitness is checked on the archive itself, not by version number: libarchive builds ship with different format sets, and the list of supported ones can lie.</source>
+        <translation>Годность проверяется на самом архиве, а не по номеру версии: сборки libarchive собирают с разным набором форматов, и список поддержки может врать.</translation>
+    </message>
+    <message>
+        <source>Without such a program .rar files are simply skipped</source>
+        <translation>Без такой программы файлы .rar просто пропускаются</translation>
+    </message>
+    <message>
+        <source>Search again</source>
+        <translation>Искать заново</translation>
+    </message>
+    <message>
+        <source>About</source>
+        <translation>О программе</translation>
+    </message>
+    <message>
+        <source>Unpacking of 1C:Enterprise supply files and laying out platform distributions into folders.</source>
+        <translation>Распаковка поставок 1С:Предприятия и раскладка дистрибутивов платформы по каталогам.</translation>
+    </message>
+    <message>
+        <source>Source code on GitHub</source>
+        <translation>Исходный код на GitHub</translation>
+    </message>
+    <message>
+        <source>Report a problem</source>
+        <translation>Сообщить о проблеме</translation>
+    </message>
+    <message>
+        <source>Check for updates</source>
+        <translation>Проверить обновление</translation>
+    </message>
+    <message>
+        <source>Licenses</source>
+        <translation>Лицензии</translation>
+    </message>
+    <message>
+        <source>Full texts</source>
+        <translation>Полные тексты</translation>
+    </message>
+    <message>
+        <source>Programs for .rar are not part of the package — the application calls the ones installed in the system.</source>
+        <translation>Программы для .rar в поставку не входят — приложение вызывает установленные в системе.</translation>
+    </message>
+    <message>
+        <source>Ingvar Consulting helps 1C teams sort out development processes: planning, releases, reviews, onboarding, and makes the team more manageable.</source>
+        <translation>Ingvar Consulting помогает 1С-командам разбирать процессы разработки: планирование, релизы, ревью, онбординг и повышает управляемость команды.</translation>
+    </message>
+    <message>
+        <source>first in line</source>
+        <translation>будет первой</translation>
     </message>
 </context>
 </TS>
