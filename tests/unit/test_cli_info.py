@@ -289,3 +289,28 @@ def test_other_commands_are_left_to_the_gui():
     app, _printed, _seen = build()
 
     assert app.run(["efd_unpacker", "file.efd"]).handled is False
+
+
+@pytest.mark.parametrize("flag", [CLICommands.OUTPUT_FLAG, CLICommands.DIST_FLAG])
+def test_flag_cannot_be_the_value_of_another_flag(flag):
+    """
+    `info a.efd -tmplts --json` раньше съедал --json как имя каталога.
+
+    Вывод молча оставался человеческим, а пути вели в каталог «--json»:
+    забытое значение выглядело как успех.
+    """
+    app, _printed, seen = build([_supply()])
+
+    result = app.run(["efd_unpacker", "info", "a.efd", flag, "--json"])
+
+    assert result.exit_code == CLICommands.EXIT_USAGE
+    assert "paths" not in seen
+
+
+def test_directory_starting_with_a_dash_is_given_as_a_relative_path():
+    """Цена отказа от флага в значении: такой каталог задаётся через ./."""
+    app, printed, _seen = build([_supply()])
+
+    app.run(["efd_unpacker", "info", "a.zip", "-tmplts", "./-странный"])
+
+    assert "./-странный/1c/Acc/3_0_1" in printed[0]

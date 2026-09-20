@@ -42,8 +42,10 @@ def get_distributions_location_default(templates_root: str) -> str:
     шаблоны конфигураций, — но и разбрасывать их по загрузкам незачем. Общий
     родитель даёт одно место, где потом искать.
     """
-    parent = os.path.dirname(templates_root.rstrip("/\\")) or templates_root
-    return os.path.join(parent, "dist")
+    parent = os.path.dirname(templates_root.rstrip("/\\"))
+    # Откат на сам templates_root давал бы «tmplts/dist» для относительного
+    # однокомпонентного корня — то есть каталог ВНУТРИ шаблонов вместо соседа.
+    return os.path.join(parent, "dist") if parent else "dist"
 
 
 def get_1c_configuration_location_from_1cestart() -> List[str]:

@@ -13,6 +13,7 @@ import pytest
 from efd_unpacker.application.main import (
     looks_like_input,
     process_file_argument,
+    should_install_launcher,
 )
 from efd_unpacker.application.help_text import format_help_text
 
@@ -172,3 +173,25 @@ def test_format_help_text_localizes_headings_and_descriptions():
     assert "Использование:" in help_text
     assert "GUI mode: open the window and preselect the input file" not in help_text
     assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in help_text
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["efd_unpacker", "info", "a.zip"], False),
+        (["efd_unpacker", "INFO", "a.zip"], False),
+        (["efd_unpacker", "info", "a.zip", "--json"], False),
+        (["efd_unpacker", "unpack", "a.efd", "-tmplts", "out"], True),
+        (["efd_unpacker", "a.efd"], True),
+        (["efd_unpacker"], True),
+    ],
+)
+def test_read_only_command_does_not_register_the_launcher(argv, expected):
+    """
+    info обещает не создавать ни байта — обещание держится и на бандле.
+
+    install_cli_launcher() создаёт launcher и дописывает экспорт PATH в профили
+    оболочки, а зовётся он в main() ДО разбора аргументов. На dev-запуске это
+    не видно: resolve_cli_launcher_target() вне бандла отдаёт None.
+    """
+    assert should_install_launcher(argv) is expected

@@ -65,6 +65,18 @@ def inspect(path: str, max_depth: int = MAX_DEPTH) -> Inspected:
         return Inspected(path=path, failure=exc)
     except OSError as exc:
         return Inspected(path=path, failure=_os_failure(path, exc))
+    except Exception as exc:  # noqa: BLE001 - намеренно широко, см. ниже
+        # Перехват намеренно не перечисляет типы. Обещание команды — «один
+        # битый файл не обрывает осмотр остальных», и держать его списком
+        # исключений не выходит: набор открытый. Так UnicodeDecodeError из
+        # разбора имени записи уносил весь прогон, оставляя пользователя без
+        # строк по всем прочим файлам. Конкретные отказы по-прежнему получают
+        # свой код выше; сюда попадает только неожиданное — и попадает
+        # отдельной строкой плана, а не падением.
+        return Inspected(
+            path=path,
+            failure=UnpackError(UnpackErrorCode.UNEXPECTED, {"path": path, "error": str(exc)}),
+        )
 
 
 def _inspect(path: str, max_depth: int) -> Inspected:

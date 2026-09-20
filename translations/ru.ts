@@ -161,6 +161,10 @@
         <translation>неподдерживаемая версия формата</translation>
     </message>
     <message>
+        <source>a file name inside the archive is unreadable</source>
+        <translation>имя файла внутри архива не читается</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="30"/>
         <source>a file inside the archive is shorter than declared</source>
         <translation>файл внутри архива короче заявленного размера</translation>

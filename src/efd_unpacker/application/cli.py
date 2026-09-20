@@ -166,9 +166,13 @@ class CLIApplication:
                 index += 1
                 continue
             if argument in (CLICommands.OUTPUT_FLAG, CLICommands.DIST_FLAG):
-                if index + 1 >= len(rest) or not rest[index + 1]:
+                value = rest[index + 1] if index + 1 < len(rest) else ""
+                if not value or value.startswith("-"):
+                    # `info a.efd -tmplts --json` иначе съедал бы --json как имя
+                    # каталога: вывод молча оставался человеческим, а пути вели
+                    # в каталог «--json». Забытое значение флага — ошибка ввода.
+                    # Каталог, чьё имя начинается с дефиса, задаётся как ./-имя.
                     return None
-                value = rest[index + 1]
                 if argument == CLICommands.OUTPUT_FLAG:
                     templates_root = value
                 else:
@@ -212,6 +216,16 @@ class CLIApplication:
         if not input_path or input_path.startswith("-") or not output_dir:
             return None
         return input_path, output_dir
+
+
+def is_read_only_command(argv: Sequence[str]) -> bool:
+    """
+    Обещает ли команда не трогать файловую систему.
+
+    Пока такая команда одна — info. Нужно это снаружи: точка входа до разбора
+    аргументов регистрирует команду в PATH, а регистрация пишет на диск.
+    """
+    return len(argv) > 1 and argv[1].lower() == CLICommands.INFO
 
 
 def wants_help(argv: Sequence[str]) -> bool:

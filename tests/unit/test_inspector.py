@@ -8,10 +8,13 @@
 
 import io
 import os
+import struct
 import zipfile
+import zlib
 
 import pytest
 
+from efd_unpacker.application import inspector as inspector_module
 from efd_unpacker.application.inspector import inspect, inspect_all
 from efd_unpacker.domain.errors import UnpackErrorCode
 from efd_unpacker.infrastructure import containers
@@ -291,3 +294,51 @@ def test_dmg_is_recognised_by_extension(tmp_path, monkeypatch, name):
 
     assert result.failure.code is UnpackErrorCode.CONTAINER_UNSUPPORTED
     assert result.failure.details["kind"] == "dmg"
+
+
+def test_unreadable_entry_name_becomes_a_row_not_a_crash(tmp_path):
+    """
+    Битый UTF-16 в имени записи раньше уносил весь прогон.
+
+    read_catalog отдавал UnicodeDecodeError, а осмотр ловил только UnpackError
+    и OSError: один такой файл оставлял пользователя без строк по всем
+    остальным.
+    """
+    head = struct.pack("II", 1, 0) + struct.pack("I", 1)
+    head += struct.pack("I", 0)
+    broken = b"\x00\xd8\x00\x00"  # незакрытая суррогатная пара
+    head += struct.pack("I", len(broken) // 2) + broken
+    head += struct.pack("q", 132223104000000000) + struct.pack("I", 0) + struct.pack("I", 0)
+    compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+    path = _write(
+        tmp_path, "bad.zip",
+        _zip_bytes([("1cv8.efd", compressor.compress(head) + compressor.flush())]),
+    )
+
+    result = inspect(path)
+
+    assert result.failure.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+    assert result.failure.details["reason"] == "broken_entry_name"
+
+
+def test_unexpected_error_on_one_file_does_not_stop_the_rest(tmp_path, monkeypatch):
+    """
+    Последний рубеж: неожиданный отказ тоже становится строкой, а не падением.
+
+    Перечислить все типы исключений нельзя — набор открытый, и именно на этом
+    осмотр уже один раз обрывался.
+    """
+    good = _write(tmp_path, "good.zip", _zip_bytes([("x.run", b"1")]))
+    bad = _write(tmp_path, "bad.zip", _zip_bytes([("1cv8.efd", _supply())]))
+
+    real = inspector_module.read_catalog
+
+    def explode(handle, *args, **kwargs):
+        raise RuntimeError("что-то пошло не так внутри библиотеки")
+
+    monkeypatch.setattr(inspector_module, "read_catalog", explode)
+    results = inspect_all([bad, good])
+    monkeypatch.setattr(inspector_module, "read_catalog", real)
+
+    assert results[0].failure.code is UnpackErrorCode.UNEXPECTED
+    assert results[1].failure is None, "осмотр второго файла не состоялся"

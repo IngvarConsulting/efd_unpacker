@@ -167,7 +167,19 @@ class _StrictReader:
 
     def wide_string(self, errors: str = "strict") -> str:
         length = self.uint32()
-        return self.read(length * 2).decode("utf-16", errors)
+        raw = self.read(length * 2)
+        try:
+            return raw.decode("utf-16", errors)
+        except UnicodeDecodeError as exc:
+            # Наружу должен уходить код домена, а не UnicodeDecodeError:
+            # осмотр ловит доменные ошибки и превращает их в строку плана,
+            # а голый UnicodeDecodeError обрывал осмотр всех остальных файлов.
+            # Длина строки известна заранее, поэтому обрезанная на границе
+            # порции запись даёт truncated_header, а не этот отказ.
+            raise UnpackError(
+                UnpackErrorCode.CORRUPTED_ARCHIVE,
+                {"reason": "broken_entry_name", "error": str(exc)},
+            ) from exc
 
 
 def parse_catalog(stream: BinaryIO) -> Catalog:
