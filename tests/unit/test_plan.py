@@ -222,6 +222,148 @@ def test_supply_of_only_demo_base_is_filtered_out_entirely():
     assert plan.items[0].reason is SkipReason.FILTERED_OUT
 
 
+def test_template_left_without_a_configuration_is_skipped():
+    """
+    Шаблон, у которого фильтр унёс единственную конфигурацию, не пишется.
+
+    Записанный, он оказывается каталогом с манифестом и ReadMe — и в 1С
+    выглядит пунктом, который ничего не создаёт: человек узнаёт об этом уже
+    там, без намёка на причину. Настоящий случай: Platform8Demo/1_0_41_3 из
+    demo.zip платформы 8.3.27.
+    """
+    found = supply("1c/Platform8Demo/1_0_41_3", "1.0.41.3",
+                   [("1cv8.dt", 24_000_000), ("1cv8.mft", 395), ("ReadMe.txt", 1200)])
+
+    plan = build_plan([Inspected(path="/d/demo.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.SKIP
+    assert plan.items[0].reason is SkipReason.FILTERED_OUT
+    assert plan.bytes_to_write == 0
+
+
+def test_the_same_template_is_written_when_the_filter_is_off():
+    """Без фильтра брать нечего: шаблон полон и годен."""
+    found = supply("1c/Platform8Demo/1_0_41_3", "1.0.41.3",
+                   [("1cv8.dt", 24_000_000), ("1cv8.mft", 395), ("ReadMe.txt", 1200)])
+
+    plan = build_plan([Inspected(path="/d/demo.zip", supplies=(found,))], settings())
+
+    assert plan.items[0].action is Action.WRITE
+
+
+def test_template_with_both_files_survives_the_filter():
+    """
+    У «Комплексной автоматизации» в шаблоне и .cf, и .dt.
+
+    Фильтр уносит демобазу, конфигурация остаётся — и шаблон обязан
+    записаться, иначе правило било бы по тому, ради чего фильтр и включают.
+    """
+    found = supply("1c/ARAutomation20/2_6_1_61", "2.6.1.61",
+                   [("1cv8.cf", 900), ("1cv8.dt", 800), ("1cv8.mft", 482)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+    assert plan.items[0].bytes_total == 1382
+
+
+@pytest.mark.parametrize("name", ["1cv8.cf", "mobileapp.cf", "1cv8.cfu", "payload.bin"])
+def test_anything_but_documentation_keeps_the_template(name):
+    """
+    Уцелело содержимое — шаблон пишется, каким бы оно ни было.
+
+    Списка «из чего 1С делает базу» здесь нет намеренно: его пришлось бы
+    угадывать, и ошибка означала бы молча выброшенный шаблон. Поэтому
+    перечислено сопровождение, а всё прочее считается содержимым — включая
+    .cfu и вовсе незнакомое.
+
+    Рядом обязательно .dt: без него фильтр ничего не уносит, и правило не
+    срабатывает вовсе — проверять было бы нечего.
+    """
+    found = supply("1c/upd/1_0", "1.0",
+                   [(name, 900), ("1cv8.dt", 800), ("1cv8.mft", 300)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+    assert plan.items[0].bytes_total == 1200, "демобаза всё равно отброшена"
+
+
+def test_template_the_filter_never_touched_is_written():
+    """
+    Правило не судит о шаблоне, к которому фильтр не прикасался.
+
+    Поставка из одного манифеста и описания для 1С бесполезна и так, но это
+    не наша новость и не повод терять её молча.
+    """
+    found = supply("1c/пусто/1_0", "1.0", [("1cv8.mft", 300), ("ReadMe.txt", 100)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+
+
+def test_template_without_any_known_configuration_is_still_written():
+    """
+    Правило нарочно одностороннее: оно замечает, что фильтр унёс всё, а не
+    решает, годен ли шаблон вообще.
+
+    Незнакомый вид поставки не должен пропадать молча: ошибиться в сторону
+    лишней записи здесь безопаснее, чем в сторону тишины.
+    """
+    found = supply("1c/странное/1_0", "1.0",
+                   [("payload.bin", 900), ("1cv8.mft", 300)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+
+
+def test_unknown_payload_survives_next_to_a_filtered_demo_base():
+    """
+    Незнакомый файл рядом с демобазой — и шаблон всё равно пишется.
+
+    Демобазу фильтр унёс, но `payload.bin` уцелел, и, быть может, он-то и
+    есть то, ради чего шаблон нужен. Правило «не осталось знакомой
+    конфигурации» выбрасывало его молча; правило «не осталось ничего, кроме
+    сопровождения» — нет.
+    """
+    found = supply("1c/странное/1_0", "1.0",
+                   [("payload.bin", 900), ("1cv8.dt", 800), ("1cv8.mft", 300)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+    assert plan.items[0].bytes_total == 1200, "демобаза всё равно отброшена"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["ReadMe.txt", "Версии библиотек.txt", "описание.html", "Изменения.pdf", "инструкция.doc"],
+)
+def test_documentation_alone_does_not_save_the_template(extra):
+    """
+    Сопровождение базу не делает: манифест, ReadMe, документация.
+
+    Ровно из них и состоял каталог Platform8Demo/1_0_41_3 после «без демобаз»
+    — и 1С показывала по нему пункт, который ничего не создаёт.
+    """
+    found = supply("1c/demo/1_0", "1.0",
+                   [("1cv8.dt", 800), ("1cv8.mft", 300), (extra, 100)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.SKIP
+    assert plan.items[0].reason is SkipReason.FILTERED_OUT
+
+
 def test_unsupported_container_becomes_a_skip_row():
     """Молча терять файл нельзя: отказ осмотра — тоже строка плана."""
     failure = UnpackError(UnpackErrorCode.CONTAINER_UNSUPPORTED, {"kind": "rar"})

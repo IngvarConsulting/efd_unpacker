@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from .errors import UnpackError, UnpackErrorCode
-from .supply import Catalog, Template, safe_relative_parts
+from .supply import Catalog, Entry, Template, safe_relative_parts
 
 
 class ItemKind(Enum):
@@ -372,7 +372,7 @@ def _supply_item(
     action, reason = Action.WRITE, None
     if settings.is_installed(destination):
         action, reason = Action.SKIP, SkipReason.ALREADY_INSTALLED
-    elif not kept:
+    elif not kept or _filter_took_everything(entries, kept):
         action, reason = Action.SKIP, SkipReason.FILTERED_OUT
 
     return PlannedItem(
@@ -388,6 +388,34 @@ def _supply_item(
         template=template,
         file_count=len(kept),
     )
+
+
+def _filter_took_everything(entries: Sequence[Entry], kept: Sequence[Entry]) -> bool:
+    """
+    Унёс ли фильтр ВСЕ файлы, ради которых шаблон существует.
+
+    Шаблон, у которого единственная конфигурация лежит в .dt, при «без
+    демобаз» записывался каталогом с манифестом и ReadMe — и отчитывался как
+    успешный. В 1С такой шаблон виден пунктом, который ничего не создаёт, и
+    человек узнаёт об этом уже там, без единого намёка на причину. Настоящий
+    случай: Platform8Demo/1_0_41_3 из demo.zip платформы 8.3.27.
+
+    Условие с двух сторон: фильтр ЧТО-ТО унёс, и не осталось НИЧЕГО, кроме
+    сопровождения. Обе половины нужны.
+
+    «Что-то унёс» — чтобы правило не судило о шаблоне, к которому фильтр не
+    прикасался. Поставка из одного манифеста и описания бесполезна и так, но
+    это не наша новость и не повод её терять.
+
+    «Ничего, кроме сопровождения» — а не «ни одной знакомой конфигурации».
+    Разница видна на шаблоне из `payload.bin`, `1cv8.dt` и манифеста:
+    демобазу фильтр унёс, но `payload.bin` уцелел — и, быть может, он-то и
+    есть то, ради чего шаблон нужен. Молча выбросить его нельзя.
+
+    Отдельной проверки «включён ли фильтр» здесь нет: без него kept и есть
+    entries, и унести что-то он не мог по определению.
+    """
+    return len(kept) != len(entries) and all(is_auxiliary(entry.path) for entry in kept)
 
 
 def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem:
@@ -422,6 +450,17 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
 #: далеко не всегда. Правило «выбросить .dt», а не «оставить .cf»: в шаблоне
 #: лежат ещё манифест, ReadMe и ресурсы, и без них 1С покажет неполный шаблон.
 DATA_SUFFIXES = (".dt",)
+
+#: Что само по себе базу не делает: манифест и документация. Нужно, чтобы
+#: отличить «фильтр унёс всё» от «остался файл, про который мы ничего не
+#: знаем»: во втором случае шаблон обязан записаться, каким бы незнакомым
+#: этот файл ни был.
+AUXILIARY_SUFFIXES = (".mft", ".txt", ".htm", ".html", ".pdf", ".doc", ".docx", ".rtf")
+
+
+def is_auxiliary(path: str) -> bool:
+    """Сопровождение: манифест, ReadMe, документация. Базу из этого не сделать."""
+    return path.lower().endswith(AUXILIARY_SUFFIXES)
 
 
 def keeps_configuration(path: str) -> bool:
