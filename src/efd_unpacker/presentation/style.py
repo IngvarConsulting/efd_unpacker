@@ -55,13 +55,17 @@ SANS, MONO = _families()
 _stacks: dict = {}
 
 
-def _stack(preferred: str, fallback: str, generic: str) -> str:
+def _stack(preferred: str, fallback: str) -> str:
     """
     Ряд гарнитур с проверкой наличия.
 
     Перечислять отсутствующую гарнитуру нельзя просто так: Qt на каждый такой
     ряд строит таблицу синонимов и пишет предупреждение в поток ошибок —
-    замерено 56 мс на запуск. Проверяем один раз и больше о ней не упоминаем.
+    замерено 58 мс на запуск. Проверяем один раз и больше о ней не упоминаем.
+
+    Обобщённых имён вроде sans-serif здесь нет намеренно: в таблицах стилей Qt
+    понимает их как имена семейств, и они дают ровно то же предупреждение, что
+    и любая отсутствующая гарнитура.
     """
     if preferred not in _stacks:
         try:
@@ -71,18 +75,17 @@ def _stack(preferred: str, fallback: str, generic: str) -> str:
         except Exception:  # pragma: no cover - до создания QApplication
             available = False
         _stacks[preferred] = (
-            "'%s', '%s', %s" % (preferred, fallback, generic) if available
-            else "'%s', %s" % (fallback, generic)
+            "'%s', '%s'" % (preferred, fallback) if available else "'%s'" % fallback
         )
     return _stacks[preferred]
 
 
 def sans_stack() -> str:
-    return _stack("IBM Plex Sans", SANS, "sans-serif")
+    return _stack("IBM Plex Sans", SANS)
 
 
 def mono_stack() -> str:
-    return _stack("IBM Plex Mono", MONO, "monospace")
+    return _stack("IBM Plex Mono", MONO)
 
 
 def window_sheet() -> str:
