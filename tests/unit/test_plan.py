@@ -269,14 +269,18 @@ def test_template_with_both_files_survives_the_filter():
     assert plan.items[0].bytes_total == 1382
 
 
-@pytest.mark.parametrize("name", ["1cv8.cf", "mobileapp.cf", "1cv8.cfu"])
-def test_known_configuration_files_keep_the_template(name):
+@pytest.mark.parametrize("name", ["1cv8.cf", "mobileapp.cf", "1cv8.cfu", "payload.bin"])
+def test_anything_but_documentation_keeps_the_template(name):
     """
-    .cfu — файл обновления, и шаблон из одних обновлений тоже годен.
+    Уцелело содержимое — шаблон пишется, каким бы оно ни было.
 
-    Рядом обязательно .dt: без него правило не срабатывает вовсе, и забытое
-    расширение осталось бы незамеченным — шаблон писался бы просто потому,
-    что знакомого не нашлось ни до фильтра, ни после.
+    Списка «из чего 1С делает базу» здесь нет намеренно: его пришлось бы
+    угадывать, и ошибка означала бы молча выброшенный шаблон. Поэтому
+    перечислено сопровождение, а всё прочее считается содержимым — включая
+    .cfu и вовсе незнакомое.
+
+    Рядом обязательно .dt: без него фильтр ничего не уносит, и правило не
+    срабатывает вовсе — проверять было бы нечего.
     """
     found = supply("1c/upd/1_0", "1.0",
                    [(name, 900), ("1cv8.dt", 800), ("1cv8.mft", 300)])
@@ -286,6 +290,21 @@ def test_known_configuration_files_keep_the_template(name):
 
     assert plan.items[0].action is Action.WRITE
     assert plan.items[0].bytes_total == 1200, "демобаза всё равно отброшена"
+
+
+def test_template_the_filter_never_touched_is_written():
+    """
+    Правило не судит о шаблоне, к которому фильтр не прикасался.
+
+    Поставка из одного манифеста и описания для 1С бесполезна и так, но это
+    не наша новость и не повод терять её молча.
+    """
+    found = supply("1c/пусто/1_0", "1.0", [("1cv8.mft", 300), ("ReadMe.txt", 100)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
 
 
 def test_template_without_any_known_configuration_is_still_written():
@@ -303,6 +322,46 @@ def test_template_without_any_known_configuration_is_still_written():
                       settings(only_configuration=True))
 
     assert plan.items[0].action is Action.WRITE
+
+
+def test_unknown_payload_survives_next_to_a_filtered_demo_base():
+    """
+    Незнакомый файл рядом с демобазой — и шаблон всё равно пишется.
+
+    Демобазу фильтр унёс, но `payload.bin` уцелел, и, быть может, он-то и
+    есть то, ради чего шаблон нужен. Правило «не осталось знакомой
+    конфигурации» выбрасывало его молча; правило «не осталось ничего, кроме
+    сопровождения» — нет.
+    """
+    found = supply("1c/странное/1_0", "1.0",
+                   [("payload.bin", 900), ("1cv8.dt", 800), ("1cv8.mft", 300)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.WRITE
+    assert plan.items[0].bytes_total == 1200, "демобаза всё равно отброшена"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["ReadMe.txt", "Версии библиотек.txt", "описание.html", "Изменения.pdf", "инструкция.doc"],
+)
+def test_documentation_alone_does_not_save_the_template(extra):
+    """
+    Сопровождение базу не делает: манифест, ReadMe, документация.
+
+    Ровно из них и состоял каталог Platform8Demo/1_0_41_3 после «без демобаз»
+    — и 1С показывала по нему пункт, который ничего не создаёт.
+    """
+    found = supply("1c/demo/1_0", "1.0",
+                   [("1cv8.dt", 800), ("1cv8.mft", 300), (extra, 100)])
+
+    plan = build_plan([Inspected(path="/d/a.zip", supplies=(found,))],
+                      settings(only_configuration=True))
+
+    assert plan.items[0].action is Action.SKIP
+    assert plan.items[0].reason is SkipReason.FILTERED_OUT
 
 
 def test_unsupported_container_becomes_a_skip_row():
