@@ -15,6 +15,9 @@ class DummyTranslator:
         return f"tr:{source}"
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 class TestSettingsService(unittest.TestCase):
     def setUp(self) -> None:
         self.translator = DummyTranslator()
@@ -120,6 +123,9 @@ class _DummyTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 # --- два каталога ------------------------------------------------------------
 
 

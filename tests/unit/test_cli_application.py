@@ -18,6 +18,9 @@ class DummyTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 class StubValidator(FileValidator):
     def __init__(self) -> None:
         super().__init__()
@@ -119,7 +122,7 @@ class TestCLIApplication(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertTrue(result.handled)
         self.assertEqual(self.validator.prepared_output, "out")
-        self.assertIn("files: 1", self.messages[0])
+        self.assertIn("1 file(s)", self.messages[0])
 
     def test_run_accepts_several_input_files(self) -> None:
         """Ради этого и переписана грамматика: до 2.0 здесь был код 2."""

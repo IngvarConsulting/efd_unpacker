@@ -171,10 +171,10 @@ def _summary(
     форм Qt пока не умеет. Форма «файлов: 1» верна при любом числе.
     """
     counts = _counts(plan, result)
-    parts = ["%s %d" % (translator.translate("Report", "files:"), source_count)]
-    for key, value in counts:
+    parts = [translator.translate_n("Report", COUNT_FILES, source_count)]
+    for source, value in counts:
         if value:
-            parts.append("%s %d" % (translator.translate("Report", key), value))
+            parts.append(translator.translate_n("Report", source, value))
     if result is None:
         parts.append("%s %s" % (
             translator.translate("Report", "to write:"), human_bytes(plan.bytes_to_write)))
@@ -185,6 +185,17 @@ def _summary(
             parts.append(translator.translate("Report", "stopped"))
     parts.append("%.1fs" % elapsed)
     return " · ".join(parts)
+
+
+#: Счётчики итоговой строки: что считаем и какой строкой это называется.
+#: Строки с %n — множественные: в русском у них три формы, и «шаблонов: 1»
+#: было обходом ровно этого.
+COUNT_FILES = "%n file(s)"
+COUNT_TEMPLATES = "%n template(s)"
+COUNT_DISTRIBUTIONS = "%n distribution(s)"
+COUNT_OTHER = "%n other file(s)"
+COUNT_SKIPPED = "%n skipped"
+COUNT_ERRORS = "%n error(s)"
 
 
 def _counts(plan: Plan, result=None) -> List[Tuple[str, int]]:
@@ -205,11 +216,11 @@ def _counts(plan: Plan, result=None) -> List[Tuple[str, int]]:
         failed = len(result.failed)
         skipped = len(result.skipped)
     return [
-        ("templates:", kinds[ItemKind.SUPPLY]),
-        ("distributions:", kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
-        ("other:", kinds[ItemKind.CONTENT] + kinds[ItemKind.OTHER]),
-        ("skipped:", skipped),
-        ("errors:", failed),
+        (COUNT_TEMPLATES, kinds[ItemKind.SUPPLY]),
+        (COUNT_DISTRIBUTIONS, kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
+        (COUNT_OTHER, kinds[ItemKind.CONTENT] + kinds[ItemKind.OTHER]),
+        (COUNT_SKIPPED, skipped),
+        (COUNT_ERRORS, failed),
     ]
 
 

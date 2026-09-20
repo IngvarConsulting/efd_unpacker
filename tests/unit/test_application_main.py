@@ -39,6 +39,9 @@ class StubTranslator:
         return self.mapping.get((context, source), source)
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def test_plain_path_is_returned_unchanged(tmp_path):
     """Обычный путь — не URL, разбирать нечего. Абсолютным его сделает валидатор."""
     assert process_file_argument("input.efd") == "input.efd"

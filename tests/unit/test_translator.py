@@ -10,6 +10,7 @@ from efd_unpacker.application.messages import (
     format_unpack_result,
     format_validation_error,
 )
+from efd_unpacker.application import report
 from efd_unpacker.application.report import format_plan
 from efd_unpacker.domain.batch import BatchResult
 from efd_unpacker.domain.plan import Action, ItemKind, Plan, PlannedItem, SkipReason
@@ -21,6 +22,9 @@ from efd_unpacker.domain.errors import (
 )
 from efd_unpacker.localization import translator as translator_module
 from efd_unpacker.localization.translator import Translator
+
+#: Настоящие каталоги: тесты форм проверяют то, что поедет в сборку.
+_TRANSLATIONS = Path(__file__).resolve().parents[2] / "translations"
 
 
 def create_ts(tmpdir, lang, context, source, translation):
@@ -80,7 +84,7 @@ def _source_keys():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if getattr(node.func, "attr", None) not in ("translate", "_t"):
+            if getattr(node.func, "attr", None) not in ("translate", "translate_n", "_t"):
                 continue
             arguments = node.args
             if len(arguments) < 2:
@@ -107,6 +111,9 @@ class RecordingTranslator:
         return source
 
 
+    def translate_n(self, context: str, source: str, n: int) -> str:
+        """Множественная форма: двойнику достаточно подставить число."""
+        return self.translate(context, source).replace("%n", str(n))
 def _message_layer_keys():
     """Всё, что messages.py способен спросить: по члену enum и по причине порчи."""
     recorder = RecordingTranslator()
@@ -188,11 +195,17 @@ def _window_layer_keys():
     """
     from efd_unpacker.presentation import ui
 
+    from efd_unpacker.application import report
+
     keys = {("MainWindow", ui.ROLE_TEMPLATES), ("MainWindow", ui.ROLE_DISTRIBUTIONS)}
     keys |= {("Report", key) for key in ui.REASON_KEYS.values()}
-    # Подписи итоговой строки окна: те же ключи, что у отчёта CLI.
-    keys |= {("Report", key) for key in (
-        "files:", "templates:", "distributions:", "other:", "skipped:", "errors:")}
+    # Подписи итоговой строки окна: те же ключи, что у отчёта CLI. Берутся из
+    # самого отчёта, а не переписываются сюда: переписанный список пережил
+    # смену ключей на множественные формы и пять суток показывал их живыми.
+    keys |= {("Report", source) for source in (
+        report.COUNT_FILES, report.COUNT_TEMPLATES, report.COUNT_DISTRIBUTIONS,
+        report.COUNT_OTHER, report.COUNT_SKIPPED, report.COUNT_ERRORS,
+    )}
     return keys
 
 
@@ -394,3 +407,170 @@ def test_real_catalog_has_no_draft_entries_left():
     ]
 
     assert not drafts, drafts
+
+
+# --- множественные формы -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "count, expected",
+    [(1, "1 файл"), (2, "2 файла"), (5, "5 файлов"),
+     (11, "11 файлов"), (21, "21 файл"), (112, "112 файлов")],
+)
+def test_russian_plural_forms(count, expected):
+    """
+    Критерий #61: все шесть чисел из задачи.
+
+    Одиннадцать и сто двенадцать здесь не для полноты: на них ошибается
+    наивное правило «смотрим последнюю цифру», а именно оно первым приходит
+    в голову.
+    """
+    translator = Translator(lang="ru", translations_dir=str(_TRANSLATIONS))
+
+    assert translator.translate_n("Report", report.COUNT_FILES, count) == expected
+
+
+@pytest.mark.parametrize(
+    "count, expected", [(1, "1 file"), (2, "2 files"), (21, "21 files")]
+)
+def test_english_has_two_forms(count, expected):
+    """У английского форм две, и «1 files» — такая же ошибка, как «1 файлов»."""
+    translator = Translator(lang="en", translations_dir=str(_TRANSLATIONS))
+
+    assert translator.translate_n("Report", report.COUNT_FILES, count) == expected
+
+
+def test_region_in_the_language_code_does_not_lose_the_rule():
+    """
+    «ru_RU» — тоже русский.
+
+    Свой detect_system_language отдаёт ровно «ru», но Translator — открытый
+    конструктор, и код языка с регионом в него попасть может. Без отсечения
+    региона он молча свалился бы на английские две формы: «5 файла» вместо
+    «5 файлов».
+
+    Проверяется на пяти, а не на двух: на двойке русское правило и
+    английское дают один и тот же номер формы, и подмена была бы не видна.
+    """
+    translator = Translator(lang="ru_RU", translations_dir=str(_TRANSLATIONS))
+
+    assert translator.plural_form(5) == 2, "выбрана форма не по русскому правилу"
+    assert translator.translate_n("Report", report.COUNT_FILES, 5) == "5 файлов"
+
+
+def test_missing_catalog_falls_back_to_the_source_with_the_number(tmp_path):
+    """Без перевода строка английская и несклоняемая — но с числом."""
+    translator = Translator(lang="xx", translations_dir=str(tmp_path))
+
+    assert translator.translate_n("Report", "%n file(s)", 7) == "7 file(s)"
+
+
+def test_entry_with_one_form_instead_of_three_is_not_shown_as_empty(tmp_path):
+    """
+    Пустая форма считается отсутствующей.
+
+    Каталог с пропуском обязан вести себя как каталог без записи: показать
+    пустое место вместо слова хуже, чем показать английское.
+    """
+    (tmp_path / "ru.ts").write_text(
+        '<?xml version="1.0" encoding="utf-8"?><TS version="2.1" language="ru_RU">'
+        "<context><name>Report</name>"
+        '<message numerus="yes"><source>%n file(s)</source><translation>'
+        "<numerusform>%n файл</numerusform><numerusform></numerusform>"
+        "<numerusform>%n файлов</numerusform></translation></message>"
+        "</context></TS>",
+        encoding="utf-8",
+    )
+    translator = Translator(lang="ru", translations_dir=str(tmp_path))
+
+    assert translator.translate_n("Report", "%n file(s)", 1) == "1 файл"
+    assert translator.translate_n("Report", "%n file(s)", 2) == "2 file(s)"
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_every_numerus_entry_has_all_its_forms(lang):
+    """
+    Критерий #61: отсутствующая форма ловится сторожевым тестом.
+
+    Запись с одной формой вместо трёх читается как полноценная и падает не
+    на сборке, а у человека — на числе, которое в неё не попало.
+    """
+    translator = Translator(lang=lang, translations_dir=str(_TRANSLATIONS))
+    expected = translator.forms_expected()
+    tree = ET.parse(_TRANSLATIONS / ("%s.ts" % lang))
+
+    short = []
+    for context in tree.getroot().findall("context"):
+        name = context.find("name")
+        for message in context.findall("message"):
+            if message.get("numerus") != "yes":
+                continue
+            source = message.find("source")
+            forms = message.find("translation").findall("numerusform")
+            filled = [form for form in forms if (form.text or "").strip()]
+            if len(filled) != expected:
+                short.append("[%s] %s: форм %d из %d" % (
+                    name.text, source.text, len(filled), expected,
+                ))
+
+    assert not short, "\n".join(short)
+
+
+def test_summary_of_info_reads_as_the_mockup_says():
+    """
+    Критерий #61: итоговая строка совпадает с макетом по форме.
+
+    Было «шаблонов: 10» — верно при любом числе, но это обход. Стало
+    «10 шаблонов», «1 шаблон», «2 шаблона».
+    """
+    from efd_unpacker.domain.plan import Action, ItemKind, Plan, PlannedItem
+
+    def item(kind, count):
+        return [
+            PlannedItem(
+                kind=kind, title="t", version="1", source=("a",), origin="/d/a",
+                destination="/root/x", bytes_total=1, action=Action.WRITE,
+            )
+            for _ in range(count)
+        ]
+
+    plan = Plan(items=tuple(item(ItemKind.SUPPLY, 10) + item(ItemKind.PLATFORM, 4)))
+    translator = Translator(lang="ru", translations_dir=str(_TRANSLATIONS))
+
+    summary = report.format_plan(translator, plan, source_count=15, elapsed=0.4)
+
+    assert "15 файлов · 10 шаблонов · 4 дистрибутива" in summary
+
+
+def test_region_in_the_language_code_finds_the_catalog(tmp_path):
+    """
+    Каталог ищется и по языку без региона.
+
+    Иначе «ru_RU» давал бы половинчатое поведение: правило форм русское,
+    а слова английские, — потому что регион отсекает правило, но не имя файла.
+    """
+    (tmp_path / "ru.ts").write_text(
+        '<?xml version="1.0" encoding="utf-8"?><TS version="2.1" language="ru_RU">'
+        "<context><name>Report</name><message><source>files:</source>"
+        "<translation>файлов:</translation></message></context></TS>",
+        encoding="utf-8",
+    )
+
+    assert Translator(lang="ru_RU", translations_dir=str(tmp_path)).translate(
+        "Report", "files:"
+    ) == "файлов:"
+
+
+def test_exact_catalog_wins_over_the_base_language(tmp_path):
+    """Точный каталог важнее отката: «pt_BR» — не то же, что «pt»."""
+    for name, word in (("pt", "base"), ("pt_BR", "exact")):
+        (tmp_path / ("%s.ts" % name)).write_text(
+            '<?xml version="1.0" encoding="utf-8"?><TS version="2.1">'
+            "<context><name>Report</name><message><source>files:</source>"
+            "<translation>%s</translation></message></context></TS>" % word,
+            encoding="utf-8",
+        )
+
+    assert Translator(lang="pt_BR", translations_dir=str(tmp_path)).translate(
+        "Report", "files:"
+    ) == "exact"
