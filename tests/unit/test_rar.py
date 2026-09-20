@@ -375,6 +375,9 @@ def test_explicit_tool_comes_first(tmp_path, monkeypatch):
     system = tmp_path / "bsdtar"
     system.write_text("#!/bin/sh\n", encoding="utf-8")
 
+    # Платформа задаётся явно: список кандидатов у каждой свой, и на Windows
+    # bsdtar в нём отсутствует вовсе — тест проверял бы пустоту вместо порядка.
+    monkeypatch.setattr(rar.sys, "platform", "darwin")
     monkeypatch.setattr(rar.shutil, "which", lambda name: str(system) if name == "bsdtar" else None)
     monkeypatch.setattr(rar, "_version", lambda *_args: "x")
 
