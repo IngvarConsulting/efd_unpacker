@@ -143,6 +143,10 @@
         <translation>файл неполный, скорее всего загрузка оборвалась</translation>
     </message>
     <message>
+        <source>the file is not an EFD archive or its contents are damaged</source>
+        <translation>файл не является архивом EFD или его содержимое повреждено</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="26"/>
         <source>the file is too short to be an EFD archive</source>
         <translation>файл слишком короткий для архива EFD</translation>
