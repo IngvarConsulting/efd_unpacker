@@ -275,14 +275,19 @@ class CLIApplication:
         templates = values.get("templates_root", "")
         if require_templates and not templates:
             return None
-        templates = templates or get_1c_configuration_location_default()
+        # Раскрываем ~ здесь: план строится по этому значению, а пишет
+        # prepare_output_directory по раскрытому. Пока они расходились,
+        # «уже установлено» не срабатывало никогда, а в отчёте стоял путь,
+        # в который файлы не попадали.
+        templates = os.path.expanduser(templates or get_1c_configuration_location_default())
+        distributions = values.get("distributions_root")
 
         return Options(
             paths=tuple(paths),
             templates_root=templates,
             distributions_root=(
-                values.get("distributions_root")
-                or get_distributions_location_default(templates)
+                os.path.expanduser(distributions) if distributions
+                else get_distributions_location_default(templates)
             ),
             rar_tool=values.get("rar_tool"),
             only_configuration="only" in values,

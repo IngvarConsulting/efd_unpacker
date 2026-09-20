@@ -275,3 +275,111 @@ def test_existing_read_only_file_is_replaced(tmp_path):
 
     with open(target, "rb") as handle:
         assert handle.read() == "новая версия".encode("utf-8")
+
+
+# --- находки обзора ----------------------------------------------------------
+
+
+def test_extracted_file_keeps_usable_permissions(tmp_path):
+    """
+    mkstemp создаёт файл с 0600, и os.replace переносит режим на цель.
+
+    Без правки распакованный setup-full-*.run переставал быть исполняемым и
+    требовал chmod руками — а это основной сценарий дистрибутива платформы.
+    """
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("setup-full-8.3.27.2342-x86_64.run", b"#!/bin/sh\n"),
+    ]))
+
+    Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    target = os.path.join(
+        roots.distributions_root, "platform", "8.3.27.2342", "full-x86_64",
+        "setup-full-8.3.27.2342-x86_64.run",
+    )
+    assert os.stat(target).st_mode & 0o077 != 0, "режим остался 0600"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="символьные ссылки требуют прав на Windows")
+def test_intermediate_symlink_cannot_lead_outside(tmp_path):
+    """
+    Каталог назначения мог уже содержать ссылку наружу.
+
+    Тогда `docs/file` проходит проверку имени, а os.makedirs идёт по ссылке, и
+    файл — вместе с временным — оказывается за пределами каталога. Тот же
+    класс дефекта, что уже был в .dmg и в .rar, теперь на третьем пути.
+    """
+    outside = tmp_path / "снаружи"
+    outside.mkdir()
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("setup-full-8.3.27.2342-x86_64.run", b"x"),
+        ("docs/secret.txt", b"PAYLOAD"),
+    ]))
+    destination = plan.items[0].destination
+    os.makedirs(destination, exist_ok=True)
+    os.symlink(str(outside), os.path.join(destination, "docs"))
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.UNSAFE_ENTRY
+    assert not (outside / "secret.txt").exists(), "файл ушёл за пределы назначения"
+
+
+def test_entries_normalising_to_one_path_are_refused(tmp_path):
+    """
+    `a.txt` и `./a.txt` — разные имена и один путь.
+
+    Молча записать обе значит потерять первую, а план при этом насчитал два
+    файла и их байты. То же правило, что для записей .efd.
+    """
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("setup-full-8.3.27.2342-x86_64.run", b"i"),
+        ("a.txt", b"FIRST"),
+        ("./a.txt", b"SECOND"),
+    ]))
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.details["reason"] == "duplicate_entry"
+
+
+def test_dmg_source_is_reopened_through_the_image_reader(tmp_path, monkeypatch):
+    """
+    Осмотр монтирует образ, значит и запись обязана его монтировать.
+
+    Пока исполнитель звал walk, план по .dmg получался исполнимым на вид —
+    «записать 30 файлов», — а распаковка не записывала ни одного.
+    """
+    from contextlib import contextmanager
+
+    from efd_unpacker.application import sources
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    payload = tmp_path / "внутри.bin"
+    payload.write_bytes(b"image")
+    image = tmp_path / "client.dmg"
+    image.write_bytes(b"\x00" * 600)
+    leaf = Leaf(trail=("client.dmg", "1cv8-client-8.5.1.1529.pkg"), size=5,
+                opener=lambda: open(payload, "rb"))
+
+    mounted = []
+
+    @contextmanager
+    def fake_open_dmg(_path):
+        mounted.append(1)
+        yield (leaf,)
+
+    monkeypatch.setattr(sources, "dmg_supported", lambda: True)
+    monkeypatch.setattr(sources, "open_dmg", fake_open_dmg)
+
+    roots = PlanSettings(
+        templates_root=str(tmp_path / "t"), distributions_root=str(tmp_path / "d")
+    )
+    plan = build_plan(inspect_all([str(image)]), roots)
+    Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert len(mounted) == 2, "образ должен монтироваться и на осмотре, и на записи"
+    written = _tree(roots.distributions_root)
+    assert written and written[0].endswith("1cv8-client-8.5.1.1529.pkg")

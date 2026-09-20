@@ -37,6 +37,20 @@ def plan(*items):
     return Plan(items=tuple(items))
 
 
+class _Result:
+    """Результат батча в объёме, который нужен отчёту."""
+
+    def __init__(self, written=(), failed=(), skipped=(), cancelled=False):
+        self.written = written
+        self.failed = failed
+        self.skipped = skipped
+        self.cancelled = cancelled
+
+    @property
+    def bytes_written(self):
+        return sum(entry.bytes_total for entry in self.written)
+
+
 def _rows(text):
     """
     Только строки таблицы.
@@ -280,3 +294,43 @@ def test_json_is_stable_for_the_same_plan():
     same = plan(item(), item(kind=ItemKind.PLATFORM))
 
     assert format_json(same, 2, 0.1) == format_json(same, 2, 0.1)
+
+
+def test_summary_counts_failures_that_happened_while_writing():
+    """
+    После исполнения отказы считаются по результату, а не по плану.
+
+    В плане отмечены только отказы осмотра, поэтому прогон, где не записалось
+    ничего, печатал «errors: 0» — и расходился с --json, который уже брал
+    число из результата.
+    """
+    written, failed = item(title="A"), item(title="B")
+    text = format_plan(
+        Passthrough(), plan(written, failed), source_count=2, elapsed=0.1,
+        result=_Result(written=(written,),
+                       failed=((failed, UnpackError(UnpackErrorCode.PERMISSION)),)),
+    )
+    summary = text.splitlines()[-1]
+
+    assert "errors: 1" in summary
+    assert "written:" in summary
+
+
+def test_outcome_key_separates_files_with_the_same_name():
+    """
+    Два входных файла с одинаковым именем в разных каталогах дают одну тропу
+    и одно назначение. Без origin в ключе исход одного затирал исход другого,
+    и в отчёте оказывался чужой результат.
+    """
+    first = item(title="A", origin="/x/demo.zip", source=("demo.zip", "1cv8.efd"))
+    second = item(title="B", origin="/y/demo.zip", source=("demo.zip", "1cv8.efd"))
+    text = format_plan(
+        Passthrough(), plan(first, second), source_count=2, elapsed=0.1,
+        result=_Result(written=(first,),
+                       failed=((second, UnpackError(UnpackErrorCode.PERMISSION)),)),
+    )
+
+    rows = [line for line in text.splitlines() if line.startswith(("written", "error"))]
+    assert len(rows) == 2
+    assert rows[0].startswith("written") and "A" in rows[0]
+    assert rows[1].startswith("error") and "B" in rows[1]

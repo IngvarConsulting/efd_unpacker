@@ -12,19 +12,14 @@
 
 from __future__ import annotations
 
-import os
 from typing import Callable, Iterable, List, Optional, Sequence
 
 from ..domain.errors import UnpackError, UnpackErrorCode
 from ..domain.plan import FoundFile, FoundSupply, Inspected
 from ..domain.supply import read_catalog
-from ..infrastructure.containers import MAX_DEPTH, Leaf, dmg_supported, open_dmg, walk
+from ..infrastructure.containers import MAX_DEPTH, Leaf
+from .sources import leaves_of
 
-#: Образ .dmg узнаётся по расширению, а не по содержимому — в отличие от всех
-#: остальных видов. Заглянуть внутрь без монтирования нельзя, сигнатуры в начале
-#: файла у него нет (служебные данные лежат в хвосте), поэтому detect_kind вернул
-#: бы None и образ уехал бы в план как одиночный непонятный файл.
-DMG_SUFFIX = ".dmg"
 EFD_SUFFIX = ".efd"
 
 #: Вызывается перед осмотром каждого файла. Нужен, чтобы показать прогресс,
@@ -80,20 +75,10 @@ def inspect(path: str, max_depth: int = MAX_DEPTH) -> Inspected:
 
 
 def _inspect(path: str, max_depth: int) -> Inspected:
-    if path.lower().endswith(DMG_SUFFIX):
-        if not dmg_supported():
-            # Честный отказ вместо осмотра образа как обычного файла: под Linux
-            # и Windows .dmg не смонтировать, и выдавать его за «ничего не
-            # нашли» значило бы соврать о содержимом.
-            raise UnpackError(
-                UnpackErrorCode.CONTAINER_UNSUPPORTED,
-                {"entry": os.path.basename(path), "kind": "dmg"},
-            )
-        with open_dmg(path) as leaves:
-            # Потоки образа действительны только пока он смонтирован, поэтому
-            # оглавления читаются здесь, внутри контекста, а не после выхода.
-            return _from_leaves(path, leaves)
-    return _from_leaves(path, walk(path, max_depth))
+    # Внутри контекста: потоки смонтированного образа действительны только пока
+    # он подключён, поэтому оглавления читаются здесь, а не после выхода.
+    with leaves_of(path, max_depth) as leaves:
+        return _from_leaves(path, leaves)
 
 
 def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:

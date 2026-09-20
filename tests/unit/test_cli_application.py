@@ -1,3 +1,4 @@
+import os
 import unittest
 from typing import List
 
@@ -333,3 +334,28 @@ def test_failure_during_writing_shows_its_reason():
     assert result.exit_code == 1
     assert "Permission error" in messages[0], messages
     assert "out/1c/D/1_0" not in messages[0], "показан путь вместо причины"
+
+
+def test_home_shortcut_is_expanded_before_planning():
+    """
+    План строится по одному пути, а запись идёт по другому.
+
+    prepare_output_directory раскрывает ~, разбор — нет. Пока они расходились,
+    «уже установлено» не срабатывало никогда, а в отчёте стоял путь, в который
+    файлы не попадали.
+    """
+    options = _cli_with_output(_Recorder())._parse(
+        ["a.zip", "-tmplts", "~/1c/tmplts"], True
+    )
+
+    assert not options.templates_root.startswith("~")
+    assert options.templates_root == os.path.expanduser("~/1c/tmplts")
+    assert not options.distributions_root.startswith("~")
+
+
+def test_home_shortcut_is_expanded_for_the_distributions_root():
+    options = _cli_with_output(_Recorder())._parse(
+        ["a.zip", "-tmplts", "/t", "--dist", "~/дистрибутивы"], True
+    )
+
+    assert options.distributions_root == os.path.expanduser("~/дистрибутивы")

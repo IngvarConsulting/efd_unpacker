@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Callable, Iterator, Optional, Set
+from contextlib import contextmanager
+from typing import Callable, List, Optional, Set, Tuple
 
 from ..domain.errors import UnpackError, UnpackErrorCode
 from ..domain.plan import PlannedItem, keeps_configuration
 from ..domain.supply import safe_relative_parts
 from ..domain.unpack_service import UnpackService
-from ..infrastructure.containers import Leaf, walk
+from ..domain.writing import apply_file_mode, reject_conflicting_entries, resolve_entry_path
+from ..infrastructure.containers import Leaf
+from .sources import leaves_of
 
 CHUNK = 1024 * 1024
 
@@ -54,21 +57,30 @@ class Writers:
         и складывать их ещё раз внутрь него значило бы удвоить путь.
         """
         keep = self._keep_for(item)
-        with self._open(item) as handle:
-            self._service.unpack_stream(
-                handle, self._templates_root, self._cancel_check, keep=keep
-            )
+        with self._source(item.origin) as leaves:
+            handle = self._pick(leaves, item)
+            with handle:
+                self._service.unpack_stream(
+                    handle, self._templates_root, self._cancel_check, keep=keep
+                )
 
     def extract_other(self, item: PlannedItem) -> None:
         """Раскладывает файлы дистрибутива в его каталог назначения."""
         wanted = {found.trail for found in item.files}
         written = 0
-        for leaf in self._leaves(item.origin):
-            if leaf.trail not in wanted:
-                continue
-            self._raise_if_cancelled()
-            self._write_leaf(leaf, item.destination)
-            written += 1
+        with self._source(item.origin) as leaves:
+            chosen = [leaf for leaf in leaves if leaf.trail in wanted]
+            # Проверяем все имена и только потом пишем: отклонить на середине
+            # значит оставить пользователю половину файлов. Заодно ловится
+            # случай, когда `a.txt` и `./a.txt` дают один и тот же путь.
+            names = [self._relative(leaf) for leaf in chosen]
+            reject_conflicting_entries(
+                [leaf.display_path for leaf in chosen], [list(parts) for parts in names]
+            )
+            for leaf, parts in zip(chosen, names):
+                self._raise_if_cancelled()
+                self._write_leaf(leaf, item.destination, parts)
+                written += 1
 
         if written != len(wanted):
             # Между осмотром и записью файл успел измениться, либо внешняя
@@ -101,8 +113,9 @@ class Writers:
 
         return keep
 
-    def _open(self, item: PlannedItem):
-        for leaf in self._leaves(item.origin):
+    @staticmethod
+    def _pick(leaves, item: PlannedItem):
+        for leaf in leaves:
             if leaf.trail == item.source:
                 return leaf.opener()
         raise UnpackError(
@@ -110,17 +123,27 @@ class Writers:
             {"entry": " → ".join(item.source), "path": item.origin},
         )
 
-    def _leaves(self, origin: str) -> Iterator[Leaf]:
+    @staticmethod
+    def _relative(leaf: Leaf) -> Tuple[str, ...]:
+        """Путь файла внутри каталога назначения, из санированных частей."""
+        parts: List[str] = []
+        # Первый элемент тропы — сам архив, внутрь которого мы уже вошли.
+        for element in leaf.trail[1:]:
+            parts.extend(safe_relative_parts(element))
+        return tuple(parts)
+
+    @contextmanager
+    def _source(self, origin: str):
         """
-        Обход источника с переводом отказов файловой системы в домен.
+        Источник с переводом отказов файловой системы в домен.
 
         Между осмотром и записью файл могли удалить или закрыть доступ. Без
         перевода пользователь видел бы «Неожиданная ошибка» там, где точный
         код «Файл не найден» уже есть.
         """
         try:
-            for leaf in walk(origin):
-                yield leaf
+            with leaves_of(origin) as leaves:
+                yield leaves
         except FileNotFoundError as exc:
             raise UnpackError(UnpackErrorCode.FILE_NOT_FOUND, {"path": origin}) from exc
         except PermissionError as exc:
@@ -128,18 +151,18 @@ class Writers:
                 UnpackErrorCode.PERMISSION, {"path": origin, "error": str(exc)}
             ) from exc
 
-    def _write_leaf(self, leaf: Leaf, destination: str) -> None:
-        """Один файл из контейнера, атомарно."""
-        parts = []
-        # Первый элемент тропы — сам архив, внутрь которого мы уже вошли.
-        for element in leaf.trail[1:]:
-            parts.extend(safe_relative_parts(element))
-        path = os.path.join(destination, *parts)
-        os.makedirs(os.path.dirname(path) or destination, exist_ok=True)
+    def _write_leaf(self, leaf: Leaf, destination: str, parts: Tuple[str, ...]) -> None:
+        """Один файл из контейнера, атомарно и внутри каталога назначения."""
+        root = os.path.realpath(destination)
+        os.makedirs(root, exist_ok=True)
+        # Проверка до makedirs подкаталогов: промежуточный симлинк наружу иначе
+        # увёл бы и временный файл, и окончательный за пределы назначения.
+        path = resolve_entry_path(root, leaf.display_path, list(parts))
+        directory = os.path.dirname(path) or root
+        os.makedirs(directory, exist_ok=True)
+        resolve_entry_path(root, leaf.display_path, list(parts))
 
-        descriptor, temporary = tempfile.mkstemp(
-            dir=os.path.dirname(path) or destination, prefix=".efd-", suffix=".part"
-        )
+        descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
         try:
             with os.fdopen(descriptor, "wb") as out_file, leaf.opener() as source:
                 while True:
@@ -148,6 +171,10 @@ class Writers:
                     if not chunk:
                         break
                     out_file.write(chunk)
+            # mkstemp создаёт файл с 0600, и os.replace переносит этот режим на
+            # цель: без этой строки распакованный setup-full-*.run переставал
+            # быть исполняемым и требовал chmod руками.
+            apply_file_mode(temporary, path)
             os.replace(temporary, path)
         except BaseException:
             try:

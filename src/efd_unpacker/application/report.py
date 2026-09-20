@@ -92,7 +92,14 @@ def _outcomes(result) -> Dict[Tuple[str, ...], Tuple[str, object]]:
 
 
 def _key(item: PlannedItem) -> Tuple[str, ...]:
-    return item.source + (item.destination,)
+    """
+    Ключ исхода: откуда взяли, что внутри и куда кладём.
+
+    Без origin два файла с одинаковым именем в разных каталогах давали один
+    ключ, и исход одного затирал исход другого — в отчёте оказывался чужой
+    результат.
+    """
+    return (item.origin,) + item.source + (item.destination,)
 
 
 def _row(
@@ -163,7 +170,7 @@ def _summary(
     «2 файла», «5 файлов» — три разные формы, а загрузчик переводов множественных
     форм Qt пока не умеет. Форма «файлов: 1» верна при любом числе.
     """
-    counts = _counts(plan)
+    counts = _counts(plan, result)
     parts = ["%s %d" % (translator.translate("Report", "files:"), source_count)]
     for key, value in counts:
         if value:
@@ -180,7 +187,7 @@ def _summary(
     return " · ".join(parts)
 
 
-def _counts(plan: Plan) -> List[Tuple[str, int]]:
+def _counts(plan: Plan, result=None) -> List[Tuple[str, int]]:
     kinds = {kind: 0 for kind in ItemKind}
     skipped = failed = 0
     for item in plan.items:
@@ -190,6 +197,13 @@ def _counts(plan: Plan) -> List[Tuple[str, int]]:
             skipped += 1
         else:
             kinds[item.kind] += 1
+
+    if result is not None:
+        # После исполнения считать отказы по плану нельзя: отказ при записи там
+        # не отмечен, и прогон, где не записалось вообще ничего, печатал
+        # «отказов: 0», расходясь с --json.
+        failed = len(result.failed)
+        skipped = len(result.skipped)
     return [
         ("templates:", kinds[ItemKind.SUPPLY]),
         ("distributions:", kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
