@@ -6,14 +6,18 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import stat
 import tempfile
 import zlib
-from typing import BinaryIO, Callable, List, Optional, Protocol
+from typing import BinaryIO, Callable, Optional, Protocol
 
 import onec_dtools
 
 from .errors import UnpackError, UnpackErrorCode
+from .writing import (
+    apply_file_mode,
+    reject_conflicting_entries,
+    resolve_entry_path,
+)
 from .supply import parse_catalog
 
 
@@ -33,9 +37,6 @@ MIN_REPRESENTABLE_MTIME = dt.datetime(1678, 1, 1)
 # этот режим на цель, поэтому его нужно выставлять явно — иначе распакованные
 # шаблоны становятся доступны только владельцу. umask читаем один раз на
 # импорте: процесс в этот момент однопоточный.
-_UMASK = os.umask(0)
-os.umask(_UMASK)
-DEFAULT_FILE_MODE = 0o644 & ~_UMASK
 
 # Порция, которую zlib отдаёт за один вызов. Ограничивает пиковую память:
 # без max_length один чанк входа может развернуться в гигабайты одним объектом.
@@ -48,92 +49,12 @@ MAX_COMPRESSION_RATIO = 200
 MIN_RATIO_CHECK_BYTES = 128 * 1024 * 1024
 
 
-def _resolve_entry_path(output_root: str, src_path: str, parts: List[str]) -> str:
-    """
-    Возвращает путь записи внутри output_root или поднимает UnpackError.
-
-    Проверка идёт через commonpath, а не через startswith: строковый префикс
-    считает `/tmp/out2` находящимся внутри `/tmp/out`. realpath дополнительно
-    закрывает случай, когда промежуточный каталог оказался симлинком наружу.
-    """
-    target = os.path.join(output_root, *parts)
-
-    try:
-        if os.path.commonpath([output_root, os.path.realpath(target)]) != output_root:
-            raise UnpackError(UnpackErrorCode.UNSAFE_ENTRY, {"entry": src_path})
-    except ValueError as exc:
-        # Разные диски на Windows или смесь абсолютного и относительного пути.
-        raise UnpackError(UnpackErrorCode.UNSAFE_ENTRY, {"entry": src_path}) from exc
-
-    return target
-
-
 def _check_decompression_budget(total_out: int, total_in: int) -> None:
     """Прерывает распаковку, если поток разворачивается неправдоподобно сильно."""
     if total_out > MAX_TOTAL_BYTES:
         raise UnpackError(UnpackErrorCode.TOO_LARGE, {"unpacked": total_out})
     if total_out > MIN_RATIO_CHECK_BYTES and total_out > MAX_COMPRESSION_RATIO * max(total_in, 1):
         raise UnpackError(UnpackErrorCode.TOO_LARGE, {"unpacked": total_out, "packed": total_in})
-
-
-def _reject_conflicting_entries(src_paths: List[str], parts_list: List[List[str]]) -> None:
-    """
-    Отвергает архив, в котором записи затирают друг друга.
-
-    Без этой проверки дубль имени молча терял первую запись, а имя, совпадающее
-    с каталогом соседней записи, роняло распаковку на середине с FileExistsError
-    из недр os.makedirs — то есть с сообщением «Неожиданная ошибка».
-
-    Ключи строятся из тех же компонентов, что и целевой путь, а не из сырого
-    имени: иначе `a.txt` и `./a.txt` считались бы разными записями и вторая
-    молча перезаписала бы первую.
-
-    Сравнение регистронезависимое: на APFS и NTFS `README.txt` и `readme.txt` —
-    один и тот же файл.
-    """
-    keys = ["/".join(parts).casefold() for parts in parts_list]
-
-    seen = set()
-    for key, src_path in zip(keys, src_paths):
-        if key in seen:
-            raise UnpackError(
-                UnpackErrorCode.CORRUPTED_ARCHIVE,
-                {"reason": "duplicate_entry", "entry": src_path},
-            )
-        seen.add(key)
-
-    for key, src_path in zip(keys, src_paths):
-        components = key.split("/")
-        for depth in range(1, len(components)):
-            if "/".join(components[:depth]) in seen:
-                raise UnpackError(
-                    UnpackErrorCode.CORRUPTED_ARCHIVE,
-                    {"reason": "entry_is_also_directory", "entry": src_path},
-                )
-
-
-def _apply_file_mode(temporary: str, path: str) -> None:
-    """
-    Выставляет режим временному файлу перед подстановкой на место цели.
-
-    mkstemp создаёт файл с 0600, и os.replace переносит этот режим на цель.
-    Если цель уже существует обычным файлом — сохраняем её режим, как делала
-    прежняя запись поверх; иначе берём обычные права для новых файлов.
-    lstat, а не stat: у симлинка режим брать нельзя.
-    """
-    mode = DEFAULT_FILE_MODE
-    try:
-        existing = os.lstat(path)
-        if stat.S_ISREG(existing.st_mode):
-            mode = stat.S_IMODE(existing.st_mode)
-    except OSError:
-        pass
-
-    try:
-        os.chmod(temporary, mode)
-    except OSError:
-        # На Windows chmod умеет немногое; права — не повод валить распаковку.
-        pass
 
 
 def _apply_file_mtime(path: str, modified_at: Optional[dt.datetime]) -> None:
@@ -164,6 +85,17 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
     def __init__(self, file: BinaryIO) -> None:
         super().__init__(file)
         self._cancel_check: Optional[Callable[[], bool]] = None
+        self._keep: Optional[Callable[[str], bool]] = None
+
+    def set_filter(self, keep: Callable[[str], bool]) -> None:
+        """
+        Ограничить распаковку частью записей.
+
+        Нужно для `--only cf` и для поставки с несколькими шаблонами, когда
+        распаковывается один. Отбор по пути записи, а не по индексу: индексы
+        сдвинутся, стоит формату добавить поле.
+        """
+        self._keep = keep
 
     def set_cancel_check(self, cancel_check: Callable[[], bool]) -> None:
         """Функция, по которой распаковка прерывается между записями."""
@@ -196,9 +128,9 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             # архив на середине значит оставить пользователю половину файлов.
             src_paths = [entry.path for entry in catalog.entries]
             parts_list = [list(entry.parts) for entry in catalog.entries]
-            _reject_conflicting_entries(src_paths, parts_list)
+            reject_conflicting_entries(src_paths, parts_list)
             paths = [
-                _resolve_entry_path(output_root, src_path, parts)
+                resolve_entry_path(output_root, src_path, parts)
                 for src_path, parts in zip(src_paths, parts_list)
             ]
 
@@ -208,6 +140,13 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                 # файлы целые. Удалять их нельзя — output_dir это общий каталог
                 # шаблонов, где лежат и чужие.
                 self._raise_if_cancelled(src_path)
+
+                if self._keep is not None and not self._keep(src_path):
+                    # Пропущенную запись надо перешагнуть в потоке: данные
+                    # записей лежат подряд, и следующая прочиталась бы не с
+                    # того места.
+                    buffer_file.seek(size, os.SEEK_CUR)
+                    continue
 
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 self._write_entry(buffer_file, path, src_path, size)
@@ -243,7 +182,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                              "expected": size, "actual": written},
                         )
                     written += out_file.write(data)
-            _apply_file_mode(temporary, path)
+            apply_file_mode(temporary, path)
             os.replace(temporary, path)
         except BaseException:
             try:
@@ -335,6 +274,7 @@ class UnpackService:
         handle: BinaryIO,
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]] = None,
+        keep: Optional[Callable[[str], bool]] = None,
     ) -> None:
         """
         Распаковывает уже открытый поток.
@@ -344,7 +284,7 @@ class UnpackService:
         копия весила бы 2.4 ГБ.
         """
         try:
-            self._unpack_handle(handle, output_dir, cancel_check)
+            self._unpack_handle(handle, output_dir, cancel_check, keep)
         except UnpackError:
             raise
         except FileNotFoundError as exc:
@@ -361,10 +301,17 @@ class UnpackService:
         handle: BinaryIO,
         output_dir: str,
         cancel_check: Optional[Callable[[], bool]],
+        keep: Optional[Callable[[str], bool]] = None,
     ) -> None:
         reader = self._reader_factory(handle)
         if cancel_check is not None:
             setter = getattr(reader, "set_cancel_check", None)
             if setter is not None:
                 setter(cancel_check)
+        if keep is not None:
+            # getattr, а не прямой вызов: reader_factory подменяется в тестах,
+            # и подставной reader не обязан знать про отбор.
+            setter = getattr(reader, "set_filter", None)
+            if setter is not None:
+                setter(keep)
         reader.unpack(output_dir)

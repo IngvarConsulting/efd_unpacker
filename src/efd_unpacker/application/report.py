@@ -45,10 +45,17 @@ _UNITS = ("B", "K", "M", "G", "T")
 
 
 def format_plan(
-    translator: Translator, plan: Plan, source_count: int, elapsed: float
+    translator: Translator, plan: Plan, source_count: int, elapsed: float, result=None
 ) -> str:
-    """Таблица плана целиком, вместе с заголовком путей и итогом."""
-    rows = [_row(translator, item) for item in plan.items]
+    """
+    Таблица плана целиком, вместе с заголовком путей и итогом.
+
+    `result` появляется после исполнения: те же строки, но исход в первой
+    колонке уже свершившийся, а не намеченный. Показывать план как есть после
+    распаковки нельзя — он обещал записать то, что могло и не записаться.
+    """
+    outcomes = _outcomes(result)
+    rows = [_row(translator, item, outcomes) for item in plan.items]
     prefix = _common_prefix([item.destination for item in plan.items if item.destination])
 
     lines: List[str] = []
@@ -60,17 +67,51 @@ def format_plan(
     lines.extend(_aligned(rows))
     if rows:
         lines.append("")
-    lines.append(_summary(translator, plan, source_count, elapsed))
+    lines.append(_summary(translator, plan, source_count, elapsed, result))
     return "\n".join(lines)
 
 
-def _row(translator: Translator, item: PlannedItem) -> Tuple[str, str, str, str, str]:
+def _outcomes(result) -> Dict[Tuple[str, ...], Tuple[str, object]]:
+    """
+    Что с каждым элементом случилось на самом деле, по ключу «откуда и куда».
+
+    Вместе с исходом хранится и ошибка: без неё отказавшая при записи строка
+    показывала путь назначения вместо причины — «отказ» без объяснения.
+
+    Ключ — источник плюс назначение: в одном файле бывает несколько шаблонов,
+    и одного имени файла для различения мало.
+    """
+    if result is None:
+        return {}
+    outcomes: Dict[Tuple[str, ...], Tuple[str, object]] = {}
+    for item in result.written:
+        outcomes[_key(item)] = ("written", None)
+    for item, error in result.failed:
+        outcomes[_key(item)] = ("error", error)
+    return outcomes
+
+
+def _key(item: PlannedItem) -> Tuple[str, ...]:
+    """
+    Ключ исхода: откуда взяли, что внутри и куда кладём.
+
+    Без origin два файла с одинаковым именем в разных каталогах давали один
+    ключ, и исход одного затирал исход другого — в отчёте оказывался чужой
+    результат.
+    """
+    return (item.origin,) + item.source + (item.destination,)
+
+
+def _row(
+    translator: Translator, item: PlannedItem, outcomes: Dict[Tuple[str, ...], Tuple[str, object]]
+) -> Tuple[str, str, str, str, str]:
+    outcome, error = outcomes.get(_key(item), (None, None))
     return (
-        _kind_label(translator, item),
+        translator.translate("Report", outcome) if outcome else _kind_label(translator, item),
         item.title,
         item.version,
         human_bytes(item.bytes_total) if item.bytes_total else "",
-        _where(translator, item),
+        _where(translator, item, error),
     )
 
 
@@ -85,8 +126,12 @@ def _kind_label(translator: Translator, item: PlannedItem) -> str:
     return translator.translate("Report", key)
 
 
-def _where(translator: Translator, item: PlannedItem) -> str:
-    """Последняя колонка: куда поедет, либо почему не поедет."""
+def _where(translator: Translator, item: PlannedItem, error=None) -> str:
+    """Последняя колонка: куда поедет, либо почему не поехало."""
+    if error is not None:
+        # Отказ случился при записи: обещанный путь здесь уже неинтересен,
+        # пользователю нужна причина.
+        return format_unpack_result(translator, success=False, error=error)
     if item.action is Action.FAIL:
         return format_unpack_result(translator, success=False, error=item.failure)
     if item.action is Action.SKIP:
@@ -115,7 +160,9 @@ def _aligned(rows: Sequence[Tuple[str, ...]]) -> List[str]:
     return lines
 
 
-def _summary(translator: Translator, plan: Plan, source_count: int, elapsed: float) -> str:
+def _summary(
+    translator: Translator, plan: Plan, source_count: int, elapsed: float, result=None
+) -> str:
     """
     Итоговая строка.
 
@@ -123,17 +170,24 @@ def _summary(translator: Translator, plan: Plan, source_count: int, elapsed: flo
     «2 файла», «5 файлов» — три разные формы, а загрузчик переводов множественных
     форм Qt пока не умеет. Форма «файлов: 1» верна при любом числе.
     """
-    counts = _counts(plan)
+    counts = _counts(plan, result)
     parts = ["%s %d" % (translator.translate("Report", "files:"), source_count)]
     for key, value in counts:
         if value:
             parts.append("%s %d" % (translator.translate("Report", key), value))
-    parts.append("%s %s" % (translator.translate("Report", "to write:"), human_bytes(plan.bytes_to_write)))
+    if result is None:
+        parts.append("%s %s" % (
+            translator.translate("Report", "to write:"), human_bytes(plan.bytes_to_write)))
+    else:
+        parts.append("%s %s" % (
+            translator.translate("Report", "written:"), human_bytes(result.bytes_written)))
+        if result.cancelled:
+            parts.append(translator.translate("Report", "stopped"))
     parts.append("%.1fs" % elapsed)
     return " · ".join(parts)
 
 
-def _counts(plan: Plan) -> List[Tuple[str, int]]:
+def _counts(plan: Plan, result=None) -> List[Tuple[str, int]]:
     kinds = {kind: 0 for kind in ItemKind}
     skipped = failed = 0
     for item in plan.items:
@@ -143,6 +197,13 @@ def _counts(plan: Plan) -> List[Tuple[str, int]]:
             skipped += 1
         else:
             kinds[item.kind] += 1
+
+    if result is not None:
+        # После исполнения считать отказы по плану нельзя: отказ при записи там
+        # не отмечен, и прогон, где не записалось вообще ничего, печатал
+        # «отказов: 0», расходясь с --json.
+        failed = len(result.failed)
+        skipped = len(result.skipped)
     return [
         ("templates:", kinds[ItemKind.SUPPLY]),
         ("distributions:", kinds[ItemKind.PLATFORM] + kinds[ItemKind.PACKAGES]),
@@ -152,22 +213,23 @@ def _counts(plan: Plan) -> List[Tuple[str, int]]:
     ]
 
 
-def format_json(plan: Plan, source_count: int, elapsed: float) -> str:
+def format_json(plan: Plan, source_count: int, elapsed: float, result=None) -> str:
     """
     План машинно. Ключи kind/action/reason — значения enum, а не переводы.
 
     Сортировка ключей отключена намеренно: порядок задан здесь и совпадает с
     порядком чтения, а не с алфавитом.
     """
+    outcomes = _outcomes(result)
     document = {
         "schema": JSON_SCHEMA,
-        "items": [_json_item(item) for item in plan.items],
-        "totals": _json_totals(plan, source_count, elapsed),
+        "items": [_json_item(item, outcomes) for item in plan.items],
+        "totals": _json_totals(plan, source_count, elapsed, result),
     }
     return json.dumps(document, ensure_ascii=False, indent=2)
 
 
-def _json_item(item: PlannedItem) -> Dict[str, object]:
+def _json_item(item: PlannedItem, outcomes: Dict[Tuple[str, ...], str]) -> Dict[str, object]:
     document: Dict[str, object] = {
         "kind": item.kind.value,
         "action": item.action.value,
@@ -183,6 +245,13 @@ def _json_item(item: PlannedItem) -> Dict[str, object]:
         document["reason"] = item.reason.value
     if item.failure is not None:
         document["error"] = _json_error(item.failure)
+    outcome, error = outcomes.get(_key(item), (None, None))
+    if outcome is not None:
+        # Отдельный ключ, а не подмена action: потребителю нужно и то, что
+        # планировалось, и то, что вышло.
+        document["outcome"] = "written" if outcome == "written" else "failed"
+    if error is not None:
+        document["error"] = _json_error(error)
     return document
 
 
@@ -199,8 +268,10 @@ def _plain(value: object) -> object:
     return value if isinstance(value, (int, float, bool, str)) or value is None else str(value)
 
 
-def _json_totals(plan: Plan, source_count: int, elapsed: float) -> Dict[str, object]:
-    return {
+def _json_totals(
+    plan: Plan, source_count: int, elapsed: float, result=None
+) -> Dict[str, object]:
+    totals: Dict[str, object] = {
         "files": source_count,
         "items": len(plan.items),
         "write": len(plan.to_write),
@@ -209,6 +280,13 @@ def _json_totals(plan: Plan, source_count: int, elapsed: float) -> Dict[str, obj
         "bytes": plan.bytes_to_write,
         "seconds": round(elapsed, 3),
     }
+    if result is not None:
+        totals["written"] = len(result.written)
+        totals["failed"] = len(result.failed)
+        totals["skipped"] = len(result.skipped)
+        totals["bytes_written"] = result.bytes_written
+        totals["cancelled"] = result.cancelled
+    return totals
 
 
 def human_bytes(size: int) -> str:

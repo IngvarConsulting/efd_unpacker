@@ -285,10 +285,10 @@ def test_dmg_is_recognised_by_extension(tmp_path, monkeypatch, name):
     Без этого detect_kind вернул бы None и образ уехал бы в план как один
     непонятный файл вместо своего содержимого.
     """
-    import efd_unpacker.application.inspector as inspector
+    from efd_unpacker.application import sources
 
     path = _write(tmp_path, name, b"\x00" * 600)
-    monkeypatch.setattr(inspector, "dmg_supported", lambda: False)
+    monkeypatch.setattr(sources, "dmg_supported", lambda: False)
 
     result = inspect(path)
 

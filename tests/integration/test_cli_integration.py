@@ -65,7 +65,9 @@ def test_cli_reports_missing_input(tmp_path):
 
     assert result.exit_code == 1
     assert result.handled
-    assert any("[ERROR]" in message for message in messages)
+    # 2.0: отказ показывается строкой таблицы с причиной, а не отдельной
+    # строкой [ERROR]. Проверяем по существу — что причина названа.
+    assert any("File not found" in message for message in messages), messages
 
 
 def test_cli_reports_damaged_archive(tmp_path):
@@ -80,7 +82,7 @@ def test_cli_reports_damaged_archive(tmp_path):
     )
 
     assert result.exit_code == 1
-    assert any("[ERROR]" in message for message in messages)
+    assert any("damaged or incomplete" in message for message in messages), messages
 
 
 def test_cli_refuses_archive_escaping_the_output_directory(tmp_path):
@@ -95,7 +97,7 @@ def test_cli_refuses_archive_escaping_the_output_directory(tmp_path):
     )
 
     assert result.exit_code == 1
-    assert any("[ERROR]" in message for message in messages)
+    assert any("outside the output folder" in message for message in messages), messages
     assert not (workspace / "escaped.txt").exists()
     assert unpacked_tree(output_dir) == []
 
@@ -138,7 +140,7 @@ def test_cli_reports_an_incomplete_command_instead_of_opening_the_gui(tmp_path):
 
     assert result.handled is True
     assert result.exit_code == 2
-    assert "efd_unpacker unpack <input_file.efd> -tmplts <output_dir>" in "\n".join(messages)
+    assert "efd_unpacker unpack <file>... -tmplts <dir>" in "\n".join(messages)
 
 
 def test_cli_still_leaves_a_bare_file_to_the_gui(tmp_path):

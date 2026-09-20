@@ -22,7 +22,8 @@ def format_help_text(translator) -> str:
         translator.translate("CLIHelp", "Usage:"),
         "  efd_unpacker [--help|-h]",
         "  efd_unpacker <input_file.efd>",
-        "  efd_unpacker unpack <input_file.efd> -tmplts <output_dir>",
-        "  efd_unpacker info <file>... [--json] [-tmplts <dir>] [-dist <dir>]",
+        "  efd_unpacker info <file>... [--json] [-tmplts <dir>] [--dist <dir>]",
+        "  efd_unpacker unpack <file>... -tmplts <dir> [--dist <dir>]",
+        "      [--only cf] [--dry-run] [--json] [--require-all] [--rar-tool <path>]",
     ]
     return "\n".join(lines)

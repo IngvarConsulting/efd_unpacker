@@ -101,6 +101,10 @@ class PlannedItem:
     title: str
     version: str
     source: Tuple[str, ...]
+    #: Путь исходного файла на диске. План остаётся значением — ни потоков, ни
+    #: дескрипторов в нём нет, — но исполнителю нужно чем-то открыть источник
+    #: заново, а имя из `source` для этого не годится: там только basename.
+    origin: str
     destination: str
     bytes_total: int
     action: Action
@@ -299,8 +303,9 @@ def _items_for(result: Inspected, settings: PlanSettings) -> List[PlannedItem]:
                 items.append(
                     PlannedItem(
                         kind=ItemKind.SUPPLY, title=result.name, version="",
-                        source=found.trail, destination="", bytes_total=0,
-                        action=Action.SKIP, reason=SkipReason.NO_TEMPLATES,
+                        source=found.trail, origin=result.path, destination="",
+                        bytes_total=0, action=Action.SKIP,
+                        reason=SkipReason.NO_TEMPLATES,
                     )
                 )
                 continue
@@ -314,7 +319,8 @@ def _items_for(result: Inspected, settings: PlanSettings) -> List[PlannedItem]:
     return [
         PlannedItem(
             kind=ItemKind.OTHER, title=result.name, version="", source=(result.name,),
-            destination="", bytes_total=0, action=Action.SKIP, reason=SkipReason.NOTHING_FOUND,
+            origin=result.path, destination="", bytes_total=0, action=Action.SKIP,
+            reason=SkipReason.NOTHING_FOUND,
         )
     ]
 
@@ -341,12 +347,14 @@ def _failed_item(result: Inspected) -> PlannedItem:
         )
         return PlannedItem(
             kind=ItemKind.OTHER, title=result.name, version="", source=(result.name,),
-            destination="", bytes_total=0, action=Action.SKIP, reason=reason, failure=failure,
+            origin=result.path, destination="", bytes_total=0, action=Action.SKIP,
+            reason=reason, failure=failure,
         )
 
     return PlannedItem(
         kind=ItemKind.OTHER, title=result.name, version="", source=(result.name,),
-        destination="", bytes_total=0, action=Action.FAIL, failure=failure,
+        origin=result.path, destination="", bytes_total=0, action=Action.FAIL,
+        failure=failure,
     )
 
 
@@ -356,7 +364,7 @@ def _supply_item(
     info = found.catalog.describe()
     entries = template.entries
     if settings.only_configuration:
-        kept = tuple(entry for entry in entries if not entry.path.lower().endswith(".dt"))
+        kept = tuple(entry for entry in entries if keeps_configuration(entry.path))
     else:
         kept = entries
 
@@ -372,6 +380,7 @@ def _supply_item(
         title=(info.name if info and info.name else template.relative_path),
         version=template.version,
         source=found.trail,
+        origin=result.path,
         destination=destination,
         bytes_total=sum(entry.size for entry in kept),
         action=action,
@@ -399,12 +408,31 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
         title=found.title or result.name,
         version=found.version,
         source=(result.name,),
+        origin=result.path,
         destination=_join(settings.distributions_root, parts),
         bytes_total=sum(entry.size for entry in result.files),
         action=Action.WRITE,
         files=result.files,
         file_count=len(result.files),
     )
+
+
+#: Что отбрасывает `--only cf`. Выгрузка .dt — это демонстрационная база
+#: данных: она весит примерно столько же, сколько сама конфигурация, и нужна
+#: далеко не всегда. Правило «выбросить .dt», а не «оставить .cf»: в шаблоне
+#: лежат ещё манифест, ReadMe и ресурсы, и без них 1С покажет неполный шаблон.
+DATA_SUFFIXES = (".dt",)
+
+
+def keeps_configuration(path: str) -> bool:
+    """
+    Остаётся ли запись при `--only cf`.
+
+    Одно правило на план и на исполнение. Когда их было два, план обещал
+    2.1 МБ, а записывалось 376 КБ: план выбрасывал .dt, а исполнитель оставлял
+    только .cf и манифест.
+    """
+    return not path.lower().endswith(DATA_SUFFIXES)
 
 
 def _component(found: Classification) -> str:
