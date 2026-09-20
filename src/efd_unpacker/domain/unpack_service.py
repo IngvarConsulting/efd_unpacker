@@ -5,19 +5,16 @@
 from __future__ import annotations
 
 import datetime as dt
-import ntpath
 import os
-import posixpath
 import stat
 import tempfile
 import zlib
-from struct import unpack
 from typing import BinaryIO, Callable, List, Optional, Protocol
 
 import onec_dtools
-from onec_dtools import supply_reader as supply_reader_module
 
 from .errors import UnpackError, UnpackErrorCode
+from .supply import parse_catalog
 
 
 class SupplyReaderProtocol(Protocol):
@@ -31,10 +28,6 @@ SupplyReaderFactory = Callable[[BinaryIO], SupplyReaderProtocol]
 POSIX_EPOCH = dt.datetime(1970, 1, 1)
 # Нижняя граница, которую os.utime представляет одинаково на всех платформах.
 MIN_REPRESENTABLE_MTIME = dt.datetime(1678, 1, 1)
-# FILETIME — число интервалов по 100 нс от 1 января 1601 года.
-FILETIME_EPOCH = dt.datetime(1601, 1, 1)
-# Единственная версия заголовка, встречавшаяся в исследованных файлах поставки.
-SUPPORTED_HEADER = 1
 
 # Права на вновь созданных файлах. mkstemp даёт 0600, и os.replace переносит
 # этот режим на цель, поэтому его нужно выставлять явно — иначе распакованные
@@ -53,37 +46,6 @@ MAX_TOTAL_BYTES = 32 * 1024 * 1024 * 1024
 # чтобы не спотыкаться о маленькие, но хорошо сжатые архивы.
 MAX_COMPRESSION_RATIO = 200
 MIN_RATIO_CHECK_BYTES = 128 * 1024 * 1024
-
-
-def _safe_relative_parts(src_path: str) -> List[str]:
-    """
-    Разбирает имя записи архива в безопасный относительный путь.
-
-    Имена в .efd записаны в windows-стиле, но прямой слэш тоже встречается,
-    поэтому режем по обоим разделителям. Любая попытка выйти за пределы
-    каталога распаковки отвергается, а не исправляется молча: у нас нет
-    механизма частичного отчёта, и молчаливый пропуск записи снова дал бы
-    пользователю «успешную» распаковку.
-    """
-    if (
-        ntpath.splitdrive(src_path)[0]
-        or ntpath.isabs(src_path)
-        or posixpath.isabs(src_path)
-    ):
-        raise UnpackError(UnpackErrorCode.UNSAFE_ENTRY, {"entry": src_path})
-
-    parts: List[str] = []
-    for component in src_path.replace("\\", "/").split("/"):
-        if component in ("", "."):
-            continue
-        if component == "..":
-            raise UnpackError(UnpackErrorCode.UNSAFE_ENTRY, {"entry": src_path})
-        parts.append(component)
-
-    if not parts:
-        raise UnpackError(UnpackErrorCode.UNSAFE_ENTRY, {"entry": src_path})
-
-    return parts
 
 
 def _resolve_entry_path(output_root: str, src_path: str, parts: List[str]) -> str:
@@ -174,43 +136,6 @@ def _apply_file_mode(temporary: str, path: str) -> None:
         pass
 
 
-def _filetime_to_datetime(filetime: int) -> Optional[dt.datetime]:
-    """
-    FILETIME в datetime. None, если дата непредставима.
-
-    Отрицательные значения — не порча архива: в поставках 1С их десятки.
-    В БГУ 2.0.110.66 таких записей 10 из 83, в «Бухгалтерии предприятия КОРП»
-    3.0.206.19 — 21 из 26, и все они означают дату на полчаса раньше 1601 года.
-    Осмысленной метки времени тут нет, поэтому отдаём None: файл получит
-    текущее время, как и для всех прочих дат вне представимого диапазона.
-    """
-    if filetime <= 0:
-        return None
-    try:
-        return FILETIME_EPOCH + dt.timedelta(microseconds=filetime // 10)
-    except (OverflowError, ValueError):
-        return None
-
-
-def _read_included_file_info(buffer_file: BinaryIO) -> tuple:
-    """
-    Описание одной вложенной записи: имя, дата, размер.
-
-    Не делегируем onec_dtools.read_included_file_info: там FILETIME читается
-    как беззнаковый "Q", поэтому дата до 1601 года превращается в 1.8e19, и
-    datetime + timedelta бросает OverflowError. Пользователь получал
-    «Неожиданная ошибка: date value out of range» и ни одного распакованного
-    файла — падение происходит при разборе оглавления, до первой записи.
-    """
-    buffer_file.read(4)  # назначение поля неизвестно
-    filename = supply_reader_module.read_string(buffer_file)
-    # Именно "q": знаковое. Ради этого и написан свой разбор.
-    filetime = unpack("q", buffer_file.read(8))[0]
-    buffer_file.read(4)  # назначение поля неизвестно
-    file_size = unpack("I", buffer_file.read(4))[0]
-    return filename, _filetime_to_datetime(filetime), file_size
-
-
 def _apply_file_mtime(path: str, modified_at: Optional[dt.datetime]) -> None:
     """
     Применяет mtime к распакованному файлу.
@@ -256,36 +181,21 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
             self._inflate_to(buffer_file)
             buffer_file.seek(0)
 
-            head = buffer_file.read(8)
-            if len(head) < 8:
-                raise UnpackError(
-                    UnpackErrorCode.CORRUPTED_ARCHIVE,
-                    {"reason": "truncated_header"},
-                )
-
-            header, supply_info_count = unpack("II", head)
-            if header != SUPPORTED_HEADER:
-                # Раньше здесь стоял assert: под -O он исчезал вовсе, а при
-                # срабатывании давал пользователю «Неожиданная ошибка: » без текста.
-                raise UnpackError(
-                    UnpackErrorCode.CORRUPTED_ARCHIVE,
-                    {"reason": "unsupported_header", "header": header},
-                )
-
-            for _ in range(supply_info_count):
-                lang, supply_name, provider_name, description_path = supply_reader_module.read_supply_info(buffer_file)
-                self.description[lang] = supply_name, provider_name, description_path
-
-            included_files_count = unpack("I", buffer_file.read(4))[0]
-            for _ in range(included_files_count):
-                self.included_files.append(_read_included_file_info(buffer_file))
+            catalog = parse_catalog(buffer_file)
+            # Поля базового класса onec_dtools остаются заполненными: на них
+            # опирается код, который читает результат распаковки.
+            for info in catalog.supply_info:
+                self.description[info.lang] = (info.name, info.provider, info.description_path)
+            self.included_files.extend(
+                (entry.path, entry.modified_at, entry.size) for entry in catalog.entries
+            )
 
             output_root = os.path.realpath(output_dir)
 
             # Сначала проверяем все имена, и только потом пишем: отклонить
             # архив на середине значит оставить пользователю половину файлов.
-            src_paths = [entry[0] for entry in self.included_files]
-            parts_list = [_safe_relative_parts(src_path) for src_path in src_paths]
+            src_paths = [entry.path for entry in catalog.entries]
+            parts_list = [list(entry.parts) for entry in catalog.entries]
             _reject_conflicting_entries(src_paths, parts_list)
             paths = [
                 _resolve_entry_path(output_root, src_path, parts)
@@ -404,12 +314,7 @@ class UnpackService:
         """Распаковывает файл или поднимает UnpackError."""
         try:
             with open(input_file, "rb") as handle:
-                reader = self._reader_factory(handle)
-                if cancel_check is not None:
-                    setter = getattr(reader, "set_cancel_check", None)
-                    if setter is not None:
-                        setter(cancel_check)
-                reader.unpack(output_dir)
+                self._unpack_handle(handle, output_dir, cancel_check)
         except UnpackError:
             # Уже доменная ошибка с точным кодом — переупаковывать нечего.
             raise
@@ -424,3 +329,42 @@ class UnpackService:
             raise UnpackError(
                 UnpackErrorCode.UNEXPECTED, {"error": str(exc) or type(exc).__name__}
             ) from exc
+
+    def unpack_stream(
+        self,
+        handle: BinaryIO,
+        output_dir: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """
+        Распаковывает уже открытый поток.
+
+        Нужен, чтобы читать .efd прямо из контейнера — zip, tar, — не создавая
+        его копию на диске. У самой большой из исследованных поставок эта
+        копия весила бы 2.4 ГБ.
+        """
+        try:
+            self._unpack_handle(handle, output_dir, cancel_check)
+        except UnpackError:
+            raise
+        except FileNotFoundError as exc:
+            raise UnpackError(UnpackErrorCode.FILE_NOT_FOUND) from exc
+        except PermissionError as exc:
+            raise UnpackError(UnpackErrorCode.PERMISSION) from exc
+        except Exception as exc:
+            raise UnpackError(
+                UnpackErrorCode.UNEXPECTED, {"error": str(exc) or type(exc).__name__}
+            ) from exc
+
+    def _unpack_handle(
+        self,
+        handle: BinaryIO,
+        output_dir: str,
+        cancel_check: Optional[Callable[[], bool]],
+    ) -> None:
+        reader = self._reader_factory(handle)
+        if cancel_check is not None:
+            setter = getattr(reader, "set_cancel_check", None)
+            if setter is not None:
+                setter(cancel_check)
+        reader.unpack(output_dir)

@@ -17,7 +17,8 @@ import struct
 
 import pytest
 
-from efd_unpacker.domain import unpack_service
+from efd_unpacker.domain import supply, unpack_service
+from efd_unpacker.domain.supply import parse_catalog
 from efd_unpacker.domain.unpack_service import UnpackService
 from tests.efd_builder import unpacked_tree, write_efd
 
@@ -46,7 +47,7 @@ def test_the_real_value_is_a_negative_signed_integer():
     ids=["из БГУ", "минус один", "ноль", "2020", "максимум int64"],
 )
 def test_filetime_conversion(filetime, expected):
-    assert unpack_service._filetime_to_datetime(filetime) == expected
+    assert supply.filetime_to_datetime(filetime) == expected
 
 
 def _entry_bytes(name: str, filetime: int, size: int) -> bytes:
@@ -61,18 +62,24 @@ def _entry_bytes(name: str, filetime: int, size: int) -> bytes:
     )
 
 
-def test_included_file_info_survives_a_negative_filetime():
+def _catalog_bytes(*entries: bytes) -> io.BytesIO:
+    """Минимальное оглавление: заголовок, ноль описаний, переданные записи."""
+    head = struct.pack("II", 1, 0) + struct.pack("I", len(entries))
+    return io.BytesIO(head + b"".join(entries))
+
+
+def test_catalog_survives_a_negative_filetime():
     """Регресс: onec_dtools читает "Q" и падает ещё на разборе оглавления."""
-    buffer = io.BytesIO(_entry_bytes("a\\b.txt", REAL_NEGATIVE_FILETIME, 7))
+    catalog = parse_catalog(_catalog_bytes(_entry_bytes("a\\b.txt", REAL_NEGATIVE_FILETIME, 7)))
 
-    name, modified_at, size = unpack_service._read_included_file_info(buffer)
+    entry = catalog.entries[0]
+    assert entry.path == "a\\b.txt"
+    assert entry.parts == ("a", "b.txt")
+    assert entry.modified_at is None
+    assert entry.size == 7
 
-    assert name == "a\\b.txt"
-    assert modified_at is None
-    assert size == 7
 
-
-def test_included_file_info_reads_filetime_as_signed(monkeypatch):
+def test_catalog_reads_filetime_as_signed(monkeypatch):
     """
     Отдельная проверка именно знаковости чтения.
 
@@ -82,19 +89,17 @@ def test_included_file_info_reads_filetime_as_signed(monkeypatch):
     (например, зажим вместо перехвата) молча вернула бы падение.
     """
     seen = []
-    monkeypatch.setattr(unpack_service, "_filetime_to_datetime", lambda value: seen.append(value))
+    monkeypatch.setattr(supply, "filetime_to_datetime", lambda value: seen.append(value))
 
-    unpack_service._read_included_file_info(io.BytesIO(_entry_bytes("a.txt", REAL_NEGATIVE_FILETIME, 1)))
+    parse_catalog(_catalog_bytes(_entry_bytes("a.txt", REAL_NEGATIVE_FILETIME, 1)))
 
     assert seen == [-17400000000]
 
 
-def test_included_file_info_keeps_normal_dates():
-    buffer = io.BytesIO(_entry_bytes("a.txt", FILETIME_2020, 3))
+def test_catalog_keeps_normal_dates():
+    catalog = parse_catalog(_catalog_bytes(_entry_bytes("a.txt", FILETIME_2020, 3)))
 
-    _name, modified_at, _size = unpack_service._read_included_file_info(buffer)
-
-    assert modified_at == dt.datetime(2020, 1, 1)
+    assert catalog.entries[0].modified_at == dt.datetime(2020, 1, 1)
 
 
 def test_archive_with_negative_filetime_unpacks(tmp_path):
