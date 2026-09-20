@@ -16,6 +16,7 @@ import pytest
 
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
 from efd_unpacker.infrastructure import containers
+from efd_unpacker.infrastructure import rar as rar_module
 from efd_unpacker.infrastructure.containers import (
     MAX_DEPTH,
     Leaf,
@@ -453,3 +454,115 @@ def test_symlink_inside_the_image_is_not_listed_twice(tmp_path):
         names = sorted(leaf.trail[-1] for leaf in leaves)
 
     assert names == ["real.pkg"]
+
+
+# --- .rar через внешнюю программу --------------------------------------------
+
+
+def _rar_file(tmp_path, name="tc.rar"):
+    """Файл с сигнатурой RAR5. Содержимое неважно — читает его не наш код."""
+    return _write(tmp_path, name, b"Rar!\x1a\x07\x01\x00" + b"\x00" * 600)
+
+
+def test_rar_entries_come_from_the_external_tool(tmp_path, monkeypatch):
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: (
+        rar_module.RarEntry("setup.exe", 100), rar_module.RarEntry("data/1cv8.msi", 200),
+    ))
+
+    leaves = list(walk(path))
+
+    assert [leaf.name for leaf in leaves] == ["setup.exe", "data/1cv8.msi"]
+    assert [leaf.size for leaf in leaves] == [100, 200]
+    assert leaves[0].trail == ("tc.rar", "setup.exe")
+
+
+def test_rar_without_a_tool_stays_an_unsupported_container(tmp_path, monkeypatch):
+    """
+    Программы нет — отказ прежний, и план превращает его в пропуск.
+
+    Ломать осмотр из-за отсутствия стороннего софта нельзя.
+    """
+    path = _rar_file(tmp_path)
+
+    def refuse(_path):
+        raise UnpackError(
+            UnpackErrorCode.CONTAINER_UNSUPPORTED, {"kind": "rar", "hint": "brew install sevenzip"}
+        )
+
+    monkeypatch.setattr(containers.rar, "read_entries", refuse)
+
+    with pytest.raises(UnpackError) as caught:
+        list(walk(path))
+
+    assert caught.value.details["kind"] == "rar"
+
+
+def test_rar_entry_name_is_sanitised(tmp_path, monkeypatch):
+    """
+    Имя приходит из вывода чужой программы — такие же чужие данные, как имя
+    записи zip. Без проверки `../../etc/passwd` уехал бы прямо в путь.
+    """
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries",
+                        lambda _p: (rar_module.RarEntry("../../etc/passwd", 1),))
+
+    with pytest.raises(UnpackError) as caught:
+        list(walk(path))
+
+    assert caught.value.code is UnpackErrorCode.UNSAFE_ENTRY
+
+
+def test_too_many_rar_entries_are_refused(tmp_path, monkeypatch):
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries", lambda _p: tuple(
+        rar_module.RarEntry("f%d" % index, 1) for index in range(containers.MAX_ENTRIES + 1)
+    ))
+
+    with pytest.raises(UnpackError) as caught:
+        list(walk(path))
+
+    assert caught.value.code is UnpackErrorCode.TOO_MANY_ENTRIES
+
+
+def test_rar_entry_stream_cleans_up_its_temporary_directory(tmp_path, monkeypatch):
+    """Временный каталог живёт ровно столько, сколько открытый поток."""
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries",
+                        lambda _p: (rar_module.RarEntry("a.txt", 5),))
+    created = []
+
+    def fake_extract(_archive, destination, entry):
+        created.append(destination)
+        target = os.path.join(destination, entry)
+        with open(target, "wb") as handle:
+            handle.write(b"12345")
+        return True
+
+    monkeypatch.setattr(containers.rar, "extract_entry", fake_extract)
+    leaf = next(iter(walk(path)))
+
+    with leaf.opener() as handle:
+        assert handle.read() == b"12345"
+        assert os.path.isdir(created[0])
+
+    assert not os.path.isdir(created[0]), "временный каталог пережил поток"
+
+
+def test_failed_rar_extraction_does_not_leave_a_directory(tmp_path, monkeypatch):
+    path = _rar_file(tmp_path)
+    monkeypatch.setattr(containers.rar, "read_entries",
+                        lambda _p: (rar_module.RarEntry("a.txt", 5),))
+    created = []
+
+    def fail(_archive, destination, _entry):
+        created.append(destination)
+        return False
+
+    monkeypatch.setattr(containers.rar, "extract_entry", fail)
+    leaf = next(iter(walk(path)))
+
+    with pytest.raises(UnpackError):
+        leaf.opener()
+
+    assert not os.path.isdir(created[0]), "каталог остался после неудачи"

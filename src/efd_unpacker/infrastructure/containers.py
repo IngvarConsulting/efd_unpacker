@@ -38,6 +38,7 @@ from typing import BinaryIO, Callable, Iterator, List, Optional, Sequence, Tuple
 
 from ..domain.errors import UnpackError, UnpackErrorCode
 from ..domain.supply import safe_relative_parts
+from . import rar
 
 # Предел вложенности. Наблюдали два уровня (demo.zip), запас — один.
 MAX_DEPTH = 3
@@ -107,7 +108,70 @@ def walk(path: str, max_depth: int = MAX_DEPTH) -> Iterator[Leaf]:
         yield Leaf(trail=(name,), size=os.path.getsize(path), opener=lambda: open(path, "rb"))
         return
 
+    if kind == "rar":
+        yield from _rar_leaves(path, name)
+        return
+
     yield from _descend(lambda: open(path, "rb"), (name,), kind, max_depth)
+
+
+def _rar_leaves(path: str, name: str) -> Iterator[Leaf]:
+    """
+    Записи .rar через внешнюю программу.
+
+    Только на верхнем уровне: программа принимает путь к файлу, а не поток, и
+    у вложенного в zip архива пути нет. Все двенадцать дистрибутивов платформы
+    под Windows лежат отдельными .rar, так что на деле это ничего не стоит.
+
+    Во вложенные контейнеры внутри .rar не спускаемся: чтобы узнать вид каждой
+    записи, пришлось бы её извлечь, а у solid-архива это полный проход по
+    архиву на каждую запись. Настоящие дистрибутивы плоские — 44 файла
+    .msi/.exe/.ini/.cab.
+    """
+    entries = rar.read_entries(path)
+    _check_count(len(entries), (name,))
+    for entry in entries:
+        safe_relative_parts(entry.name)
+        yield Leaf(
+            trail=(name, entry.name),
+            size=entry.size,
+            opener=_rar_opener(path, entry.name),
+        )
+
+
+def _rar_opener(archive: str, entry: str) -> Callable[[], BinaryIO]:
+    """
+    Поток одной записи: извлекаем её во временный каталог и отдаём файл.
+
+    Каталог удаляется при закрытии потока — тем же механизмом владения, что у
+    вложенных архивов, поэтому дескриптор и временные файлы не ждут сборщика.
+    """
+
+    def open_entry() -> BinaryIO:
+        probe = tempfile.mkdtemp(prefix="efd-rar-entry-")
+        try:
+            if not rar.extract_entry(archive, probe, entry):
+                raise UnpackError(
+                    UnpackErrorCode.CORRUPTED_ARCHIVE,
+                    {"reason": "broken_container", "entry": entry},
+                )
+            handle = open(os.path.join(probe, *entry.split("/")), "rb")
+        except BaseException:
+            shutil.rmtree(probe, ignore_errors=True)
+            raise
+        return _OwnedStream(handle, _Removable(probe))
+
+    return open_entry
+
+
+class _Removable:
+    """Временный каталог, живущий ровно столько, сколько открытый поток."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+
+    def close(self) -> None:
+        shutil.rmtree(self._path, ignore_errors=True)
 
 
 def _descend(
