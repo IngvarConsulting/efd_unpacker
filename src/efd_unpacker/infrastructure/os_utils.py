@@ -42,7 +42,12 @@ def get_distributions_location_default(templates_root: str) -> str:
     шаблоны конфигураций, — но и разбрасывать их по загрузкам незачем. Общий
     родитель даёт одно место, где потом искать.
     """
-    parent = os.path.dirname(templates_root.rstrip("/\\"))
+    # normpath перед dirname, а не rstrip: на Windows у "C:\\" после срезки
+    # разделителей остаётся "C:", а dirname("C:") — снова "C:", и получался
+    # относительный "C:dist" — каталог в ТЕКУЩЕМ каталоге диска C, молча не там.
+    # На POSIX normpath заодно закрывает случай, когда каталогом шаблонов
+    # назначили сам корень.
+    parent = os.path.dirname(os.path.normpath(templates_root))
     # Откат на сам templates_root давал бы «tmplts/dist» для относительного
     # однокомпонентного корня — то есть каталог ВНУТРИ шаблонов вместо соседа.
     return os.path.join(parent, "dist") if parent else "dist"

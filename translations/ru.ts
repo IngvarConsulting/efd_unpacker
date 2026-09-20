@@ -193,12 +193,16 @@
 <context>
     <name>SettingsService</name>
     <message>
-        <source>(last used)</source>
-        <translation>(последний использованный)</translation>
+        <source>used last time</source>
+        <translation>использовался прошлый раз</translation>
     </message>
     <message>
-        <source>(default)</source>
-        <translation>(по-умолчанию)</translation>
+        <source>from 1cestart.cfg</source>
+        <translation>из 1cestart.cfg</translation>
+    </message>
+    <message>
+        <source>by default</source>
+        <translation>по умолчанию</translation>
     </message>
 </context>
 <context>

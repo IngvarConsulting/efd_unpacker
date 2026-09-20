@@ -170,8 +170,8 @@ class MainWindow(QMainWindow):
     def update_output_paths_combobox(self) -> None:
         self.combo_output_paths.clear()
         items = self.settings_service.get_output_path_items(self.manual_selected_path)
-        for path, label in items:
-            self.combo_output_paths.addItem(label, path)
+        for choice in items:
+            self.combo_output_paths.addItem(choice.label, choice.path)
 
         current_path = self.manual_selected_path or self.settings_service.get_output_path()
         if current_path:

@@ -327,8 +327,14 @@ def test_open_folder_swallows_launcher_failure(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "templates_root, expected",
     [
-        (os.path.join("/a", "b", "tmplts"), os.path.join("/a", "b", "dist")),
-        (os.path.join(".", "tmplts"), os.path.join(".", "dist")),
+        # Ожидания через normpath: функция возвращает канонический путь, то есть
+        # с разделителями системы. На Windows "/a/b" превращается в "\\a\\b", и
+        # собранное вручную ожидание из смеси разделителей сравнивало бы не то.
+        (os.path.join("/a", "b", "tmplts"), os.path.normpath("/a/b/dist")),
+        # normpath убирает «./» — путь тот же, запись короче.
+        (os.path.join(".", "tmplts"), "dist"),
+        # Корень файловой системы: без normpath получался относительный «dist».
+        (os.sep, os.path.join(os.sep, "dist")),
         # Относительный корень из одной части: откат на сам templates_root
         # давал «tmplts/dist» — каталог ВНУТРИ шаблонов вместо соседа.
         ("tmplts", "dist"),
@@ -337,3 +343,14 @@ def test_open_folder_swallows_launcher_failure(monkeypatch, tmp_path):
 )
 def test_distributions_root_is_a_sibling_of_the_templates_root(templates_root, expected):
     assert os_utils.get_distributions_location_default(templates_root) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="разбор путей Windows")
+def test_windows_drive_root_gets_dist_at_the_root():
+    """
+    Регресс: у "C:\\" после срезки разделителей остаётся "C:", а dirname("C:")
+    снова даёт "C:" — получался относительный "C:dist", то есть каталог в
+    ТЕКУЩЕМ каталоге диска C, молча не там.
+    """
+    assert os_utils.get_distributions_location_default("C:\\") == "C:\\dist"
+    assert os_utils.get_distributions_location_default("C:\\1C\\tmplts") == "C:\\1C\\dist"

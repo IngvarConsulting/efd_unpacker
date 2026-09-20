@@ -12,6 +12,7 @@ from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QMessageBox, QWidget
 
 from efd_unpacker.domain.file_validator import FileValidator
+from efd_unpacker.infrastructure.settings_service import ORIGIN_LAST_USED, PathChoice
 from efd_unpacker.domain.unpack_service import UnpackService
 from efd_unpacker.presentation import ui
 from efd_unpacker.presentation.ui import MainWindow, UnpackThread
@@ -34,7 +35,7 @@ class DummySettingsService:
 
     def get_output_path_items(self, manual_selected_path=None):
         base = manual_selected_path or self.path
-        return [(base, base)]
+        return [PathChoice(path=base, origin=ORIGIN_LAST_USED, label=base)]
 
 
 class DummyUnpackService(UnpackService):
