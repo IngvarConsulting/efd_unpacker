@@ -64,10 +64,12 @@ class DummySettings:
 class DummyValidator(FileValidator):
     def __init__(self) -> None:
         super().__init__()
-        self.prepared = None
+        # Список, а не последнее значение: проверка «лишний каталог не
+        # создаётся» иначе не видит лишнего вызова, если он был не последним.
+        self.prepared = []
 
     def prepare_output_directory(self, output_dir: str) -> str:
-        self.prepared = output_dir
+        self.prepared.append(output_dir)
         return output_dir
 
 
@@ -160,10 +162,10 @@ def test_dropping_files_fills_the_list(qtbot):
     """Критерий #56: перетаскивание даёт список."""
     window = make_window(qtbot)
 
-    drop(window, [os.path.join(os.sep, "d", "a.zip")])
+    drop(window, ["/d/a.zip"])
     qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
 
-    assert window.calls["inspect"] == [(os.path.join(os.sep, "d", "a.zip"),)]
+    assert window.calls["inspect"] == [("/d/a.zip",)]
     assert window.btn_unpack.isEnabled()
 
 
@@ -172,7 +174,7 @@ def test_ten_files_go_to_inspection_in_one_call(qtbot):
     Критерий #56: десять файлов дают список за время, неотличимое от
     мгновенного. Осмотр уходит в поток одним вызовом, а не десятью.
     """
-    paths = [os.path.join(os.sep, "d", "f%d.zip" % index) for index in range(10)]
+    paths = ["/d/f%d.zip" % index for index in range(10)]
     window = make_window(qtbot)
 
     started = time.monotonic()
@@ -187,7 +189,7 @@ def test_extension_is_not_checked_on_drop(qtbot):
     """На вход годятся zip, dmg, rar — вид определяется содержимым."""
     window = make_window(qtbot)
 
-    drop(window, [os.path.join(os.sep, "d", "macos.client.dmg")])
+    drop(window, ["/d/macos.client.dmg"])
     qtbot.waitUntil(lambda: bool(window.calls["inspect"]), timeout=2000)
 
     assert window.calls["inspect"][0][0].endswith(".dmg")
@@ -201,9 +203,9 @@ def test_second_drop_adds_to_the_list(qtbot):
     """
     window = make_window(qtbot, inspected=[object()])
 
-    drop(window, [os.path.join(os.sep, "d", "a.zip")])
+    drop(window, ["/d/a.zip"])
     qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
-    drop(window, [os.path.join(os.sep, "d", "b.zip")])
+    drop(window, ["/d/b.zip"])
     qtbot.waitUntil(lambda: len(window.calls["inspect"]) == 2, timeout=2000)
 
     assert len(window._inspected) == 2, "второй осмотр не дополнил первый"
@@ -485,3 +487,106 @@ def test_closing_when_idle_does_not_ask(qtbot, monkeypatch):
 
     assert asked == []
     assert event.isAccepted()
+
+
+# --- находки обзора ----------------------------------------------------------
+
+
+def test_writers_get_the_cancellation_flag(qtbot):
+    """
+    Отмена должна доходить до писателя, а не только до батча.
+
+    Батч проверяет её на границе между элементами, а пачка из одного архива
+    там границы не имеет: после нажатия «Отмена» архив дописывался целиком.
+    """
+    seen = {}
+
+    def spy(_service, _root, _only_cf, cancel_check):
+        seen["cancel_check"] = cancel_check
+        return _Writers()
+
+    window = make_window(qtbot)
+    window._make_writers = spy
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert callable(seen.get("cancel_check")), "писателю передан не флаг отмены"
+    assert seen["cancel_check"]() is False
+
+
+def test_distribution_only_batch_opens_the_distributions_folder(qtbot, monkeypatch):
+    """
+    Пачка из одних дистрибутивов пишет не в каталог шаблонов.
+
+    Открывать после неё каталог шаблонов значит показать пустую папку — и
+    создать её, если её не было.
+    """
+    settings = DummySettings()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    opened = []
+    monkeypatch.setattr(ui, "open_folder", lambda path: opened.append(path) or True)
+    window.open_output_folder()
+
+    assert opened == [settings.distributions]
+
+
+def test_templates_folder_is_not_created_for_a_distribution_only_batch(qtbot):
+    validator = DummyValidator()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), validator=validator)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert validator.prepared == [os.path.join(os.sep, "t", "dist")], validator.prepared
+
+
+def test_output_path_is_not_saved_for_a_distribution_only_batch(qtbot):
+    """Каталог шаблонов не трогали — запоминать нечего."""
+    settings = DummySettings()
+    planned = item(kind=ItemKind.PACKAGES, destination=os.path.join(os.sep, "t", "dist", "x"))
+    window = make_window(qtbot, plan=Plan(items=(planned,)), settings=settings)
+    drop(window, ["/d/a.rar"])
+    qtbot.waitUntil(lambda: window.table.rowCount() == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert settings.saved == []
+
+
+def test_closing_during_inspection_waits_for_the_thread(qtbot, monkeypatch):
+    """
+    QThread, разрушенный на ходу, роняет приложение при выходе.
+
+    Осмотр ничего не пишет и спрашивать не о чем, но дождаться его надо.
+    """
+    started = {}
+
+    def slow_inspect(paths):
+        started["at"] = time.monotonic()
+        time.sleep(0.3)
+        return [object()]
+
+    window = make_window(qtbot)
+    window._inspect_files = slow_inspect
+    window.set_input_files(["/d/a.zip"])
+    qtbot.waitUntil(lambda: "at" in started, timeout=2000)
+
+    event = QCloseEvent()
+    window.closeEvent(event)
+
+    assert event.isAccepted()
+    assert not window._plan_thread.isRunning(), "поток осмотра пережил окно"

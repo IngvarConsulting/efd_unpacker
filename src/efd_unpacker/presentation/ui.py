@@ -113,7 +113,8 @@ class MainWindow(QMainWindow):
         self._outcomes: Dict[Tuple[str, ...], Tuple[str, Optional[UnpackError]]] = {}
         self._plan_thread: Optional[PlanThread] = None
         self._batch_thread: Optional[BatchThread] = None
-        self._written_root = ""
+        self._templates_root = ""
+        self._written_kinds: set = set()
 
         self._build_ui()
         self._refresh_footer()
@@ -375,10 +376,23 @@ class MainWindow(QMainWindow):
         if self._unpacking() or not self._plan.to_write:
             return
 
+        needs_templates = any(item.kind is ItemKind.SUPPLY for item in self._plan.to_write)
+        needs_distributions = any(item.kind is not ItemKind.SUPPLY for item in self._plan.to_write)
         try:
-            root = self.file_validator.prepare_output_directory(
-                self.settings_service.get_output_path()
+            # Готовим только те каталоги, в которые действительно поедет:
+            # раньше каталог шаблонов создавался даже для пачки из одних
+            # дистрибутивов — пустым и не к месту.
+            templates_root = (
+                self.file_validator.prepare_output_directory(
+                    self.settings_service.get_output_path()
+                )
+                if needs_templates
+                else self.settings_service.get_output_path()
             )
+            if needs_distributions:
+                self.file_validator.prepare_output_directory(
+                    self.settings_service.get_distributions_path()
+                )
         except FileValidationError as exc:
             QMessageBox.warning(
                 self, self._t("MainWindow", "Error"),
@@ -386,13 +400,17 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._written_root = root
+        self._templates_root = templates_root
         self._outcomes = {}
-        writers = self._make_writers(
-            self.unpack_service, root, self.check_only_cf.isChecked(), None
-        )
 
-        thread = BatchThread(self._plan, writers, self._batch)
+        # Поток создаётся до писателей: им нужен его флаг отмены. Без него
+        # «Отмена» действовала только на границе между элементами, и пачка из
+        # одного архива дописывалась целиком после нажатия.
+        thread = BatchThread(self._plan, None, self._batch)
+        thread.set_writers(self._make_writers(
+            self.unpack_service, templates_root, self.check_only_cf.isChecked(),
+            thread.cancelled,
+        ))
         thread.item_progress.connect(self._item_started)
         thread.item_finished.connect(self._item_finished)
         thread.completed.connect(self._batch_finished)
@@ -422,6 +440,20 @@ class MainWindow(QMainWindow):
         self._outcomes[_key(item)] = ("failed" if error is not None else "written", error)
         self._fill_table()
 
+    def _written_root(self) -> str:
+        """
+        Каталог, который действительно получил файлы.
+
+        Поставки едут в каталог шаблонов, всё прочее — в каталог
+        дистрибутивов. Открывать первый после пачки из одних дистрибутивов
+        значит показать пользователю пустую папку.
+        """
+        if ItemKind.SUPPLY in self._written_kinds:
+            return self._templates_root or self.settings_service.get_output_path()
+        if self._written_kinds:
+            return self.settings_service.get_distributions_path()
+        return self.settings_service.get_output_path()
+
     def _batch_finished(self, result) -> None:
         self.btn_paths.setEnabled(True)
         self.check_only_cf.setEnabled(True)
@@ -432,8 +464,10 @@ class MainWindow(QMainWindow):
         self.btn_unpack.setEnabled(bool(self._plan.to_write))
         self.label_input.setText(self._t("MainWindow", "Drag files here or click to choose"))
 
-        if result.written:
-            self.settings_service.set_output_path(self._written_root)
+        self._written_kinds = {item.kind for item in result.written}
+        if any(item.kind is ItemKind.SUPPLY for item in result.written):
+            # Сохраняем только когда в каталог шаблонов действительно писали.
+            self.settings_service.set_output_path(self._templates_root)
 
     def _forget_batch_thread(self) -> None:
         self._batch_thread = None
@@ -451,7 +485,7 @@ class MainWindow(QMainWindow):
         self._rebuild_plan()
 
     def open_output_folder(self) -> None:
-        root = self._written_root or self.settings_service.get_output_path()
+        root = self._written_root()
         if not root:
             return
         if open_folder(root):
@@ -475,6 +509,10 @@ class MainWindow(QMainWindow):
         """
         thread = self._batch_thread
         if thread is None or not thread.isRunning():
+            # Осмотр не спрашивает: он ничего не пишет и быстро кончается.
+            # Но дождаться его обязательно — QThread, разрушенный на ходу,
+            # роняет приложение при выходе.
+            self._stop(self._plan_thread)
             event.accept()
             return
 
@@ -490,14 +528,25 @@ class MainWindow(QMainWindow):
             return
 
         thread.cancel()
+        self._stop(thread)
+        self._stop(self._plan_thread)
+        event.accept()
+
+    @staticmethod
+    def _stop(thread) -> None:
+        """
+        Дожидается потока, в крайнем случае снимая его.
+
+        Уже записанные файлы при этом целы — каждый ставится на место через
+        os.replace, — а незавершённый остаётся временным .part. Снятие потока
+        осмотра может оставить смонтированный образ, но альтернатива —
+        разрушенный на ходу QThread и падение при выходе.
+        """
+        if thread is None or not thread.isRunning():
+            return
         if not thread.wait(UIConstants.THREAD_STOP_TIMEOUT_MS):
-            # Крайняя мера: распаковка застряла на одном большом файле.
-            # Уже записанные файлы при этом целы — каждый ставится на место
-            # через os.replace, — а незавершённый остаётся временным .part.
             thread.terminate()
             thread.wait()
-
-        event.accept()
 
 
 def _key(item: PlannedItem) -> Tuple[str, ...]:

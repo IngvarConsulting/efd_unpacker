@@ -65,6 +65,15 @@ class BatchThread(QThread):
         self._run_batch = run_batch
         self._cancelled = False
 
+    def set_writers(self, writers) -> None:
+        """
+        Писатели ставятся после создания потока: им нужен его флаг отмены.
+
+        Без него «Отмена» действовала только на границе между элементами, и
+        пачка из одного архива дописывалась целиком после нажатия.
+        """
+        self._writers = writers
+
     def cancel(self) -> None:
         """Просит распаковку остановиться на ближайшей границе."""
         self._cancelled = True
