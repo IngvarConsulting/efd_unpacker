@@ -81,6 +81,7 @@ def _source_keys():
 
     keys |= _message_layer_keys()
     keys |= _report_layer_keys()
+    keys |= _settings_layer_keys()
     return keys
 
 
@@ -157,6 +158,16 @@ def _report_layer_keys():
         ),
     )
     return recorder.asked
+
+
+def _settings_layer_keys():
+    """
+    Подписи происхождения пути. Лежат в таблице по коду, а не в литеральных
+    вызовах, и регулярка их не видит — как и ключи слоя отчёта.
+    """
+    from efd_unpacker.infrastructure.settings_service import ORIGIN_KEYS
+
+    return {("SettingsService", key) for key in ORIGIN_KEYS.values()}
 
 
 def _catalog():

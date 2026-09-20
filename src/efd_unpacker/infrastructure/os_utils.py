@@ -43,6 +43,11 @@ def get_distributions_location_default(templates_root: str) -> str:
     родитель даёт одно место, где потом искать.
     """
     parent = os.path.dirname(templates_root.rstrip("/\\"))
+    if not parent and os.path.isabs(templates_root):
+        # Каталог шаблонов — сам корень файловой системы. Случай нелепый, но
+        # без этой ветки получался относительный «dist», который создавался бы
+        # в текущем каталоге — молча не там.
+        parent = os.path.sep
     # Откат на сам templates_root давал бы «tmplts/dist» для относительного
     # однокомпонентного корня — то есть каталог ВНУТРИ шаблонов вместо соседа.
     return os.path.join(parent, "dist") if parent else "dist"
