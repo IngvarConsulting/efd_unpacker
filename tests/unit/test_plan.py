@@ -373,3 +373,22 @@ def test_different_rpm_releases_do_not_share_a_destination():
     )
 
     assert first.items[0].destination != second.items[0].destination
+
+
+def test_file_count_follows_the_filter():
+    """
+    Число файлов берётся после фильтра, а не до.
+
+    Длина template.entries показала бы больше, чем план собирается писать:
+    под --only cf выгрузки .dt отсеиваются.
+    """
+    found = supply("1c/a/1_0", "1.0", [("1cv8.cf", 100), ("1cv8.dt", 200), ("readme.txt", 5)])
+
+    full = build_plan([Inspected(path="/d/t.zip", supplies=(found,))], settings())
+    only_cf = build_plan(
+        [Inspected(path="/d/t.zip", supplies=(found,))],
+        settings(only_configuration=True),
+    )
+
+    assert full.items[0].file_count == 3
+    assert only_cf.items[0].file_count == 2, "запись .dt попала в счёт вопреки фильтру"

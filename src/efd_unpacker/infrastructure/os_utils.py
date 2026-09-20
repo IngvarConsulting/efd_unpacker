@@ -34,6 +34,18 @@ def get_1c_configuration_location_default() -> str:
         home = os.path.expanduser('~')
         return os.path.join(home, '.1cv8', '1C', '1cv8', 'tmplts')
 
+def get_distributions_location_default(templates_root: str) -> str:
+    """
+    Каталог дистрибутивов рядом с каталогом шаблонов: «минус tmplts, плюс dist».
+
+    Дистрибутивам платформы не место в tmplts — платформа читает оттуда только
+    шаблоны конфигураций, — но и разбрасывать их по загрузкам незачем. Общий
+    родитель даёт одно место, где потом искать.
+    """
+    parent = os.path.dirname(templates_root.rstrip("/\\")) or templates_root
+    return os.path.join(parent, "dist")
+
+
 def get_1c_configuration_location_from_1cestart() -> List[str]:
     """
     Возвращает массив значений ConfigurationTemplatesLocation из файла 1cestart.cfg.

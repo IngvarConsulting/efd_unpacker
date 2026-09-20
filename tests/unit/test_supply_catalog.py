@@ -10,6 +10,8 @@ import datetime as dt
 import io
 import os
 import struct
+import subprocess
+import sys
 import zlib
 from pathlib import Path
 
@@ -355,3 +357,44 @@ def test_broken_stream_becomes_a_domain_error(data):
 
     assert ctx.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
     assert ctx.value.details["reason"] in {"broken_stream", "truncated_header"}
+
+
+def test_template_order_does_not_depend_on_the_hash_seed(tmp_path):
+    """
+    Порядок шаблонов обязан быть одинаковым от запуска к запуску.
+
+    Корни собирались в множество, а множество обходится в порядке хешей строк,
+    и они солятся при каждом старте интерпретатора. Вывод `info --json` на одном
+    и том же файле получался разным — для сравнения в CI и для потребителя-агента
+    это разные ответы на один вопрос.
+
+    Проверяется в отдельных процессах с разными PYTHONHASHSEED: внутри одного
+    процесса соль одна, и дефект бы не проявился.
+    """
+    roots = ["1c/%s/1_0" % name for name in ("Delta", "Alpha", "Echo", "Charlie", "Bravo", "Foxtrot")]
+    entries = [(root + "/1cv8.mft", b"m") for root in roots]
+    entries += [(root + "/1cv8.cf", b"data") for root in roots]
+    archive = tmp_path / "many.efd"
+    archive.write_bytes(build_efd(entries))
+
+    script = (
+        "import sys;"
+        "from efd_unpacker.domain.supply import read_catalog;"
+        "handle = open(sys.argv[1], 'rb');"
+        "print('|'.join(t.relative_path for t in read_catalog(handle).templates))"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+
+    orders = set()
+    for seed in ("0", "1", "2", "3"):
+        env["PYTHONHASHSEED"] = seed
+        orders.add(
+            subprocess.run(
+                [sys.executable, "-c", script, str(archive)],
+                capture_output=True, text=True, env=env, check=True,
+            ).stdout.strip()
+        )
+
+    assert len(orders) == 1, "порядок шаблонов меняется вместе с солью хешей: %s" % orders
+    assert orders.pop() == "|".join(sorted(roots))

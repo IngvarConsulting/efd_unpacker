@@ -108,6 +108,10 @@ class PlannedItem:
     failure: Optional[UnpackError] = None
     template: Optional[Template] = None
     files: Tuple[FoundFile, ...] = ()
+    # Сколько файлов будет записано. Отдельным числом, а не длиной template.entries:
+    # под фильтром часть записей отсеивается, и длина показала бы больше, чем план
+    # собирается писать.
+    file_count: int = 0
 
     @property
     def source_path(self) -> str:
@@ -373,6 +377,7 @@ def _supply_item(
         action=action,
         reason=reason,
         template=template,
+        file_count=len(kept),
     )
 
 
@@ -398,6 +403,7 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
         bytes_total=sum(entry.size for entry in result.files),
         action=Action.WRITE,
         files=result.files,
+        file_count=len(result.files),
     )
 
 
