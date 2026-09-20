@@ -23,6 +23,7 @@
 - [Ассоциации файлов и интеграция с ОС](docs/FILE_ASSOCIATION_GUIDE.md)
 - [Сборка и релизный контур](docs/BUILD.md)
 - [Локализация приложения](docs/LOCALIZATION_README.md)
+- [Лицензии компонентов](docs/LICENSES.md)
 - [Конвенция коммитов](docs/COMMIT_CONVENTION.md)
 
 ## Лицензия

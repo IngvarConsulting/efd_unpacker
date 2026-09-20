@@ -19,7 +19,7 @@ import os
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -56,13 +56,17 @@ from ..domain.plan import (
     keeps_configuration,
 )
 from ..domain.unpack_service import UnpackService
+from ..infrastructure import rar
 from ..infrastructure.os_utils import open_folder
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import Translator
-from . import rows, style
+from . import rows, screens, style
 from .threads import BatchThread, PlanThread, describe_failure
 
 APP_VERSION = "2.0.0"
+
+#: Высота значка шестерёнки, из макета.
+GEAR_HEIGHT = 15
 
 ROLE_TEMPLATES = "templates"
 ROLE_DISTRIBUTIONS = "distributions"
@@ -112,6 +116,11 @@ class MainWindow(QMainWindow):
         self._batch_thread: Optional[BatchThread] = None
         self._templates_root = ""
         self._written_kinds: set = set()
+        # Экраны настроек создаются при первом заходе: поиск программ для .rar
+        # и чтение вариантов каталога ни к чему тому, кто в меню не заходил.
+        self._paths = None
+        self._tools = None
+        self._about = None
         self._started_at = 0.0
         self._written_bytes = 0
 
@@ -140,18 +149,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._make_footer())
         layout.addWidget(self._make_actions())
 
-        central = QWidget()
-        central.setLayout(layout)
-        self.setCentralWidget(central)
+        main_page = QWidget()
+        main_page.setLayout(layout)
+
+        # Экраны настроек занимают окно целиком, а не встают диалогом поверх:
+        # диалог прячет ровно тот список, ради которого в настройки и зашли.
+        self.pages = QStackedWidget()
+        self.pages.addWidget(main_page)
+        self.setCentralWidget(self.pages)
 
     def _make_header(self) -> QWidget:
         self.label_status = QLabel("")
         self.label_status.setProperty("role", "mono")
 
-        self.button_menu = QPushButton("⚙  ▾")
-        self.button_menu.setStyleSheet(style.secondary_button_sheet())
+        self.button_menu = QPushButton()
+        self.button_menu.setAccessibleName(self._t("MainWindow", "Settings"))
+        self.button_menu.setToolTip(self._t("MainWindow", "Settings"))
+        self.button_menu.setIconSize(
+            QSize(int(GEAR_HEIGHT * screens.MENU_ICON_ASPECT), GEAR_HEIGHT)
+        )
         self.button_menu.setCursor(Qt.PointingHandCursor)
         self.button_menu.clicked.connect(self._show_menu)
+        self._set_gear(False)
 
         title = QLabel(self._t("MainWindow", "EFD Unpacker"))
         title.setProperty("role", "title")
@@ -168,9 +187,10 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.button_menu)
 
         header = QFrame()
+        header.setObjectName("header")
         header.setFixedHeight(style.HEADER_HEIGHT)
         header.setLayout(bar)
-        header.setStyleSheet("QFrame { border-bottom: 1px solid %s; }" % style.LINE)
+        header.setStyleSheet(style.band_sheet("header", bottom=style.LINE))
         return header
 
     def _make_progress(self) -> QWidget:
@@ -199,8 +219,9 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.button_clear_marks)
 
         self.summary = QFrame()
+        self.summary.setObjectName("summary")
         self.summary.setLayout(bar)
-        self.summary.setStyleSheet("QFrame { border-bottom: 1px solid %s; }" % style.LINE_SOFT)
+        self.summary.setStyleSheet(style.band_sheet("summary", bottom=style.LINE_SOFT))
         self.summary.hide()
         return self.summary
 
@@ -227,12 +248,11 @@ class MainWindow(QMainWindow):
     def _make_drop_zone(self) -> QWidget:
         self.label_drop = QLabel(self._t("MainWindow", "Drag files here"))
         self.label_drop.setAlignment(Qt.AlignCenter)
-        self.label_drop.setStyleSheet("font-size: 16px; font-weight: 600; border: 0;")
+        self.label_drop.setStyleSheet("font-size: 16px; font-weight: 600;")
         hint = QLabel(".efd  ·  .zip  ·  .tar.gz  ·  .tar.bz2  ·  .rar  ·  .dmg")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(
-            "font-family: %s; font-size: 12px; color: %s; border: 0;"
-            % (style.mono_stack(), style.MUTED)
+            "font-family: %s; font-size: 12px; color: %s;" % (style.mono_stack(), style.MUTED)
         )
         choose = QPushButton(self._t("MainWindow", "Select files"))
         choose.setStyleSheet(style.secondary_button_sheet())
@@ -251,6 +271,7 @@ class MainWindow(QMainWindow):
         inner.addLayout(row)
 
         self.zone = QFrame()
+        self.zone.setObjectName("zone")
         self.zone.setLayout(inner)
         self.zone.setStyleSheet(style.drop_zone_sheet())
         self.zone.setMaximumWidth(440)
@@ -275,7 +296,7 @@ class MainWindow(QMainWindow):
         self.button_paths = QPushButton(self._t("MainWindow", "Change"))
         self.button_paths.setStyleSheet(style.link_sheet())
         self.button_paths.setCursor(Qt.PointingHandCursor)
-        self.button_paths.clicked.connect(self.browse_output_path)
+        self.button_paths.clicked.connect(self.show_paths)
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -295,8 +316,9 @@ class MainWindow(QMainWindow):
         box.addWidget(self.label_inside)
 
         self.footer = QFrame()
+        self.footer.setObjectName("footer")
         self.footer.setLayout(box)
-        self.footer.setStyleSheet("QFrame { border-top: 1px solid %s; }" % style.LINE)
+        self.footer.setStyleSheet(style.band_sheet("footer", top=style.LINE))
         return self.footer
 
     def _make_actions(self) -> QWidget:
@@ -329,32 +351,101 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.button_unpack)
 
         actions = QFrame()
+        actions.setObjectName("actions")
         actions.setLayout(bar)
-        actions.setStyleSheet("QFrame { border-top: 1px solid %s; }" % style.LINE_FAINT)
+        actions.setStyleSheet(style.band_sheet("actions", top=style.LINE_FAINT))
         return actions
 
     # --- меню ----------------------------------------------------------------
 
-    def _show_menu(self) -> None:
+    def menu(self) -> QMenu:
         """
-        Меню шестерёнки.
+        Меню шестерёнки: три экрана, как в макетах.
 
-        В макетах у него три экрана; здесь пока два действия, которые уже
-        есть. Отдельные экраны путей, инструментов и «О программе» — в #66.
+        Сборка отделена от показа: exec_ не возвращает управление, пока меню
+        не закроют, и проверить состав пунктов на живом меню было бы нечем.
         """
         menu = QMenu(self)
-        menu.addAction(self._t("MainWindow", "Change folders…"), self.browse_output_path)
-        menu.addAction(self._t("MainWindow", "About"), self._show_about)
-        menu.exec_(self.button_menu.mapToGlobal(self.button_menu.rect().bottomLeft()))
+        menu.setStyleSheet(style.menu_sheet())
 
-    def _show_about(self) -> None:
-        QMessageBox.about(
-            self, self._t("MainWindow", "About"),
-            "<b>EFD Unpacker</b> %s<br><br>%s" % (
-                APP_VERSION,
-                self._t("MainWindow", "Cross-platform unpacker for 1C supply files"),
-            ),
+        paths = menu.addAction(self._t("MainWindow", "Where to unpack…"), self.show_paths)
+        # Посреди распаковки менять каталог нельзя: писатели уже получили
+        # корень, и смена настройки развела бы обещанное в окне и то, что
+        # на самом деле пишется на диск.
+        paths.setEnabled(not self._unpacking())
+        menu.addAction(self._tools_title(), self.show_tools)
+        menu.addSeparator()
+        menu.addAction(self._t("MainWindow", "About"), self.show_about)
+        return menu
+
+    def _show_menu(self) -> None:
+        menu = self.menu()
+        self._set_gear(True)
+        try:
+            menu.exec_(self.button_menu.mapToGlobal(self.button_menu.rect().bottomLeft()))
+        finally:
+            # Возврат вида в finally: меню закрывается и по Esc, и щелчком
+            # мимо, и оставленная подсвеченной шестерёнка обещала бы открытое
+            # меню, которого нет.
+            self._set_gear(False)
+
+    def _set_gear(self, open_: bool) -> None:
+        """Шестерёнка: с открытым меню — в акценте, как в макете."""
+        self.button_menu.setStyleSheet(style.gear_sheet(open_))
+        self.button_menu.setIcon(
+            screens.menu_icon(style.ACCENT if open_ else style.INK, GEAR_HEIGHT)
         )
+
+    def _tools_title(self) -> str:
+        """
+        Пункт про .rar с количеством найденного, если оно уже известно.
+
+        Цифра берётся из кеша, а не новым поиском: меню открывается в потоке
+        окна, а поиск запускает каждого кандидата за номером версии.
+        """
+        title = self._t("MainWindow", "Tools for .rar")
+        tools = rar.found()
+        return title if tools is None else "%s  %d" % (title, len(tools))
+
+    # --- экраны настроек ------------------------------------------------------
+
+    def show_paths(self) -> None:
+        if self._paths is None:
+            self._paths = screens.PathsScreen(self.translator, self.settings_service)
+            self._paths.changed.connect(self._paths_changed)
+            self._paths.closed.connect(self.close_screen)
+            self.pages.addWidget(self._paths)
+        self._paths.refresh()
+        self._paths.set_needed(sum(item.bytes_total for item in self._selected()))
+        self.pages.setCurrentWidget(self._paths)
+
+    def show_tools(self) -> None:
+        if self._tools is None:
+            self._tools = screens.ToolsScreen(self.translator)
+            self._tools.closed.connect(self.close_screen)
+            self.pages.addWidget(self._tools)
+        self.pages.setCurrentWidget(self._tools)
+
+    def show_about(self) -> None:
+        if self._about is None:
+            self._about = screens.AboutScreen(self.translator, APP_VERSION)
+            self._about.closed.connect(self.close_screen)
+            self.pages.addWidget(self._about)
+        self.pages.setCurrentWidget(self._about)
+
+    def close_screen(self) -> None:
+        """Возврат к списку."""
+        self.pages.setCurrentIndex(0)
+
+    def _paths_changed(self) -> None:
+        """
+        Смена каталога видна сразу: строки называют новый путь, подвал тоже.
+
+        Пересборка, а не одна подпись: нижний ярус каждой строки показывает
+        путь относительно корня, и без неё список говорил бы про старый
+        каталог, пока окно не перезапустят.
+        """
+        self._rebuild_plan()
 
     # --- приём файлов --------------------------------------------------------
 
@@ -474,7 +565,14 @@ class MainWindow(QMainWindow):
                 state=self._initial_state(item),
             )
             row.toggled.connect(self._refresh)
-            row.open_requested.connect(lambda item=item: self._open_item(item))
+            if item.reason is SkipReason.RAR_TOOL_MISSING:
+                # Экран инструментов достижим и по месту, а не только из меню:
+                # строка сообщает, что программы нет, и здесь же говорит, где
+                # про неё прочитать.
+                row.offer_open(self._t("MainWindow", "Tools…"))
+                row.open_requested.connect(self.show_tools)
+            else:
+                row.open_requested.connect(lambda item=item: self._open_item(item))
             self.rows_box.insertWidget(index, row)
             self.rows.append(row)
             self._row_of[id(item)] = row
@@ -799,16 +897,6 @@ class MainWindow(QMainWindow):
 
     # --- пути и папка --------------------------------------------------------
 
-    def browse_output_path(self) -> None:
-        directory = QFileDialog.getExistingDirectory(
-            self, self._t("MainWindow", "Select output folder"),
-            self.settings_service.get_output_path(),
-        )
-        if not directory:
-            return
-        self.settings_service.set_output_path(directory)
-        self._rebuild_plan()
-
     def _open_item(self, item: PlannedItem) -> None:
         self._open(item.destination)
 
@@ -853,8 +941,9 @@ class MainWindow(QMainWindow):
         if thread is None or not thread.isRunning():
             # Осмотр не спрашивает: он ничего не пишет и быстро кончается.
             # Но дождаться его обязательно — QThread, разрушенный на ходу,
-            # роняет приложение при выходе.
+            # роняет приложение при выходе. То же и с поиском программ.
             self._stop(self._plan_thread)
+            self._stop_tools()
             event.accept()
             return
 
@@ -872,7 +961,13 @@ class MainWindow(QMainWindow):
         thread.cancel()
         self._stop(thread)
         self._stop(self._plan_thread)
+        self._stop_tools()
         event.accept()
+
+    def _stop_tools(self) -> None:
+        """Дожидается поиска программ, если экран инструментов его начал."""
+        if self._tools is not None:
+            self._tools.wait()
 
     @staticmethod
     def _stop(thread) -> None:

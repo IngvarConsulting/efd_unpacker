@@ -1,4 +1,4 @@
-import re
+import ast
 from pathlib import Path
 import os
 import xml.etree.ElementTree as ET
@@ -61,23 +61,33 @@ def _source_keys():
     """
     Пары (context, source), которые приложение может запросить в рантайме.
 
-    Литеральные вызовы translate(...)/_t(...) берём регуляркой, а ключи слоя
-    сообщений — прогоном самих форматтеров по всем членам обоих enum через
+    Литеральные вызовы translate(...)/_t(...) берём разбором самого кода, а
+    ключи слоя сообщений — прогоном форматтеров по всем членам обоих enum через
     записывающий переводчик. Раньше здесь был ast-обход словарей messages.py,
     но он терял контекст: одна и та же строка живёт в разных контекстах, и
     сверка «есть в ts, нет в коде» на таком экстракторе даёт ложные срабатывания.
+
+    Разбор, а не регулярка: длинная строка в исходнике лежит склейкой из
+    нескольких литералов подряд, и регулярка брала от неё только первый кусок.
+    Ключ уезжал в ts целиком, а сверка искала обрезанный — и оба направления
+    ругались разом, притом на строки, с которыми всё в порядке.
     """
     root = Path(__file__).resolve().parents[2] / "src" / "efd_unpacker"
     keys = set()
 
-    call_pattern = re.compile(
-        r'(?:translate|_t)\(\s*["\']([^"\']+)["\']\s*,\s*["\']((?:[^"\'\\]|\\.)*)["\']',
-        re.S,
-    )
     for path in root.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        for context, source in call_pattern.findall(text):
-            keys.add((context, source))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, "attr", None) not in ("translate", "_t"):
+                continue
+            arguments = node.args
+            if len(arguments) < 2:
+                continue
+            context, source = arguments[0], arguments[1]
+            if isinstance(context, ast.Constant) and isinstance(source, ast.Constant):
+                keys.add((context.value, source.value))
 
     keys |= _message_layer_keys()
     keys |= _report_layer_keys()

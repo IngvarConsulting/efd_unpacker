@@ -15,7 +15,7 @@ import time
 
 import pytest
 from PyQt5.QtCore import Qt, QMimeData, QUrl
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QRadioButton
 from PyQt5.QtGui import QCloseEvent, QDropEvent
 
 from efd_unpacker.domain.batch import BatchResult, ItemFailed, ItemStarted, ItemWritten
@@ -49,17 +49,43 @@ class DummySettings:
     def __init__(self) -> None:
         self.templates = os.path.join(os.sep, "t", "tmplts")
         self.distributions = os.path.join(os.sep, "t", "dist")
+        self.explicit_distributions = None
         self.saved = []
 
     def get_output_path(self) -> str:
         return self.templates
 
     def get_distributions_path(self) -> str:
-        return self.distributions
+        return self.explicit_distributions or self.distributions
 
     def set_output_path(self, path: str) -> None:
         self.saved.append(path)
         self.templates = path
+
+    def output_path_is_stored(self) -> bool:
+        return bool(self.saved)
+
+    def set_distributions_path(self, path) -> None:
+        self.explicit_distributions = path or None
+
+    def distributions_path_is_explicit(self) -> bool:
+        return self.explicit_distributions is not None
+
+    def get_output_path_items(self, manual_selected_path=None):
+        from efd_unpacker.infrastructure.settings_service import (
+            ORIGIN_DEFAULT,
+            ORIGIN_LAST_USED,
+            PathChoice,
+        )
+
+        return [
+            PathChoice(path=self.templates, origin=ORIGIN_LAST_USED, label=self.templates),
+            PathChoice(
+                path=os.path.join(os.sep, "другой", "tmplts"),
+                origin=ORIGIN_DEFAULT,
+                label="другой",
+            ),
+        ]
 
 
 class DummyValidator(FileValidator):
@@ -869,3 +895,215 @@ def test_russian_footer_reads_as_one_sentence(qtbot):
     text = window.label_inside.text()
     assert text.count(",") == 1, text
     assert "шаблонов" in text and "дистрибутивов" in text
+
+
+# --- экраны настроек ---------------------------------------------------------
+
+
+def test_menu_opens_three_screens(qtbot):
+    """В макетах у шестерёнки три пункта: пути, инструменты, о программе."""
+    window = make_window(qtbot)
+
+    actions = [action for action in window.menu().actions() if not action.isSeparator()]
+
+    assert [action.text() for action in actions] == [
+        "Where to unpack…", "Tools for .rar", "About",
+    ]
+
+
+def test_folders_cannot_be_changed_while_unpacking(qtbot):
+    """
+    Посреди распаковки писатели уже получили корень.
+
+    Смена настройки развела бы обещанное в окне и то, что пишется на диск, —
+    а увидел бы это пользователь только по готовым файлам не в том каталоге.
+    """
+    started = {}
+
+    def batch(plan, sink, *_args, **_kwargs):
+        started["menu"] = [
+            (action.text(), action.isEnabled())
+            for action in window.menu().actions()
+            if not action.isSeparator()
+        ]
+        return BatchResult(written=plan.to_write)
+
+    window = make_window(qtbot, batch=batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert started["menu"][0] == ("Where to unpack…", False)
+    assert started["menu"][1][1] is True, "инструменты читать можно всегда"
+
+
+def test_tools_count_is_shown_only_when_it_is_known(qtbot, monkeypatch):
+    """
+    Цифра рядом с пунктом берётся из кеша, а не новым поиском.
+
+    Меню открывается в потоке окна, а поиск запускает каждого кандидата за
+    номером версии: предел ожидания такого запуска — двадцать секунд.
+    """
+    window = make_window(qtbot)
+
+    monkeypatch.setattr(ui.rar, "found", lambda: None)
+    assert window._tools_title() == "Tools for .rar"
+
+    monkeypatch.setattr(ui.rar, "found", lambda: (object(), object()))
+    assert window._tools_title().endswith("2")
+
+
+def test_changing_the_folder_updates_the_list_and_the_footer(qtbot):
+    """
+    Критерий #66: смена каталога меняет список и подвал без перезапуска.
+
+    Нижний ярус строки показывает путь относительно корня, поэтому одной
+    подписи в подвале мало: без пересборки список говорил бы про старый
+    каталог до самого перезапуска.
+    """
+    settings = DummySettings()
+    other = os.path.join(os.sep, "другой", "tmplts")
+    window = make_window(qtbot, settings=settings)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.show_paths()
+    before = (window.rows[0].texts()[1], window.label_root.text())
+    window._paths.findChild(QRadioButton, "templates-1").click()
+
+    assert settings.get_output_path() == other
+    assert window.calls["build"] > 1, "план не пересобран"
+    assert (window.rows[0].texts()[1], window.label_root.text()) != before
+    assert "другой" in window.label_root.text()
+
+
+def test_needed_volume_comes_from_the_marked_rows(qtbot):
+    """Подвал экрана путей говорит про то, что поедет, а не про весь список."""
+    window = make_window(qtbot, plan=Plan(items=(item(bytes_total=4096),)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.show_paths()
+    with_one = window._paths.label_space.text()
+    window.rows[0].mark.click()
+    window.show_paths()
+
+    assert "4" in with_one
+    assert window._paths.label_space.text() != with_one
+
+
+def test_back_returns_to_the_list(qtbot):
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.show_about()
+    assert window.pages.currentIndex() != 0
+
+    window._about.button_back.click()
+    assert window.pages.currentIndex() == 0
+
+
+def test_row_without_a_rar_program_leads_to_the_tools_screen(qtbot):
+    """
+    Экран инструментов достижим по месту, а не только из меню.
+
+    Строка сообщает, что программы нет; ей же и сказать, где про неё прочитать.
+    """
+    skipped = item(
+        action=Action.SKIP, reason=SkipReason.RAR_TOOL_MISSING, destination="", bytes_total=0,
+    )
+    window = make_window(qtbot, plan=Plan(items=(skipped,)))
+    drop(window, ["/d/setup.rar"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    row = window.rows[0]
+    assert row.button_open.isVisible() or row.button_open.text() == "Tools…"
+    row.button_open.click()
+
+    assert window.pages.currentWidget() is window._tools
+    window._tools.wait()
+
+
+def test_other_rows_still_open_their_folder(qtbot, monkeypatch):
+    """Подмена ссылки у .rar не должна отнять «Открыть папку» у остальных."""
+    opened = []
+    monkeypatch.setattr(ui, "open_folder", lambda path: opened.append(path) is None)
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.rows[0].open_requested.emit()
+
+    assert opened == [window._plan.items[0].destination]
+    assert window.pages.currentIndex() == 0
+
+
+def test_closing_waits_for_the_tools_search(qtbot):
+    """
+    QThread, разрушенный на ходу, роняет приложение при выходе.
+
+    Поиск программ — такой же поток, как осмотр, и ждать его при закрытии
+    обязательно.
+    """
+    window = make_window(qtbot)
+    window.show_tools()
+
+    window.closeEvent(QCloseEvent())
+
+    assert not window._tools._thread or not window._tools._thread.isRunning()
+
+
+def test_labels_inside_bands_are_not_framed(qtbot):
+    """
+    QLabel — наследник QFrame, и правило «QFrame { border… }» бьёт по нему.
+
+    Полосы окна — шапка, сводка, подвал и нижний ряд — каждая рисует свою
+    черту, и безымянное правило обводило рамкой каждую подпись внутри них.
+    Видно это только глазами, поэтому подписи проверяются рисунком: ни один
+    пиксель цвета черты не должен лежать по краю подписи.
+    """
+    window = make_window(qtbot)
+    window.resize(760, 540)
+    # Без show(): плагин minimal валится на настоящем окне QMainWindow, и даже
+    # WA_DontShowOnScreen его не спасает. Рамка видна и без показа: подписи
+    # рисуются по своей геометрии, а её даёт активация разметки.
+    window.layout().activate()
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    framed = [
+        label.objectName() or label.text()
+        for label in (
+            window.label_root_caption, window.label_root, window.label_inside,
+            window.label_counts, window.label_status,
+        )
+        if _has_border(label)
+    ]
+
+    assert not framed, "подписи в рамке: %s" % framed
+
+
+def _has_border(label):
+    """Есть ли на краю подписи пиксели цвета разделительной черты."""
+    from PyQt5.QtGui import QColor
+
+    from PyQt5.QtGui import QImage, QPainter
+
+    if label.width() < 3 or label.height() < 3:
+        return False
+    image = QImage(label.width(), label.height(), QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    label.render(painter)
+    painter.end()
+    edges = (
+        [(x, 0) for x in range(image.width())]
+        + [(x, image.height() - 1) for x in range(image.width())]
+        + [(0, y) for y in range(image.height())]
+        + [(image.width() - 1, y) for y in range(image.height())]
+    )
+    lines = {ui.style.LINE.upper(), ui.style.LINE_SOFT.upper(), ui.style.LINE_FAINT.upper()}
+    return any(QColor(image.pixel(x, y)).name().upper() in lines for x, y in edges)

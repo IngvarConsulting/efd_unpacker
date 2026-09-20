@@ -30,6 +30,14 @@ SURFACE = "#FFFFFF"
 SURFACE_MUTED = "#F5F7F8"
 DISABLED = "#A8B2B8"
 ALERT = "#8C3A32"        # отказ
+MENU_WASH = "#F1F7F5"    # шестерёнка с открытым меню
+CODE_FILL = "#F2F5F6"    # подложка команды установки
+
+# Полоса Ingvar Consulting на экране «О программе». Цвета не из общей палитры:
+# это чужой фирменный блок, и логотип нарисован белым по тёмно-синему.
+BRAND_BACK = "#1B2A44"
+BRAND_TEXT = "#D7DEE8"
+BRAND_LINK = "#7FB0FF"
 
 # --- размеры -----------------------------------------------------------------
 
@@ -97,10 +105,109 @@ def window_sheet() -> str:
         QLabel[role="mono-accent"] { font-family: %(mono)s; font-size: 12px; color: %(accent)s; }
         QLabel[role="muted"] { font-size: 12px; color: %(muted)s; }
         QLabel[role="path"] { font-family: %(mono)s; font-size: 12px; color: %(ink)s; }
+        QLabel[role="section"] {
+            font-size: 11px; font-weight: 600; color: %(muted)s;
+        }
+        QLabel[role="note"] { font-size: 12px; color: %(muted)s; }
+        QLabel[role="screen-title"] { font-size: 14px; font-weight: 600; }
     """ % {
         "surface": SURFACE, "ink": INK, "muted": MUTED, "accent": ACCENT,
         "sans": sans_stack(), "mono": mono_stack(),
     }
+
+
+#: Разрядка заголовков разделов, в процентах. Задаётся шрифтом, а не листом
+#: стилей: letter-spacing в таблицах стилей Qt не поддержан — правило молча
+#: отбрасывается, а в макете это единственное отличие такого заголовка от
+#: обычной подписи.
+SECTION_SPACING = 106
+
+
+def code_sheet() -> str:
+    """Команда установки: моноширинная, в рамке, чтобы её было видно как код."""
+    return """
+        QLabel {
+            font-family: %(mono)s; font-size: 11.5px; color: %(ink)s;
+            background: %(fill)s; border: 1px solid %(soft)s; border-radius: 5px;
+            padding: 4px 8px;
+        }
+    """ % {"mono": mono_stack(), "ink": INK, "fill": CODE_FILL, "soft": LINE_SOFT}
+
+
+def small_button_sheet() -> str:
+    """Кнопка рядом со строкой: та же форма, что у обычной, но в один ярус."""
+    return """
+        QPushButton {
+            padding: 4px 10px; border: 1px solid %(line)s; border-radius: 5px;
+            background: %(surface)s; color: %(ink)s; font-size: 11.5px;
+        }
+        QPushButton:hover { border-color: %(muted)s; }
+    """ % {"line": LINE, "surface": SURFACE, "ink": INK, "muted": MUTED}
+
+
+def menu_sheet() -> str:
+    """Меню шестерёнки: карточка со скруглением и отступами, как в макете."""
+    return """
+        QMenu {
+            background: %(surface)s; border: 1px solid %(line)s;
+            border-radius: 9px; padding: 5px;
+        }
+        QMenu::item {
+            padding: 9px 10px; border-radius: 6px; color: %(ink)s; font-size: 13px;
+        }
+        QMenu::item:selected { background: %(wash)s; }
+        QMenu::separator { height: 1px; background: %(faint)s; margin: 5px 8px; }
+    """ % {"surface": SURFACE, "line": LINE, "ink": INK,
+           "wash": MENU_WASH, "faint": LINE_FAINT}
+
+
+def gear_sheet(open_: bool = False) -> str:
+    """Шестерёнка. С открытым меню — в акценте, как в макете."""
+    return """
+        QPushButton {
+            padding: 4px 7px; border: 1px solid %(border)s; border-radius: 6px;
+            background: %(fill)s; color: %(color)s; font-size: 13px;
+        }
+        QPushButton:hover { border-color: %(muted)s; }
+    """ % {"border": ACCENT if open_ else LINE,
+           "fill": MENU_WASH if open_ else SURFACE,
+           "color": ACCENT if open_ else INK,
+           "muted": ACCENT_DARK if open_ else MUTED}
+
+
+def radio_sheet() -> str:
+    """
+    Переключатель варианта пути: кольцо акцентом, подпись моноширинная.
+
+    Кружок рисуется правилами рамки, а не картинкой и не родным стилем: в
+    макете это кольцо толщиной в три пикселя с белой серединой, и у родных
+    переключателей трёх систем оно выглядит по-разному. Размер задаётся
+    содержимым, рамка прибавляется сверху — отсюда 8+3+3 и 12+1+1 на одни и
+    те же 14 пикселей снаружи.
+    """
+    return """
+        QRadioButton { font-family: %(mono)s; font-size: 12px; color: %(ink)s; spacing: 10px; }
+        QRadioButton::indicator {
+            width: 12px; height: 12px; border-radius: 7px;
+            border: 1px solid %(line)s; background: %(surface)s;
+        }
+        QRadioButton::indicator:checked {
+            width: 8px; height: 8px; border: 3px solid %(accent)s;
+        }
+        QRadioButton:disabled { color: %(disabled)s; }
+        QRadioButton[role="action"] {
+            font-family: %(sans)s; font-size: 12.5px; font-weight: 500; color: %(accent)s;
+        }
+    """ % {"mono": mono_stack(), "sans": sans_stack(), "ink": INK, "accent": ACCENT,
+           "line": LINE, "surface": SURFACE, "disabled": DISABLED}
+
+
+def brand_sheet() -> str:
+    """Полоса Ingvar Consulting: тёмная карточка со скруглением."""
+    return """
+        QFrame#brand { background: %(back)s; border-radius: 10px; }
+        QFrame#brand QLabel { background: transparent; color: %(text)s; font-size: 12.5px; }
+    """ % {"back": BRAND_BACK, "text": BRAND_TEXT}
 
 
 def primary_button_sheet() -> str:
@@ -140,10 +247,28 @@ def link_sheet() -> str:
     """ % {"accent": ACCENT, "dark": ACCENT_DARK, "disabled": DISABLED}
 
 
+def band_sheet(name: str, top: str = "", bottom: str = "") -> str:
+    """
+    Полоса с разделительной чертой сверху или снизу.
+
+    Правило именное, а не на весь QFrame: QLabel — наследник QFrame, и
+    безымянное правило рисовало рамку вокруг каждой подписи внутри полосы.
+    Лечить это «border: 0» у каждой подписи значит чинить не там: следующая
+    добавленная подпись снова окажется в рамке, и заметить это можно только
+    глазами.
+    """
+    lines = ["border: 0;"]
+    if top:
+        lines.append("border-top: 1px solid %s;" % top)
+    if bottom:
+        lines.append("border-bottom: 1px solid %s;" % bottom)
+    return "QFrame#%s { %s }" % (name, " ".join(lines))
+
+
 def drop_zone_sheet(active: bool = False) -> str:
     """Зона приёма файлов: пунктир, как в макете пустого окна."""
     return """
-        QFrame {
+        QFrame#zone {
             border: 1.5px dashed %(border)s; border-radius: 12px; background: %(fill)s;
         }
     """ % {"border": ACCENT if active else LINE,

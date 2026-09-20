@@ -44,6 +44,11 @@ _LISTING_DATE = re.compile(r"\s([A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4}))
 LIBARCHIVE = "libarchive"
 SEVENZIP = "sevenzip"
 
+#: Как семейство называется человеку. Имя в PATH («7zz») ничего не говорит,
+#: а «7-Zip» узнаётся с первого взгляда и совпадает с тем, что человек будет
+#: искать в поисковике.
+FAMILY_TITLES = {LIBARCHIVE: "libarchive", SEVENZIP: "7-Zip"}
+
 
 @dataclass(frozen=True)
 class Tool:
@@ -114,6 +119,33 @@ _cache: Dict[Tuple[str, ...], Tuple[Tool, ...]] = {}
 _configured: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class Probe:
+    """
+    Чем и на чём в последний раз читалось оглавление .rar.
+
+    Пригодность программы проверяется на самом архиве, а не по версии, —
+    и экрану настроек нечего сказать про неё, кроме результата этой проверки.
+    Записываем факт, а не предположение: «проверена на вашем архиве» без
+    такой записи было бы выдумкой.
+    """
+
+    tool: Tool
+    archive: str
+    entries: int
+
+
+#: Последняя удачная проверка. Пишется из потока распаковки, читается из
+#: потока окна: замена ссылки на неизменяемый объект целиком, без частично
+#: заполненного состояния посередине.
+_probe: Optional[Probe] = None
+
+
+def last_probe() -> Optional[Probe]:
+    """Результат последней удачной проверки на настоящем архиве, если он был."""
+    return _probe
+
+
 def configure(path: Optional[str]) -> None:
     """
     Запомнить программу, указанную --rar-tool, на весь запуск.
@@ -141,16 +173,58 @@ def discover(extra: Optional[str] = None) -> Tuple[Tool, ...]:
     return _cache[key]
 
 
+def found() -> Optional[Tuple[Tool, ...]]:
+    """
+    Что уже нашли, без нового поиска. None — ещё не искали.
+
+    Меню шестерёнки показывает рядом с пунктом количество найденного, а
+    открывается оно в потоке окна: звать туда discover() значит ждать запуска
+    каждого кандидата ради одной цифры. Не знаем — не пишем.
+    """
+    return _cache.get((_configured or "",))
+
+
 def forget() -> None:
-    """Сбросить кеш поиска. Нужен тестам и смене --rar-tool в одном процессе."""
+    """
+    Сбросить всё, что узнали о программах: и кеш поиска, и запись о проверке.
+
+    Нужен тестам, смене --rar-tool в одном процессе и кнопке «Искать заново».
+    Запись о проверке уходит вместе с кешем намеренно: она говорит про
+    программу из этого кеша, и пережить его — значит утверждать про
+    программу, которой в списке больше нет.
+    """
+    global _probe
     _cache.clear()
+    _probe = None
 
 
 def reset() -> None:
     """Полный сброс: и кеш, и выбранная программа. Только для тестов."""
     global _configured
     _configured = None
-    _cache.clear()
+    forget()
+
+
+def known_families() -> Tuple[str, ...]:
+    """
+    Семейства программ, которые приложение ищет на этой системе.
+
+    Экрану настроек нужен не только список найденного: «не найден» несёт
+    смысл лишь рядом с именем того, кого искали. Порядок — тот же, что у
+    поиска, по нему видно, кого позовут первым.
+    """
+    families: List[str] = []
+    for _name, family in _NAMES.get(sys.platform, _DEFAULT_NAMES):
+        if family not in families:
+            families.append(family)
+    return tuple(families)
+
+
+def searched_names(family: str) -> Tuple[str, ...]:
+    """Под какими именами семейство ищется в PATH. Показывается человеку."""
+    return tuple(
+        name for name, other in _NAMES.get(sys.platform, _DEFAULT_NAMES) if other == family
+    )
 
 
 def _candidates(extra: Optional[str]) -> List[Tool]:
@@ -256,10 +330,13 @@ def read_entries(
     аргументами во внешнюю программу, и `../../` в имени распаковало бы файл
     за пределы назначения руками самой программы.
     """
+    global _probe
     for tool in discover(extra):
         entries = list_entries(tool, archive)
         if entries is not None:
-            return tool, _checked(entries)
+            checked = _checked(entries)
+            _probe = Probe(tool=tool, archive=os.path.basename(archive), entries=len(checked))
+            return tool, checked
     raise UnpackError(
         UnpackErrorCode.CONTAINER_UNSUPPORTED,
         {"entry": os.path.basename(archive), "kind": "rar", "hint": install_hint()},

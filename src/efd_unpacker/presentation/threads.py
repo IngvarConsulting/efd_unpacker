@@ -51,6 +51,31 @@ class PlanThread(QThread):
             self.ready.emit([], error)
 
 
+class ToolsThread(QThread):
+    """
+    Поиск программ для .rar.
+
+    В поток по той же причине, что и осмотр: поиск запускает каждого кандидата
+    за номером версии, а предел ожидания такого запуска — двадцать секунд.
+    Зависшая программа подвесила бы окно ровно на столько же.
+    """
+
+    ready = pyqtSignal(object)
+
+    def __init__(self, discover: Callable) -> None:
+        super().__init__()
+        self._discover = discover
+
+    def run(self) -> None:  # pragma: no cover - потоковая логика
+        try:
+            self.ready.emit(tuple(self._discover()))
+        except Exception:  # noqa: BLE001 - поток не должен падать молча
+            # Поиск ничего не пишет и ничего не ломает, и единственное, что он
+            # может сообщить об отказе, — что программ не нашлось. Пустой ответ
+            # честнее молчания: экран иначе навсегда остался бы с «Ищем…».
+            self.ready.emit(())
+
+
 class BatchThread(QThread):
     """Исполнение плана с построчным отчётом о ходе."""
 

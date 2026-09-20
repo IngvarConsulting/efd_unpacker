@@ -778,3 +778,102 @@ def test_symlink_pointing_inside_the_destination_is_still_refused(tmp_path, monk
     destination.mkdir()
 
     assert rar.extract_entry(tool, "any.rar", str(destination), _entry(tool, "payload.efd")) is False
+
+
+# --- что экран настроек берёт отсюда -----------------------------------------
+
+
+def test_successful_read_is_remembered_as_a_probe(tmp_path, monkeypatch):
+    """
+    Пригодность проверяется на самом архиве — и результат стоит записать.
+
+    Экран настроек иначе не может сказать про программу ничего, кроме номера
+    версии, а он про поддержку формата и не говорит: набор форматов libarchive
+    задаётся при сборке. «Проверена на вашем архиве» без такой записи было бы
+    выдумкой, а выдумка на экране, по которому принимают решения, хуже пустоты.
+    """
+    tool = fake_tool(tmp_path)
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (tool,))
+    assert rar.last_probe() is None
+
+    used, entries = rar.read_entries(str(tmp_path / "setuptc64.rar"))
+
+    probe = rar.last_probe()
+    assert probe is not None
+    assert probe.tool is used
+    assert probe.archive == "setuptc64.rar"
+    assert probe.entries == len(entries)
+
+
+def test_probe_is_not_recorded_when_nothing_could_read_the_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (fake_tool(tmp_path, "broken_list"),))
+
+    with pytest.raises(UnpackError):
+        rar.read_entries(str(tmp_path / "a.rar"))
+
+    assert rar.last_probe() is None
+
+
+def test_forgetting_the_search_forgets_the_probe_too(tmp_path, monkeypatch):
+    """
+    Запись о проверке говорит про программу из кеша поиска.
+
+    Пережив его, она утверждала бы что-то про программу, которой в списке
+    больше нет: «Искать заново» после удаления bsdtar показала бы пустой
+    список и строку о том, что он проверен.
+    """
+    monkeypatch.setattr(rar, "discover", lambda extra=None: (fake_tool(tmp_path),))
+    rar.read_entries(str(tmp_path / "a.rar"))
+    assert rar.last_probe() is not None
+
+    rar.forget()
+
+    assert rar.last_probe() is None
+
+
+def test_known_families_keep_the_search_order():
+    """
+    Порядок тот же, что у поиска: по нему видно, кого позовут первым.
+
+    Семейство названо один раз, а не по разу на каждое имя в PATH: 7zz и 7z —
+    одна и та же программа, и две строки про неё в экране настроек были бы
+    шумом.
+    """
+    families = rar.known_families()
+
+    assert families == tuple(dict.fromkeys(families)), "семейство названо дважды"
+    assert LIBARCHIVE in families and SEVENZIP in families
+    assert all(family in rar.FAMILY_TITLES for family in families)
+
+
+def test_searched_names_are_the_ones_actually_looked_for(monkeypatch):
+    """«Ищется как…» обязано совпадать с тем, что и правда ищется в PATH."""
+    asked = []
+    monkeypatch.setattr(rar.shutil, "which", lambda name: asked.append(name) and None)
+
+    rar.discover()
+
+    for family in rar.known_families():
+        for name in rar.searched_names(family):
+            assert name in asked
+
+
+def test_found_does_not_start_a_search(tmp_path, monkeypatch):
+    """
+    Цифра в меню не должна стоить запуска чужих программ.
+
+    Меню открывается в потоке окна, а поиск запускает каждого кандидата за
+    номером версии: предел ожидания такого запуска — двадцать секунд.
+    """
+    monkeypatch.setattr(rar.shutil, "which", _forbidden_which)
+    assert rar.found() is None
+
+    monkeypatch.undo()
+    monkeypatch.setattr(rar.shutil, "which", lambda name: None)
+    rar.discover()
+
+    assert rar.found() == ()
+
+
+def _forbidden_which(_name):
+    raise AssertionError("found() не должен запускать поиск")
