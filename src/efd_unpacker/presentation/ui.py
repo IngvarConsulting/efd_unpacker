@@ -45,6 +45,7 @@ from ..constants import UIConstants
 from ..domain.batch import run as run_batch
 from ..domain.errors import FileValidationError, UnpackError
 from ..domain.file_validator import FileValidator
+from ..domain.manifest import read as read_manifest
 from ..domain.plan import (
     Action,
     ItemKind,
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         build=build_plan,
         batch=run_batch,
         make_writers=Writers,
+        read_manifest=read_manifest,
     ) -> None:
         super().__init__()
         self.translator = translator
@@ -106,6 +108,7 @@ class MainWindow(QMainWindow):
         self._build = build
         self._batch = batch
         self._make_writers = make_writers
+        self._read_manifest = read_manifest
 
         self._inspected: List = []
         self._plan = Plan()
@@ -123,6 +126,8 @@ class MainWindow(QMainWindow):
         self._about = None
         self._started_at = 0.0
         self._written_bytes = 0
+        self._current_bytes = 0
+        self._total_bytes = 0
 
         self._build_ui()
         self._refresh()
@@ -784,6 +789,7 @@ class MainWindow(QMainWindow):
         self._templates_root = templates_root
         self._started_at = time.monotonic()
         self._written_bytes = 0
+        self._current_bytes = 0
 
         # Поток создаётся до писателей: им нужен его флаг отмены. Без него
         # «Остановить» действовала только на границе между элементами, и пачка
@@ -803,7 +809,8 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self._forget_batch_thread)
         self._batch_thread = thread
 
-        self.progress_total.setMaximum(max(sum(i.bytes_total for i in selected), 1))
+        self._total_bytes = sum(item.bytes_total for item in selected)
+        self.progress_total.setMaximum(style.PROGRESS_STEPS)
         self.progress_total.setValue(0)
         self.progress_total.show()
         # Гасим, а не только прячем: скрытая кнопка остаётся «доступной», и
@@ -837,7 +844,10 @@ class MainWindow(QMainWindow):
             row.set_progress(done, item.bytes_total)
             row.set_detail(name)
             row.set_trailing("%s / %s" % (style.human_size(done), style.human_size(item.bytes_total)))
-        self.progress_total.setValue(self._written_bytes + done)
+        # Недописанный элемент считается тоже: пачка из одного архива на
+        # полтора гигабайта иначе не показала бы остаток времени ни разу —
+        # до самого конца, когда он уже не нужен.
+        self._current_bytes = done
         self._update_status(item)
 
     def _item_finished(self, item: PlannedItem, error: Optional[UnpackError]) -> None:
@@ -851,14 +861,38 @@ class MainWindow(QMainWindow):
             row.set_trailing(self._trailing(item))
             if error is None:
                 row.offer_open(self._t("MainWindow", "Open Folder"))
+                self._show_manifest(row, item)
         if error is None:
             self._written_bytes += item.bytes_total
-            self.progress_total.setValue(self._written_bytes)
+        self._current_bytes = 0
         self._update_status(item)
 
+    def _show_manifest(self, row: rows.PlanRow, item: PlannedItem) -> None:
+        """
+        «В 1С появится…» — строка Catalog из распакованного 1cv8.mft.
+
+        Украшение, а не условие успеха: манифеста нет, он битый или в нём нет
+        ни одной конфигурации — строка просто остаётся прежней, с путём.
+        Распаковка к этому моменту уже состоялась.
+
+        Показываются только те конфигурации, чей файл лёг на диск: с
+        «без демобаз» демонстрационная база не пишется вовсе, и обещать её в
+        1С значило бы соврать там, где человек пойдёт её искать.
+        """
+        if item.kind is not ItemKind.SUPPLY:
+            return
+        delivered = self._read_manifest(item.destination).delivered(item.destination)
+        if delivered:
+            row.set_appears(
+                self._t("MainWindow", "In 1C it will appear as:"),
+                [config.title for config in delivered],
+            )
+
     def _update_status(self, _item: PlannedItem) -> None:
-        total = self.progress_total.maximum()
-        done = self.progress_total.value()
+        """Полоса и остаток времени. Оба считаются от байтов, а не наоборот."""
+        total = self._total_bytes
+        done = self._written_bytes + self._current_bytes
+        self.progress_total.setValue(style.progress_value(done, total))
         elapsed = max(time.monotonic() - self._started_at, 0.001)
         if done <= 0 or done >= total:
             self.label_status.setText("")

@@ -48,6 +48,28 @@ SIDE_PADDING = 20
 MARK_SIZE = 16
 PROGRESS_HEIGHT = 4
 
+#: Размеры нижнего яруса строки: путь моноширинным, фраза про 1С — обычным.
+#: Пикселями и целыми: QFont.setPixelSize дробных не принимает, а мерить
+#: приходится тем же шрифтом, каким рисуем.
+DETAIL_SIZE = 11
+APPEARS_SIZE = 12
+
+#: На сколько долей делится полоса хода.
+#:
+#: Байтами её границы задавать НЕЛЬЗЯ: QProgressBar хранит их 32-битным целым,
+#: и всё, что от двух гигабайт, отвергается с OverflowError. Пачка на 11 ГБ —
+#: ровно то, ради чего окно и делалось, — падала на нажатии «Распаковать», не
+#: записав ни байта. Тысячи долей хватает: полоса шириной в 760 точек тоньше
+#: одной доли всё равно не нарисует.
+PROGRESS_STEPS = 1000
+
+
+def progress_value(done: int, total: int) -> int:
+    """Доля сделанного в шагах полосы. Ноль при неизвестном объёме."""
+    if total <= 0:
+        return 0
+    return min(PROGRESS_STEPS, max(0, done * PROGRESS_STEPS // total))
+
 
 def _families() -> tuple:
     """Гарнитуры под систему: гротеск для текста, моноширинный для чисел."""
@@ -86,6 +108,20 @@ def _stack(preferred: str, fallback: str) -> str:
             "'%s', '%s'" % (preferred, fallback) if available else "'%s'" % fallback
         )
     return _stacks[preferred]
+
+
+def families(mono: bool = False) -> tuple:
+    """
+    Гарнитуры по предпочтению — для QFont, а не для таблицы стилей.
+
+    Нужны там, где текст не только рисуется, но и МЕРЯЕТСЯ: размер из
+    таблицы стилей в QWidget.font() не попадает, и QFontMetrics по нему
+    считает шириной гарнитуры по умолчанию. Строка «В 1С появится…»
+    укорачивалась по таким меркам до трети настоящей длины.
+    """
+    preferred, fallback = ("IBM Plex Mono", MONO) if mono else ("IBM Plex Sans", SANS)
+    available = _stack(preferred, fallback).startswith("'%s'" % preferred)
+    return (preferred, fallback) if available else (fallback,)
 
 
 def sans_stack() -> str:

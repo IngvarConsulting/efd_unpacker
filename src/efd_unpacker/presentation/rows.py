@@ -12,15 +12,18 @@
 
 from __future__ import annotations
 
+import html
+from typing import Optional, Sequence, Tuple
 
 from PyQt5.QtCore import QRectF, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (
     QAbstractButton,
     QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -115,6 +118,88 @@ class Mark(QAbstractButton):
         painter.drawPath(path)
 
 
+def _font(mono: bool, size: int) -> QFont:
+    """QFont из тех же гарнитур, что и таблица стилей, но с точным размером."""
+    font = QFont()
+    names = list(style.families(mono))
+    if hasattr(font, "setFamilies"):
+        font.setFamilies(names)
+    font.setFamily(names[0])
+    font.setPixelSize(size)
+    return font
+
+
+class DetailLabel(QLabel):
+    """
+    Нижний ярус строки: путь либо «В 1С появится: …».
+
+    Отдельный виджет, потому что укорачивать текст умеет только тот, кто знает
+    свою ширину, — и узнаёт он её в своём resizeEvent, а не в чужом: у строки
+    он случается ДО того, как разметка раздаст ширину подписям.
+
+    Ширину строки подпись не диктует: длинное название конфигурации раздвигало
+    строку шире окна, и с правого края за обрез уезжали объём и «Открыть
+    папку» — то есть ровно то, зачем в готовую строку и смотрят.
+    """
+
+    #: Сколько места оставляем названию, даже когда его нет вовсе. Иначе на
+    #: неразмеченной ещё строке от него остаётся одно многоточие.
+    MIN_ROOM = 60
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._appears: Optional[Tuple[str, Tuple[str, ...]]] = None
+        self.setFont(_font(mono=True, size=style.DETAIL_SIZE))
+
+    def set_plain(self, text: str) -> None:
+        self._appears = None
+        self.setFont(_font(mono=True, size=style.DETAIL_SIZE))
+        self.setTextFormat(Qt.PlainText)
+        self.setToolTip("")
+        self.setText(text)
+
+    def set_appears(self, caption: str, values: Sequence[str]) -> None:
+        self._appears = (caption, tuple(values))
+        # Шрифт ставится виджету, а не таблицей стилей: размер из таблицы в
+        # font() не попадает, и мерить пришлось бы не тем, чем рисуем.
+        self.setFont(_font(mono=False, size=style.APPEARS_SIZE))
+        self.setTextFormat(Qt.RichText)
+        # Целиком — в подсказке: в строку название влезает не всегда, а узнать
+        # его полностью человек должен без распаковки заново.
+        self.setToolTip("\n".join(values))
+        self._draw()
+
+    def resizeEvent(self, event) -> None:
+        """Стало шире — название должно дорасти обратно, а не остаться куцым."""
+        super().resizeEvent(event)
+        self._draw()
+
+    def _draw(self) -> None:
+        """
+        Укорачивает названия до своей ширины.
+
+        Укорачиваем сами, а не полагаемся на Qt: не влезший текст он обрезает
+        молча, по границе виджета и без многоточия, и понять по такой строке,
+        что название продолжается, нельзя.
+
+        Значения приходят из чужого файла и экранируются здесь, а не у
+        вызывающего: забыть экранирование можно только один раз, а «<b>» в
+        названии конфигурации не должно становиться разметкой.
+        """
+        if self._appears is None:
+            return
+        caption, values = self._appears
+        metrics = QFontMetrics(self.font())
+        room = max(self.width() - metrics.width(caption + " "), DetailLabel.MIN_ROOM)
+        shown = "<br>".join(
+            '<span style="color: %s;">%s</span>'
+            % (style.INK, html.escape(metrics.elidedText(value, Qt.ElideRight, room)))
+            for value in values
+        )
+        self.setText("%s %s" % (html.escape(caption), shown))
+
+
 class PlanRow(QWidget):
     """Одна строка плана."""
 
@@ -141,10 +226,8 @@ class PlanRow(QWidget):
         )
         self.label_trailing.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.label_detail = QLabel(detail)
-        self.label_detail.setStyleSheet(
-            "font-family: %s; font-size: 11px; color: %s;" % (style.mono_stack(), style.MUTED)
-        )
+        self.label_detail = DetailLabel(detail)
+        self.label_detail.setStyleSheet(self._detail_sheet())
         self.button_open = QPushButton("")
         self.button_open.setStyleSheet(style.link_sheet())
         self.button_open.setCursor(Qt.PointingHandCursor)
@@ -211,6 +294,17 @@ class PlanRow(QWidget):
         """Поедет ли строка. Недоступные не поедут при любом желании."""
         return self._state == PENDING
 
+    @staticmethod
+    def _detail_sheet() -> str:
+        """
+        Нижний ярус по умолчанию — путь.
+
+        Гарнитуру и размер ставит сам DetailLabel через QFont: из таблицы
+        стилей они не попадают в font(), а мерить текст приходится тем же
+        шрифтом, каким его рисуют.
+        """
+        return "color: %s;" % style.MUTED
+
     def _title_color(self) -> str:
         # Приглушённый заголовок у всего, что не поедет: в макете так отличают
         # снятое и недоступное от отмеченного.
@@ -219,14 +313,37 @@ class PlanRow(QWidget):
     # --- обновление ----------------------------------------------------------
 
     def set_detail(self, text: str) -> None:
-        self.label_detail.setText(text)
+        self.label_detail.setStyleSheet(self._detail_sheet())
+        self.label_detail.set_plain(text)
+
+    def set_appears(self, caption: str, values: Sequence[str]) -> None:
+        """
+        Нижний ярус готовой строки: «В 1С появится: …».
+
+        Подпись приглушена, значение — основным цветом, как в макете; ради
+        двух цветов в одной строке берётся разметка.
+        """
+        if not values:
+            return
+        # Не моноширинным: это фраза и название продукта, а не путь.
+        self.label_detail.setStyleSheet("color: %s;" % style.MUTED)
+        self.label_detail.set_appears(caption, values)
+
+
 
     def set_trailing(self, text: str) -> None:
         self.label_trailing.setText(text)
 
     def set_progress(self, done: int, total: int) -> None:
-        self.progress.setMaximum(max(total, 1))
-        self.progress.setValue(min(done, max(total, 1)))
+        """
+        Ход внутри строки — в долях, а не в байтах.
+
+        Границы QProgressBar — 32-битные, и файл от двух гигабайт отвергается
+        с OverflowError. У поставок это обычный размер: один только .cf
+        «Комплексной автоматизации» — 1.4 ГБ.
+        """
+        self.progress.setMaximum(style.PROGRESS_STEPS)
+        self.progress.setValue(style.progress_value(done, total))
 
     def offer_open(self, text: str) -> None:
         self.button_open.setText(text)

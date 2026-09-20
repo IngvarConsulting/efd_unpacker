@@ -125,6 +125,12 @@ def item(title="Бухгалтерия", kind=ItemKind.SUPPLY, action=Action.WRI
     return PlannedItem(**defaults)
 
 
+#: Манифеста у подставного элемента нет: чтение с диска в тестах окна
+#: означало бы проверять две вещи разом. Формат разбирается в test_manifest.
+from efd_unpacker.domain.manifest import Manifest as _Manifest
+_NO_MANIFEST = _Manifest()
+
+
 class _Writers:
     """Запись подменена: сам батч тоже подменён, до неё дело не доходит."""
 
@@ -135,7 +141,8 @@ class _Writers:
         raise AssertionError("запись не должна выполняться в этих тестах")
 
 
-def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, validator=None):
+def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, validator=None,
+                read_manifest=None):
     """Окно с подменённым осмотром, планом и исполнением."""
     calls = {"inspect": [], "build": 0, "batch": []}
     inspected = [object()] if inspected is None else inspected
@@ -167,6 +174,7 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
         build=fake_build,
         batch=fake_batch,
         make_writers=lambda *args, **kwargs: _Writers(),
+        read_manifest=read_manifest or (lambda _directory: _NO_MANIFEST),
     )
     qtbot.addWidget(window)
     window.calls = calls
@@ -890,6 +898,7 @@ def test_russian_footer_reads_as_one_sentence(qtbot):
         build=lambda _i, _s: Plan(),
         batch=lambda *args, **kwargs: BatchResult(),
         make_writers=lambda *args, **kwargs: _Writers(),
+        read_manifest=lambda _directory: _NO_MANIFEST,
     )
     qtbot.addWidget(window)
 
@@ -1181,3 +1190,237 @@ def test_paths_screen_is_told_what_goes_to_each_folder(qtbot):
     window.show_paths()
 
     assert window._paths._needed == {"templates": 2000, "distributions": 5000}
+
+
+# --- «В 1С появится…» --------------------------------------------------------
+
+
+def test_finished_supply_row_says_what_appears_in_1c(qtbot):
+    """
+    Критерий #67: после распаковки строка называет то, что человек увидит в 1С.
+
+    Это строка Catalog из 1cv8.mft — самое понятное описание из всех, что у
+    нас есть: понятнее и имени каталога, и версии.
+    """
+    from efd_unpacker.domain.manifest import Config, Manifest
+
+    window = make_window(qtbot, read_manifest=lambda _directory: Manifest(
+        configs=(Config(catalog="1С:Комплексная автоматизация 2/КА 2"),),
+    ))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    row = window.rows[0]
+    assert "In 1C it will appear as:" in row.texts()[1]
+    # Полное название — в подсказке: в строку оно влезает не всегда, а узнать
+    # его целиком человек должен без распаковки заново.
+    assert row.label_detail.toolTip() == "1С:Комплексная автоматизация 2 → КА 2"
+
+    # Начало названия видно и в укороченной строке: узнать продукт по нему
+    # можно, а дочитать до конца — в подсказке.
+    assert "1С:Комплексная автомати" in row.texts()[1]
+
+
+def test_distribution_row_keeps_its_path(qtbot):
+    """Манифеста у дистрибутива нет, и придумывать ему описание нечем."""
+    from efd_unpacker.domain.manifest import Config, Manifest
+
+    asked = []
+    plan = Plan(items=(item(title="Платформа", kind=ItemKind.PLATFORM),))
+    window = make_window(qtbot, plan=plan, read_manifest=lambda directory: (
+        asked.append(directory) or Manifest(configs=(Config(catalog="Выдумка"),))
+    ))
+    drop(window, ["/d/setup.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert asked == [], "манифест у дистрибутива даже не спрашивается"
+    assert "Выдумка" not in window.rows[0].texts()[1]
+
+
+def test_row_without_a_manifest_keeps_its_path(qtbot):
+    """
+    Критерий #67: украшение, а не условие успеха.
+
+    Манифеста нет — строка остаётся прежней, с путём, и распаковка всё так же
+    считается удавшейся.
+    """
+    from efd_unpacker.domain.manifest import Manifest
+
+    window = make_window(qtbot, read_manifest=lambda _directory: Manifest())
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.rows[0].state() == row_widgets.DONE
+    assert window.rows[0].texts()[1] == window._detail(window._plan.items[0])
+
+
+def test_markup_in_a_configuration_name_is_not_rendered(qtbot):
+    """
+    Название приходит из чужого файла и попадает в разметку.
+
+    Без экранирования «<b>» из манифеста стало бы жирным начертанием, а
+    что-нибудь подлиннее — съело бы остаток строки.
+    """
+    from efd_unpacker.domain.manifest import Config, Manifest
+
+    # Без косой черты: в значении Catalog она разделяет группу и элемент, и
+    # «</b>» проверяло бы заодно и разбор дерева — две вещи разом.
+    name = "<img src=x> и <b>жирное"
+    window = make_window(qtbot, read_manifest=lambda _directory: Manifest(
+        configs=(Config(catalog=name),),
+    ))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    # Видимый текст, а не исходник: разметка проверяется тем, что показано.
+    assert name in _rendered(window.rows[0].label_detail)
+
+
+def _rendered(label) -> str:
+    """Что Qt действительно нарисует из разметки подписи."""
+    from PyQt5.QtGui import QTextDocument
+
+    document = QTextDocument()
+    document.setHtml(label.text())
+    return document.toPlainText()
+
+
+# --- объёмы, которые бывают на самом деле ------------------------------------
+
+
+def test_a_batch_of_eleven_gigabytes_starts(qtbot):
+    """
+    Границы QProgressBar — 32-битные, и байтами их задавать нельзя.
+
+    Пачка от двух гигабайт отвечала OverflowError прямо на нажатии
+    «Распаковать» и не записывала ни байта — то есть ровно тот случай, ради
+    которого окно и делалось: в описании #68 на кнопке «Распаковать 9 · 11 ГБ».
+    """
+    plan = Plan(items=(
+        item(title="Комплексная автоматизация", bytes_total=9 * 1024 ** 3),
+        item(title="Платформа", kind=ItemKind.PLATFORM, bytes_total=2 * 1024 ** 3),
+    ))
+    window = make_window(qtbot, plan=plan)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert [row.state() for row in window.rows] == [row_widgets.DONE, row_widgets.DONE]
+    assert window.progress_total.value() == ui.style.PROGRESS_STEPS
+
+
+def test_progress_inside_a_huge_item_does_not_overflow(qtbot):
+    """
+    Один .cf «Комплексной автоматизации» — 1.4 ГБ, и это обычный размер.
+
+    Обработчик зовётся прямо, из потока окна: в бою его вызывает сигнал,
+    который Qt в этот поток и доставляет, а трогать виджеты из потока
+    распаковки нельзя.
+    """
+    big = item(bytes_total=3 * 1024 ** 3)
+    # Через unpack(), чтобы границы полосы выставил рабочий код, а не тест:
+    # иначе пропавший setMaximum остался бы незамеченным. Сам батч ничего не
+    # сообщает, и обработчики зовутся ниже — из потока окна, как в бою.
+    window = make_window(qtbot, plan=Plan(items=(big,)),
+                         batch=lambda plan, sink, *a, **k: BatchResult())
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    window._started_at = time.monotonic() - 1
+
+    window._item_bytes(big, 2 * 1024 ** 3, "1cv8.cf")
+
+    assert window.rows[0].progress.value() > 0
+    assert window.rows[0].progress.maximum() == ui.style.PROGRESS_STEPS
+
+
+def test_time_left_appears_inside_a_single_large_archive(qtbot):
+    """
+    Пачка из одного архива — обычный случай, и остаток времени в ней нужен.
+
+    Считая только законченные элементы, окно молчало бы до самого конца:
+    до последнего байта сделано ровно ноль, а после — уже незачем.
+    """
+    big = item(bytes_total=4 * 1024 ** 3)
+    # Через unpack(), чтобы границы полосы выставил рабочий код, а не тест:
+    # иначе пропавший setMaximum остался бы незамеченным. Сам батч ничего не
+    # сообщает, и обработчики зовутся ниже — из потока окна, как в бою.
+    window = make_window(qtbot, plan=Plan(items=(big,)),
+                         batch=lambda plan, sink, *a, **k: BatchResult())
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    window._started_at = time.monotonic() - 1
+
+    window._item_bytes(big, big.bytes_total // 4, "1cv8.cf")
+
+    assert window.label_status.text(), "остаток времени не показан"
+    assert 0 < window.progress_total.value() < ui.style.PROGRESS_STEPS
+
+
+def test_progress_forgets_the_unfinished_item_once_it_ends(qtbot):
+    """
+    Недописанные байты живут только до конца элемента.
+
+    Иначе они сложились бы с его полным объёмом, и полоса ушла бы вперёд
+    настоящего — а на последнем элементе показала бы больше ста процентов.
+    """
+    first = item(bytes_total=1024 ** 3)
+    # Через unpack(), чтобы границы полосы выставил рабочий код, а не тест:
+    # иначе пропавший setMaximum остался бы незамеченным. Сам батч ничего не
+    # сообщает, и обработчики зовутся ниже — из потока окна, как в бою.
+    window = make_window(qtbot, plan=Plan(items=(first,)),
+                         batch=lambda plan, sink, *a, **k: BatchResult())
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    window._started_at = time.monotonic() - 1
+
+    window._item_bytes(first, first.bytes_total // 2, "1cv8.cf")
+    window._item_finished(first, None)
+
+    assert window._current_bytes == 0
+    assert window.progress_total.value() == ui.style.PROGRESS_STEPS
+
+
+def test_long_configuration_name_is_shortened_with_an_ellipsis(qtbot):
+    """
+    Не влезло — обрывается многоточием, а не молча по границе виджета.
+
+    Мерить приходится тем же шрифтом, каким рисуют: размер из таблицы стилей
+    в QWidget.font() не попадает, и по меркам гарнитуры по умолчанию строка
+    укорачивалась до трети настоящей длины.
+    """
+    from efd_unpacker.domain.manifest import Config, Manifest
+
+    name = "Демонстрационные конфигурации мобильного приложения → " + "очень длинное " * 6
+    window = make_window(qtbot, read_manifest=lambda _directory: Manifest(
+        configs=(Config(catalog=name.replace(" → ", "/")),),
+    ))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    label = window.rows[0].label_detail
+    label.resize(400, label.height())
+    assert "…" in label.text()
+    assert label.toolTip().startswith("Демонстрационные конфигурации мобильного приложения")

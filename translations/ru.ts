@@ -148,6 +148,10 @@
         <source>Tools…</source>
         <translation>Инструменты…</translation>
     </message>
+    <message>
+        <source>In 1C it will appear as:</source>
+        <translation>В 1С появится:</translation>
+    </message>
 </context>
 <context>
     <name>UnpackService</name>
