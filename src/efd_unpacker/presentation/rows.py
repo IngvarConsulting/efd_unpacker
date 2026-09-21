@@ -37,7 +37,28 @@ UNCHECKED = "unchecked"    # снято пользователем
 UNAVAILABLE = "unavailable"  # пропуск по делу: уже установлено, нет программы
 RUNNING = "running"
 DONE = "done"
-FAILED = "failed"
+FAILED = "failed"        # распаковка отказала: можно повторить
+BROKEN = "broken"        # отказ ОСМОТРА: повторять нечего
+
+#: Состояния, в которых знак можно переключить.
+#:
+#: Отказ распаковки здесь намеренно. Ничего не записано, а причина —
+#: кончилось место, права на файлах от прошлой распаковки, вынутая флешка —
+#: чинится снаружи программы, и после починки естественное действие
+#: «повторить». Пока он не переключался, повторить было нечем: кнопка
+#: «Распаковать» гасла, и единственным выходом оставалось бросить тот же файл
+#: ещё раз.
+#:
+#: А вот отказ ОСМОТРА — состояние отдельное и непереключаемое. Его план
+#: знает заранее, и исполнение такой элемент не трогает вовсе: оно повторит
+#: ту же самую записанную ошибку, не открывая источник. Кнопка повтора у него
+#: обещала бы то, чего не будет. Выглядят оба отказа одинаково — человеку это
+#: одна и та же беда, — но повторить можно только тот, где было что делать.
+#:
+#: Готовая строка не переключается: работа сделана, и молча переделать её
+#: было бы неожиданно — у неё для этого есть «Открыть папку». «Уже
+#: установлено» и «нет программы» — тоже нет: желание тут ничего не меняет.
+TOGGLEABLE = (PENDING, UNCHECKED, FAILED)
 
 
 class Mark(QAbstractButton):
@@ -48,9 +69,9 @@ class Mark(QAbstractButton):
     Enter, и имя для средств доступности. Мышью-то щёлкнуть можно и по
     виджету, а вот с клавиатуры строку было не отметить вовсе.
 
-    Недоступные состояния гасятся: выключенная кнопка не берёт фокус и не
-    срабатывает, так что «уже установлено» и отказ не переключить ни мышью,
-    ни клавишей.
+    Непереключаемые состояния гасятся: выключенная кнопка не берёт фокус и
+    не срабатывает, так что готовую строку и «уже установлено» не тронуть ни
+    мышью, ни клавишей. Что считается переключаемым — см. TOGGLEABLE.
     """
 
     def __init__(self, state: str = PENDING) -> None:
@@ -58,12 +79,12 @@ class Mark(QAbstractButton):
         self._state = state
         self.setFixedSize(style.MARK_SIZE, style.MARK_SIZE)
         self.setCursor(Qt.PointingHandCursor)
-        self.setEnabled(state in (PENDING, UNCHECKED))
+        self.setEnabled(state in TOGGLEABLE)
 
     def set_state(self, state: str) -> None:
         if state != self._state:
             self._state = state
-            self.setEnabled(state in (PENDING, UNCHECKED))
+            self.setEnabled(state in TOGGLEABLE)
             self.update()
 
     def state(self) -> str:
@@ -98,7 +119,7 @@ class Mark(QAbstractButton):
         elif self._state == DONE:
             # Без рамки: в макете готовая строка отмечена одной галочкой.
             self._draw_check(painter, QColor(style.ACCENT), 2.6)
-        elif self._state == FAILED:
+        elif self._state in (FAILED, BROKEN):
             painter.setPen(QPen(QColor(style.ALERT), 2.0))
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(box)
