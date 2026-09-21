@@ -175,6 +175,31 @@ def test_a_skipped_distribution_stays_in_the_plan_with_its_size():
     assert plan.to_write == ()
 
 
+@pytest.mark.parametrize(
+    "names, why",
+    [
+        (["notes.txt", "photo.jpg"], "«other/<имя файла>» берётся из имени входного файла"),
+        (["1cv8_en.cf"], "«content/<имя файла>» — тоже"),
+        (["1CEnterprise 8.msi", "Data1.cab"], "версия не прочиталась, каталог «unknown»"),
+    ],
+    ids=["прочее", "содержимое", "без версии"],
+)
+def test_an_ambiguous_destination_is_not_taken_for_an_installed_one(names, why):
+    """
+    «Каталог есть» значит «уже распаковано» только там, где адрес опознаёт
+    содержимое.
+
+    Два разных архива с одинаковым именем из разных папок дают один и тот же
+    «other/<имя файла>»: второй молча пропустился бы, хотя внутри у него
+    другое. То же и с «platform/unknown/…».
+    """
+    inspected = Inspected(path="/d/foo.zip", files=files(*names))
+
+    item = build_plan([inspected], settings(is_installed=lambda _path: True)).items[0]
+
+    assert item.action is Action.WRITE, why
+
+
 def test_a_distribution_without_its_folder_is_still_written():
     """Проверка не должна пропускать то, чего на диске нет."""
     inspected = Inspected(
