@@ -9,6 +9,7 @@ import urllib.parse
 from typing import Optional
 
 from PyQt5.QtCore import QEvent, Qt, QTimer
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
 from ..constants import FileExtensions, URLSchemes
@@ -17,7 +18,7 @@ from ..domain.unpack_service import UnpackService
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import create_translator
 from ..presentation.ui import MainWindow
-from ..runtime import detect_system_language, install_cli_launcher
+from ..runtime import detect_system_language, install_cli_launcher, resource_path
 from .cli import CLIApplication, is_read_only_command, wants_help
 from .help_text import format_help_text
 
@@ -35,6 +36,28 @@ def enable_high_dpi_pixmaps() -> None:
     не берётся, а так шаг можно позвать и проверить.
     """
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+
+#: Файлы значка. .ico несёт семь размеров от 16 до 256 — ровно те, что Windows
+#: спрашивает у окна для заголовка (16) и панели задач (32 и крупнее при
+#: масштабировании). .png на 1024 — запас на всё, что крупнее, и на случай,
+#: если модуль чтения .ico в сборку не попал: png Qt читает без модулей.
+ICON_FILES = ("icon.ico", "icon.png")
+
+
+def application_icon() -> QIcon:
+    """
+    Значок окна и панели задач из ресурсов приложения.
+
+    Без явного значка Qt на Windows ищет в exe ресурс по имени IDI_ICON1, а
+    PyInstaller кладёт значок под номером, — и окно получало системную
+    заглушку «приложение» в заголовке и мелкий значок в панели задач.
+    Собственный QIcon отдаёт Windows оба размера сам, и exe тут ни при чём.
+    """
+    icon = QIcon()
+    for name in ICON_FILES:
+        icon.addFile(resource_path("resources", name))
+    return icon
 
 
 def looks_like_input(argument: str) -> bool:
@@ -96,6 +119,9 @@ class FileAssociationApp(QApplication):
 
     def __init__(self, argv: list[str], validator: FileValidator) -> None:
         super().__init__(argv)
+        # На приложении, а не на окне: значок наследуют и диалоги — вопрос
+        # про удаление архивов, предупреждение про папку.
+        self.setWindowIcon(application_icon())
         self.validator = validator
         self.window: Optional[MainWindow] = None
         self.pending_files: list[str] = []

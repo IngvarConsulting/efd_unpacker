@@ -10,11 +10,13 @@ import inspect
 from pathlib import Path
 
 import pytest
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtWidgets import QApplication
 
 from efd_unpacker.application import main as app_main
 from efd_unpacker.application.main import (
+    FileAssociationApp,
+    application_icon,
     enable_high_dpi_pixmaps,
     looks_like_input,
     process_file_argument,
@@ -239,3 +241,30 @@ def test_startup_asks_for_high_dpi_pixmaps_before_anything_else():
     creation = source.index("FileAssociationApp(")
 
     assert call < creation, "атрибут ставится после создания приложения — он не подействует"
+
+
+def test_application_icon_carries_the_sizes_windows_asks_for(qapp):
+    """
+    Windows берёт у окна два значка: 16 для заголовка и 32 для панели задач,
+    а при масштабировании экрана — крупнее. Без явного значка Qt подставлял
+    системную заглушку в заголовок, а панель задач показывала мелкий значок:
+    PyInstaller кладёт ресурс под номером, а Qt ищет его по имени IDI_ICON1.
+
+    Проверяется набор размеров, а не сам факт значка: .png на 1024 дал бы
+    непустой QIcon и без .ico, но 16 и 32 из него Qt считал бы уменьшением,
+    и заголовок получил бы мыло вместо нарисованных для него точек.
+    """
+    sizes = application_icon().availableSizes()
+
+    for side in (16, 32, 256):
+        assert QSize(side, side) in sizes, "нет размера %d в %s" % (side, sizes)
+
+
+def test_application_sets_the_icon_for_all_its_windows():
+    """
+    На приложении, а не на окне: значок наследуют и диалоги. Второй
+    QApplication в тесте не создать, поэтому связь проверяется по исходнику.
+    """
+    source = inspect.getsource(FileAssociationApp.__init__)
+
+    assert "self.setWindowIcon(application_icon())" in source

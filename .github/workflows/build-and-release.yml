@@ -49,9 +49,30 @@ jobs:
         run: |
           make test
 
+  # Описание релиза — раздел CHANGELOG.md с номером тега; без него скрипт
+  # возвращает 1. Проверяется здесь, до сборок, а не в create-release:
+  # иначе об отсутствии описания узнают через полчаса, когда всё уже
+  # собрано и смоук-тесты пройдены.
+  release-notes:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # git describe должен видеть тег
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Release notes from CHANGELOG.md
+        run: |
+          make generate-release-notes
+          cat release_notes.md
+
   build-linux:
     timeout-minutes: 30
-    needs: test-suite
+    needs: [test-suite, release-notes]
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
@@ -84,7 +105,7 @@ jobs:
 
   build-windows:
     timeout-minutes: 30
-    needs: test-suite
+    needs: [test-suite, release-notes]
     runs-on: windows-2022
     steps:
       - name: Checkout code
@@ -118,7 +139,7 @@ jobs:
 
   build-macos:
     timeout-minutes: 45
-    needs: test-suite
+    needs: [test-suite, release-notes]
     strategy:
       fail-fast: false
       matrix:
@@ -557,7 +578,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Create version and generate release notes
+      - name: Create version and take release notes from CHANGELOG.md
         id: release_meta
         run: |
           make create-version

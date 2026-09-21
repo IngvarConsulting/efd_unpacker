@@ -17,9 +17,9 @@ os.environ.setdefault("QT_API", "pyqt5")
 import time
 
 import pytest
-from PyQt5.QtCore import Qt, QMimeData, QUrl
+from PyQt5.QtCore import Qt, QMimeData, QRect, QUrl
 from PyQt5.QtWidgets import QLabel, QMessageBox, QRadioButton
-from PyQt5.QtGui import QCloseEvent, QDropEvent
+from PyQt5.QtGui import QCloseEvent, QDropEvent, QFont, QFontMetrics
 
 from efd_unpacker.domain.batch import BatchResult, ItemFailed, ItemStarted, ItemWritten
 from efd_unpacker.domain.errors import (
@@ -216,6 +216,83 @@ def drop(window, paths):
 
 
 # --- приём файлов ------------------------------------------------------------
+
+
+#: Сколько места занимает знак в самой широкой из моноширинных гарнитур,
+#: которые нам встречаются: 0.6 кегля. Столько у Menlo на macOS и у
+#: Courier New на Windows; Consolas и DejaVu Sans Mono уже, 0.55.
+WIDEST_MONO_RATIO = 0.6
+
+#: Кегль подсказки — из её же таблицы стилей.
+HINT_FONT_PX = 12
+
+
+def drop_zone_text_width(window) -> int:
+    """Сколько точек остаётся подсказке внутри рамки зоны броска."""
+    left, _, right, _ = window.zone.layout().getContentsMargins()
+    return window.zone.width() - left - right
+
+
+def test_the_drop_zone_keeps_its_width_from_the_mockup(qtbot):
+    """
+    До потолка в 440 рамку дотягивала сама подсказка: её строка просила 404
+    точки и упиралась в него. Стоило укоротить перечень расширений — и рамка
+    съехала до 314, а подсказка всё равно ушла на вторую строку. Ширина
+    карточки не должна зависеть от длины того, что внутри неё написано.
+    """
+    window = make_window(qtbot)
+
+    assert window.zone.width() == 440
+    assert window.zone.minimumWidth() == window.zone.maximumWidth(), "ширина не закреплена"
+
+
+def test_the_formats_hint_fits_one_line_in_any_monospace(qtbot):
+    """
+    Ширина рамки взята из макета, а ширина моноширинной гарнитуры у каждой
+    системы своя. С двумя пробелами вокруг точки строка занимала 404 точки в
+    Menlo при 376 доступных, и её срезало с обоих концов: вместо «.efd» было
+    видно «efd», вместо «.dmg» — «.dm».
+
+    Считается арифметикой, а не метрикой шрифта: тесты идут на
+    QT_QPA_PLATFORM=minimal, где одна заглушка отвечает за любое имя
+    семейства, и разницы между Menlo и Consolas там не видно вовсе. Зато
+    0.6 кегля на знак — это верхняя граница по всем трём системам, и строка,
+    которая укладывается в неё, уложится в любую настоящую гарнитуру.
+    """
+    window = make_window(qtbot)
+
+    needed = len(ui.FORMATS_HINT) * HINT_FONT_PX * WIDEST_MONO_RATIO
+
+    assert needed <= drop_zone_text_width(window), (
+        "подсказка «%s» шире рамки: %d точек против %d"
+        % (ui.FORMATS_HINT, needed, drop_zone_text_width(window))
+    )
+
+
+def test_the_formats_hint_wraps_instead_of_being_clipped(qtbot):
+    """
+    Страховка на гарнитуру шире любой известной: QLabel по умолчанию режет
+    текст МОЛЧА, и узнать об этом можно только с чужого экрана — так дефект и
+    нашёлся, по скриншоту с Windows.
+
+    Мерится тем же способом, каким Qt рисует, и с теми же флагами, что у
+    самой подписи: без переноса boundingRect возвращает ширину всей строки
+    одной линией, и проверка краснеет.
+    """
+    window = make_window(qtbot)
+    label = window.label_formats
+    available = drop_zone_text_width(window)
+
+    font = QFont(label.font())
+    font.setPixelSize(HINT_FONT_PX)
+    flags = int(label.alignment())
+    if label.wordWrap():
+        flags |= Qt.TextWordWrap
+    box = QFontMetrics(font).boundingRect(QRect(0, 0, available, 0), flags, label.text())
+
+    assert box.width() <= available, "подсказка не помещается: %d против %d" % (
+        box.width(), available
+    )
 
 
 def test_dropping_files_fills_the_list(qtbot):
@@ -1092,6 +1169,40 @@ def test_other_rows_still_open_their_folder(qtbot, monkeypatch):
 
     assert opened == [window._plan.items[0].destination]
     assert window.pages.currentIndex() == 0
+
+
+def test_an_already_installed_row_offers_its_folder(qtbot, monkeypatch):
+    """
+    «Уже установлено» — то же «готово», только прошлым запуском: каталог на
+    месте, и человеку нужно заглянуть в него прежде, чем настаивать на
+    перезаписи. Кнопка та же, что у записанной строки, и ведёт в тот же
+    каталог назначения.
+    """
+    opened = []
+    monkeypatch.setattr(ui, "open_folder", lambda path: opened.append(path) is None)
+    installed = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(installed,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    row = window.rows[0]
+    assert not row.button_open.isHidden(), "у строки «уже установлено» нет «Открыть папку»"
+    assert row.button_open.text() == "Open Folder"
+    row.button_open.click()
+
+    assert opened == [installed.destination]
+
+
+def test_other_skips_do_not_offer_a_folder(qtbot):
+    """У пропуска без каталога на диске открывать нечего."""
+    skipped = item(
+        action=Action.SKIP, reason=SkipReason.FILTERED_OUT, destination="", bytes_total=0,
+    )
+    window = make_window(qtbot, plan=Plan(items=(skipped,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].button_open.isHidden()
 
 
 def test_closing_waits_for_the_tools_search(qtbot):
