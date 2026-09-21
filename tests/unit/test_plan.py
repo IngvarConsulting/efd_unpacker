@@ -134,6 +134,85 @@ def test_macos_client_keeps_its_component_in_the_path():
     assert plan.items[0].destination == "/dist/platform/8.5.1.1529/macos-client"
 
 
+def test_an_already_unpacked_distribution_is_skipped():
+    """
+    Та же мерка, что у шаблонов: каталог есть — значит уже распаковано.
+
+    Без этой проверки план обещал записать 192 МБ поверх того, что уже
+    лежит, и делал это при каждом запуске. У шаблонов проверка была с самого
+    начала, у дистрибутивов её не было вовсе.
+    """
+    inspected = Inspected(
+        path="/d/thin.client.zip",
+        files=files("1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb"),
+    )
+    installed = "/dist/platform/8.5.1.1529/linux-thin-client-deb-aarch64"
+
+    item = build_plan([inspected], settings(is_installed=lambda path: path == installed)).items[0]
+
+    assert item.action is Action.SKIP
+    assert item.reason is SkipReason.ALREADY_INSTALLED
+    assert item.destination == installed
+
+
+def test_a_skipped_distribution_stays_in_the_plan_with_its_size():
+    """
+    Пропущенное не исчезает из списка: человек должен видеть, что файл
+    осмотрен, куда он поехал бы и почему не поехал.
+
+    Молча выбросить строку значило бы потерять исходный файл из плана
+    целиком — той же ошибкой, что уже ловили на поставке без шаблонов.
+    """
+    inspected = Inspected(
+        path="/d/thin.client.zip",
+        files=files("1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb"),
+    )
+
+    plan = build_plan([inspected], settings(is_installed=lambda _path: True))
+
+    assert len(plan.items) == 1
+    assert plan.items[0].bytes_total == 1024
+    assert plan.to_write == ()
+
+
+@pytest.mark.parametrize(
+    "names, why",
+    [
+        (["notes.txt", "photo.jpg"], "«other/<имя файла>» берётся из имени входного файла"),
+        (["1cv8_en.cf"], "«content/<имя файла>» — тоже"),
+        (["1CEnterprise 8.msi", "Data1.cab"], "версия не прочиталась, каталог «unknown»"),
+    ],
+    ids=["прочее", "содержимое", "без версии"],
+)
+def test_an_ambiguous_destination_is_not_taken_for_an_installed_one(names, why):
+    """
+    «Каталог есть» значит «уже распаковано» только там, где адрес опознаёт
+    содержимое.
+
+    Два разных архива с одинаковым именем из разных папок дают один и тот же
+    «other/<имя файла>»: второй молча пропустился бы, хотя внутри у него
+    другое. То же и с «platform/unknown/…».
+    """
+    inspected = Inspected(path="/d/foo.zip", files=files(*names))
+
+    item = build_plan([inspected], settings(is_installed=lambda _path: True)).items[0]
+
+    assert item.action is Action.WRITE, why
+
+
+def test_a_distribution_without_its_folder_is_still_written():
+    """Проверка не должна пропускать то, чего на диске нет."""
+    inspected = Inspected(
+        path="/d/thin.client.zip",
+        files=files("1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb"),
+    )
+
+    item = build_plan([inspected], settings()).items[0]
+
+    assert item.action is Action.WRITE
+    assert item.reason is None
+
+
 def test_library_without_efd_goes_to_content():
     """«Распаковать исходники без efd» — форма SSL_Ru_En.zip."""
     plan = build_plan(

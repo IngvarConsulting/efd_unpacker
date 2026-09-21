@@ -219,16 +219,21 @@ class MainWindow(QMainWindow):
     def _make_summary(self) -> QWidget:
         self.label_counts = QLabel("")
         self.label_counts.setProperty("role", "mono")
-        self.button_clear_marks = QPushButton(self._t("MainWindow", "Clear all marks"))
-        self.button_clear_marks.setStyleSheet(style.link_sheet())
-        self.button_clear_marks.setCursor(Qt.PointingHandCursor)
-        self.button_clear_marks.clicked.connect(self._clear_marks)
+
+        # Тот же знак, что в строках, и слева — там же, где знаки строк.
+        # Подпись-ссылка справа говорила только про снятие и ничем не
+        # показывала нынешнее состояние: отмечено всё, ничего или часть.
+        # Знак показывает это сам и работает в обе стороны.
+        self.mark_all = rows.Mark(rows.PENDING)
+        self.mark_all.setCursor(Qt.PointingHandCursor)
+        self.mark_all.clicked.connect(self._toggle_all_marks)
 
         bar = QHBoxLayout()
         bar.setContentsMargins(style.SIDE_PADDING, 11, style.SIDE_PADDING, 11)
+        bar.setSpacing(11)
+        bar.addWidget(self.mark_all, 0, Qt.AlignVCenter)
         bar.addWidget(self.label_counts)
         bar.addStretch()
-        bar.addWidget(self.button_clear_marks)
 
         self.summary = QFrame()
         self.summary.setObjectName("summary")
@@ -386,6 +391,15 @@ class MainWindow(QMainWindow):
         """
         menu = QMenu(self)
         menu.setStyleSheet(style.menu_sheet())
+        # Скругление задаётся таблицей стилей, а окно под меню остаётся
+        # непрозрачным — и по углам вылезают чёрные треугольники. Прозрачный
+        # фон убирает их, безрамочность нужна, чтобы система не рисовала
+        # собственную рамку поверх, а отказ от тени — чтобы тень не осталась
+        # прямоугольной вокруг скруглённой карточки.
+        menu.setAttribute(Qt.WA_TranslucentBackground)
+        menu.setWindowFlags(
+            menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+        )
 
         paths = menu.addAction(self._t("MainWindow", "Where to unpack…"), self.show_paths)
         # Посреди распаковки менять каталог нельзя: писатели уже получили
@@ -529,15 +543,40 @@ class MainWindow(QMainWindow):
         if not paths or self._running(self._plan_thread) or self._unpacking():
             return False
 
-        self.label_status.setText(self._t("MainWindow", "Inspecting…"))
+        # Показываем ЗАНЯТОСТЬ сразу, до первого файла. Осмотр идёт в фоне, и
+        # пока он шёл, в главной области не менялось ничего: на десятке
+        # архивов пауза до списка читается как зависание, а человек только что
+        # бросил файлы и смотрит именно туда, куда бросил.
+        self._show_inspecting(self._t("MainWindow", "Inspecting…"))
         self.button_unpack.setEnabled(False)
         thread = PlanThread(paths, self._inspect_files)
+        thread.started_file.connect(self._inspection_started)
         thread.ready.connect(self._inspection_ready)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._forget_plan_thread)
         self._plan_thread = thread
         thread.start()
         return True
+
+    def _show_inspecting(self, text: str) -> None:
+        """
+        Одно и то же сообщение в двух местах — по одному на каждый случай.
+
+        Список пуст — видна зона броска, и человек смотрит в неё. Список уже
+        есть — видна сводка над ним, а зоны броска на экране нет вовсе.
+        Писать только в подвал мало: подпись там мелкая и стоит далеко от
+        того места, куда только что бросили файлы.
+        """
+        self.label_drop.setText(text)
+        self.label_counts.setText(text)
+        self.label_status.setText(text)
+
+    def _inspection_started(self, _path: str, done: int, total: int) -> None:
+        """Ход осмотра. Счёт, а не имя файла: имена длинные и прыгают."""
+        self._show_inspecting("%s %s" % (
+            self._t("MainWindow", "Inspecting…"),
+            self._t("MainWindow", "%s of %s") % (done, total),
+        ))
 
     def _inspection_ready(self, inspected, error: Optional[UnpackError]) -> None:
         self._set_drag_active(False)
@@ -747,6 +786,46 @@ class MainWindow(QMainWindow):
         gone = set(moved)
         self._inspected = [item for item in self._inspected if item.path not in gone]
         self._rebuild_plan()
+    def _toggle_all_marks(self) -> None:
+        """
+        Отмечено всё — снимаем всё, иначе отмечаем всё.
+
+        Наполовину отмеченный список по щелчку отмечается целиком, а не
+        снимается: так ведут себя списки с общим флажком везде, и это
+        единственное действие, которое нельзя получить щелчками по строкам
+        быстрее, чем общим знаком.
+        """
+        if self.mark_all.state() == rows.PENDING:
+            self._clear_marks()
+            return
+        for item in self._plan.items:
+            row = self._row_of.get(id(item))
+            # Всё переключаемое, а не только снятое: отказ распаковки тоже
+            # переключается (см. TOGGLEABLE), и «отметить все» обязано брать
+            # и его — иначе после сплошных отказов кнопка обещала бы
+            # действие и не делала ничего.
+            if row is not None and row.state() in rows.TOGGLEABLE:
+                if row.state() != rows.PENDING:
+                    row.set_state(rows.PENDING)
+                self._unchecked.discard(self._mark_key(item))
+        self._refresh()
+
+    def _mark_all_state(self) -> str:
+        """
+        Вид общего знака по тому, что отмечено в строках.
+
+        Считаются переключаемые строки: «уже установлено» и отказ осмотра не
+        отмечаются никаким желанием, и учитывать их значило бы никогда не
+        показывать «отмечено всё».
+
+        Отказ РАСПАКОВКИ при этом считается — он переключается, то есть
+        просто не отмечен. Не считай мы его, смесь отмеченного и отказавшего
+        выглядела бы как «отмечено всё», хотя отказавшая строка не поедет.
+        """
+        states = [row.state() for row in self.rows if row.state() in rows.TOGGLEABLE]
+        if not states or all(state != rows.PENDING for state in states):
+            return rows.UNCHECKED
+        return rows.PENDING if all(state == rows.PENDING for state in states) else rows.PARTIAL
 
     def _clear_marks(self) -> None:
         for item in self._plan.items:
@@ -775,7 +854,17 @@ class MainWindow(QMainWindow):
             if selected else self._t("MainWindow", "Unpack")
         )
         self.button_unpack.setEnabled(bool(selected) and not self._unpacking())
-        self.button_clear_marks.setVisible(bool(selected))
+        state = self._mark_all_state()
+        self.mark_all.set_state(state)
+        # Двумя вызовами, а не тернарником внутри одного: сверку переводов
+        # делает разбор исходника, и строку, спрятанную в выражение, он не
+        # видит — обе записи в каталоге выглядели бы осиротевшими.
+        if state == rows.PENDING:
+            hint = self._t("MainWindow", "Clear all marks")
+        else:
+            hint = self._t("MainWindow", "Mark everything")
+        self.mark_all.setToolTip(hint)
+        self.mark_all.setAccessibleName(self.mark_all.toolTip())
         self.label_counts.setText(self._counts_text())
         origins = self._unpacked_origins()
         self.button_trash.setVisible(bool(origins) and not self._unpacking())
@@ -932,7 +1021,7 @@ class MainWindow(QMainWindow):
         self.button_stop.setEnabled(True)
         self.button_paths.setEnabled(False)
         self.check_only_cf.setEnabled(False)
-        self.button_clear_marks.setEnabled(False)
+        self.mark_all.setEnabled(False)
         thread.start()
 
     def cancel(self) -> None:
@@ -1019,7 +1108,7 @@ class MainWindow(QMainWindow):
     def _batch_finished(self, result) -> None:
         self.button_paths.setEnabled(True)
         self.check_only_cf.setEnabled(True)
-        self.button_clear_marks.setEnabled(True)
+        self.mark_all.setEnabled(True)
         self.button_stop.hide()
         self.button_unpack.show()
         self.button_clear.setVisible(True)

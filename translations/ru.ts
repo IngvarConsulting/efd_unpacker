@@ -49,6 +49,10 @@
         <translation>Осмотр…</translation>
     </message>
     <message>
+        <source>%s of %s</source>
+        <translation>%s из %s</translation>
+    </message>
+    <message>
         <source>Select files</source>
         <translation>Выбрать файлы</translation>
     </message>
@@ -99,6 +103,10 @@
     <message>
         <source>Clear all marks</source>
         <translation>Снять все</translation>
+    </message>
+    <message>
+        <source>Mark everything</source>
+        <translation>Отметить все</translation>
     </message>
     <message>
         <source>Clear list</source>

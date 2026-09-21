@@ -431,7 +431,8 @@ def test_alternative_commands_are_copied_one_at_a_time(qtbot, translator, monkey
     человек примет за отказ установки.
     """
     monkeypatch.setattr(
-        rar, "install_hints", lambda: ("sudo apt install libarchive-tools", "sudo dnf install p7zip")
+        rar, "install_hints",
+        lambda family=None: ("sudo apt install libarchive-tools", "sudo dnf install p7zip"),
     )
     screen = tools_screen(qtbot, translator, found=())
 
@@ -623,7 +624,9 @@ def test_system_line_names_the_system_not_the_kernel(monkeypatch):
     monkeypatch.setattr(screens.platform, "mac_ver", lambda: ("15.5", ("", "", ""), "arm64"))
     monkeypatch.setattr(screens.platform, "machine", lambda: "arm64")
 
-    assert screens.system_line() == "macOS 15.5 · arm64"
+    # Apple зовёт свои процессоры Apple Silicon, а не arm64: слово из вывода
+    # uname человеку Mac ни о чём не говорит.
+    assert screens.system_line() == "macOS 15.5 · Apple Silicon"
 
 
 @pytest.mark.parametrize(
