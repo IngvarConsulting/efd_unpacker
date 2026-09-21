@@ -73,6 +73,15 @@ APP_VERSION = app_version()
 #: Высота значка шестерёнки, из макета.
 GEAR_HEIGHT = 15
 
+#: Что перечисляет подсказка в зоне броска.
+#:
+#: Вокруг точки один пробел, а не два. С двумя строка занимала 404 точки в
+#: Menlo при 376 доступных внутри рамки, и её срезало с обоих концов: вместо
+#: «.efd» было видно «efd», вместо «.dmg» — «.dm». Ширина рамки взята из
+#: макета, а ширина моноширинной гарнитуры у каждой системы своя, поэтому
+#: место экономит строка, а не рамка.
+FORMATS_HINT = ".efd · .zip · .tar.gz · .tar.bz2 · .rar · .dmg"
+
 ROLE_TEMPLATES = "templates"
 ROLE_DISTRIBUTIONS = "distributions"
 
@@ -278,9 +287,15 @@ class MainWindow(QMainWindow):
         self.label_drop = QLabel(self._t("MainWindow", "Drag files here"))
         self.label_drop.setAlignment(Qt.AlignCenter)
         self.label_drop.setStyleSheet("font-size: 16px; font-weight: 600;")
-        hint = QLabel(".efd  ·  .zip  ·  .tar.gz  ·  .tar.bz2  ·  .rar  ·  .dmg")
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(
+        self.label_formats = QLabel(FORMATS_HINT)
+        self.label_formats.setAlignment(Qt.AlignCenter)
+        # Переносится, а не обрезается. Укороченная строка помещается в одну
+        # строку у всех известных мне гарнитур, но ширину чужого моноширинного
+        # шрифта не знает никто, а QLabel по умолчанию режет текст молча — и
+        # ровно так «.efd» и «.dmg» исчезли с краёв. Перенос — страховка: в
+        # худшем случае список поедет на вторую строку, но целым.
+        self.label_formats.setWordWrap(True)
+        self.label_formats.setStyleSheet(
             "font-family: %s; font-size: 12px; color: %s;" % (style.mono_stack(), style.MUTED)
         )
         choose = QPushButton(self._t("MainWindow", "Select files"))
@@ -292,7 +307,7 @@ class MainWindow(QMainWindow):
         inner.setContentsMargins(32, 40, 32, 40)
         inner.setSpacing(14)
         inner.addWidget(self.label_drop)
-        inner.addWidget(hint)
+        inner.addWidget(self.label_formats)
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(choose)
@@ -303,7 +318,13 @@ class MainWindow(QMainWindow):
         self.zone.setObjectName("zone")
         self.zone.setLayout(inner)
         self.zone.setStyleSheet(style.drop_zone_sheet())
-        self.zone.setMaximumWidth(440)
+        # Ширина из макета, и закреплена она нарочно. Раньше стоял только
+        # потолок, а до потолка рамку дотягивала сама подсказка: её строка
+        # просила 404 точки в Menlo и упиралась в 440. То есть ширина карточки
+        # держалась на длине перечня расширений — стоило его укоротить, и
+        # рамка съехала с 440 до 314. Минимальная ширина окна от этого не
+        # меняется: 464 точки и с потолком, и с закреплением.
+        self.zone.setFixedWidth(440)
 
         outer = QHBoxLayout()
         outer.addStretch()
