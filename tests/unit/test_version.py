@@ -7,9 +7,7 @@
 записанным, а не с ожидаемой строкой.
 """
 
-import os
 import pathlib
-import re
 
 import pytest
 
