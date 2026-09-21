@@ -64,22 +64,49 @@ def test_the_product_family_code_is_present_and_fixed():
     assert "НЕ МЕНЯТЬ НИКОГДА" in text
 
 
-def test_the_extension_default_value_is_left_alone():
+def test_nothing_is_written_under_the_extension_key_itself():
     """
-    Критерий #17: расширение не отбирается у прежней программы.
+    Критерий #17: у расширения не отбирают ни обработчик, ни сведения о нём.
 
-    Запись без атрибута Name — это значение по умолчанию ключа. Прежняя
-    версия писала туда своё имя типа: при установке затирала чужой
-    обработчик, а при удалении уносила значение с собой, потому что Windows
-    Installer прежнее не запоминает. На машине с 1С:Предприятием, где .efd
-    уже назначен, это ровно тот случай, который и происходит.
+    Под ключом .efd всё общее. Значение по умолчанию — обработчик: прежняя
+    версия писала туда своё имя типа, при установке затирая чужое, а при
+    удалении унося его с собой, потому что Windows Installer прежнее не
+    запоминает. На машине с 1С:Предприятием расширение оставалось ни с чем.
+
+    Именованные значения ничем не лучше: Content Type, который я сперва
+    оставил, — та же общая запись, только с именем. Поэтому проверка
+    запрещает ЛЮБУЮ запись прямо под .efd; разрешён лишь подключ
+    OpenWithProgids, куда себя и добавляют.
     """
-    hijack = [
-        value for value in document().iter("%sRegistryValue" % WIX)
-        if value.get("Key") == ".efd" and value.get("Name") is None
+    intrusions = [
+        value.get("Name") for value in document().iter("%sRegistryValue" % WIX)
+        if value.get("Key") == ".efd"
     ]
 
-    assert hijack == []
+    assert intrusions == []
+
+
+def test_the_only_placeholder_left_is_the_transitional_one():
+    """
+    Заглушка допустима ровно в одном месте — в переходном снятии старого
+    выпуска, и ровно на один релиз.
+
+    Без него цепочка обновления рвётся: Burn ставит новую цепочку и ТОЛЬКО
+    ПОТОМ снимает старый бандл, а удаление старого MSI уносит файлы и
+    ярлыки, которые новый уже положил — GUID компонентов сменились, и
+    счётчик ссылок их не защищает.
+    """
+    text = INSTALLER.read_text(encoding="utf-8")
+    legacy = "12345678-1234-1234-1234-123456789012"
+    upgrade = document().find(".//%sUpgrade" % WIX)
+
+    assert text.count(legacy) == 1, "заглушка встречается не только в переходном блоке"
+    assert upgrade is not None and upgrade.get("Id") == legacy
+    version = upgrade.find("%sUpgradeVersion" % WIX)
+    assert version is not None and version.get("OnlyDetect") == "no", (
+        "старый выпуск только обнаруживается, но не снимается"
+    )
+    assert "Удалить в следующем релизе" in text, "не сказано, что блок временный"
 
 
 def test_the_application_registers_itself_as_one_of_the_handlers():

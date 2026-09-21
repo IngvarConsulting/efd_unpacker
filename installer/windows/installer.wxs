@@ -18,6 +18,32 @@
     UpgradeCode="24200E4F-43B8-4B51-B5E3-34C8172A128B">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of EFD Unpacker is already installed." />
+
+    <!-- ПЕРЕХОДНЫЙ БЛОК. Удалить в следующем релизе после 2.0.
+
+         Старые выпуски собраны с UpgradeCode-заглушкой, и по новому коду
+         MajorUpgrade их не видит. Само по себе это было бы полбеды, но Burn
+         ставит новую цепочку и ТОЛЬКО ПОТОМ снимает старый бандл: удаление
+         старого MSI унесло бы файлы и ярлыки, которые новый уже положил, —
+         GUID компонентов сменились, и счётчик ссылок их не защищает.
+
+         Здесь старый продукт снимается до установки новых файлов:
+         MajorUpgrade планирует RemoveExistingProducts на afterInstallValidate.
+
+         Ценой идёт риск, ради устранения которого всё и затевалось: под
+         этот код попадёт любой чужой пакет, собранный с той же заглушкой.
+         Поэтому блок живёт РОВНО ОДИН релиз — к следующему все, кто
+         обновляется, уже перейдут на настоящий код. -->
+    <Upgrade Id="12345678-1234-1234-1234-123456789012">
+      <UpgradeVersion
+        Minimum="0.0.0"
+        IncludeMinimum="yes"
+        Maximum="VERSION_PLACEHOLDER"
+        IncludeMaximum="no"
+        OnlyDetect="no"
+        IgnoreRemoveFailure="no"
+        Property="LEGACYEFDUNPACKERFOUND" />
+    </Upgrade>
     <MediaTemplate EmbedCab="yes" />
 
     <Condition Message="This application requires Windows 7 or later.">
@@ -73,8 +99,14 @@
              Теперь выбор за человеком: «Открыть с помощью» показывает нас
              наравне с тем, что стояло раньше. -->
         <RegistryValue Root="HKCR" Key=".efd\OpenWithProgids" Name="EFDUnpacker.efd" Value="" Type="string" />
-        <RegistryValue Root="HKCR" Key=".efd" Name="Content Type" Value="application/x-efd" Type="string" />
 
+        <!-- Под самим ключом .efd не пишем НИЧЕГО, включая Content Type.
+             Это общие сведения о расширении: если их уже задала 1С, мы бы
+             их перезаписали, а при удалении унесли с собой — ровно та же
+             беда, что со значением по умолчанию, только с именем. Для
+             OpenWithProgids они и не нужны.
+
+             Ниже — не .efd, а наш собственный тип в базе MIME. -->
         <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd" Name="Extension" Value=".efd" Type="string" />
       </Component>
 
