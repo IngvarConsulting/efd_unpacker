@@ -731,6 +731,17 @@ def keeps_configuration(path: str) -> bool:
     return not path.lower().endswith(DATA_SUFFIXES)
 
 
+def holds_data(template: Template) -> bool:
+    """
+    Есть ли в шаблоне то, что «без демобаз» оставит внутри архива.
+
+    Вопрос к содержимому, а не к настройке: над шаблоном из одной
+    конфигурации фильтр не отнимает ничего, и распаковка выходит полной,
+    сколько бы флажков ни стояло.
+    """
+    return any(not keeps_configuration(entry.path) for entry in template.entries)
+
+
 def _component(found: Classification) -> str:
     """
     Имя каталога компоненты: «macos-client», «linux-server-deb-x86_64».

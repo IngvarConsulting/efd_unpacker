@@ -150,7 +150,10 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
     """Окно с подменённым осмотром, планом и исполнением."""
     calls = {"inspect": [], "started": [], "build": 0, "batch": []}
     inspected = [object()] if inspected is None else inspected
-    plan = Plan(items=(item(),)) if plan is None else plan
+    #: Списком, а не одним планом: пересборка бывает не только от новых
+    #: файлов, и тест вправе сказать, каким план станет со второго раза.
+    #: Дописывается через window.plans.
+    plans = [Plan(items=(item(),)) if plan is None else plan]
 
     def fake_inspect(paths, on_start=None):
         # on_start — часть договора со слоем осмотра: окно показывает по нему
@@ -168,7 +171,7 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
         # отдававший строки и без единого файла, скрывал бы всё, что зависит
         # от исчезновения файлов из списка.
         calls["build"] += 1
-        return plan if inspected else Plan()
+        return plans[-1] if inspected else Plan()
 
     def fake_batch(current, sink, unpack_supply, extract_other, cancel_check=None):
         calls["batch"].append(current)
@@ -192,6 +195,7 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
     )
     qtbot.addWidget(window)
     window.calls = calls
+    window.plans = plans
     return window
 
 
@@ -1930,3 +1934,116 @@ def test_marking_everything_takes_the_failed_rows_too(qtbot):
 
     assert window.rows[0].mark.state() == row_widgets.PENDING
     assert window.button_unpack.isEnabled()
+
+
+def test_a_filtered_supply_does_not_let_its_archive_be_deleted(qtbot):
+    """
+    С «без демобаз» выгрузка .dt из шаблона не пишется и остаётся только
+    внутри архива.
+
+    Удалить такой архив значило бы потерять демобазу насовсем — и взять её
+    будет неоткуда. Записанное с фильтром не считается записанным целиком.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == [], "архив с невыгруженной демобазой удалять нельзя"
+    assert window.button_trash.isHidden()
+
+
+def test_a_filter_does_not_hold_back_a_distribution(qtbot):
+    """
+    Фильтр уносит .dt только из поставок. Дистрибутива он не касается, и
+    держать его архив из-за чужой оговорки незачем.
+    """
+    planned = item(kind=ItemKind.PACKAGES, template=None)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == [planned.origin]
+
+
+def test_turning_the_filter_off_does_not_unlock_a_partially_written_archive(qtbot):
+    """
+    Снятие фильтра пересобирает план — и каталог шаблона к этому времени уже
+    на месте, так что тот же элемент приходит «уже установлено».
+
+    Без памяти о неполной записи кнопка «Удалить архивы» возвращалась одним
+    щелчком по флажку, и .dt, оставшийся только внутри архива, уезжал в
+    корзину вместе с ним. Записанное своими руками знает о полноте больше,
+    чем существование каталога, и перевешивает его.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    assert window._unpacked_origins() == []
+
+    window.plans.append(
+        Plan(items=(item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED),))
+    )
+    window.check_only_cf.setChecked(False)
+    qtbot.waitUntil(lambda: window._plan_thread is None, timeout=3000)
+
+    assert window.rows[0].mark.state() == row_widgets.UNAVAILABLE, "план правда пересобран"
+    assert window._unpacked_origins() == [], "демобаза всё ещё только в архиве"
+    assert window.button_trash.isHidden()
+
+
+def test_a_filter_that_takes_nothing_does_not_hold_back_the_archive(qtbot):
+    """
+    Фильтр уносит выгрузки данных. Над шаблоном, где их нет, он не отнимает
+    ничего — записано целиком, и держать архив незачем.
+
+    Судить по одному флажку на всю пачку значило бы никогда не предлагать
+    такие архивы к удалению: с виду причина есть, а на деле терять нечего.
+    """
+    planned = item(template=template(files=(("1cv8.cf", 100),)))
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == [planned.origin]
+
+
+def test_clearing_the_list_does_not_forget_a_partial_write(qtbot):
+    """
+    «Очистить» забывает записанное целиком — и не вправе забыть неполное.
+
+    Стороны неравны. Забыв «записано целиком», окно всего лишь перестанет
+    предлагать удаление. Забыв «записано не всё», оно предложит удалить архив
+    с единственной копией демобазы: тот же файл, брошенный заново, придёт
+    «уже установленным», ведь каталог шаблона с прошлого раза на месте.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    window._clear_list()
+    window.plans.append(
+        Plan(items=(item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED),))
+    )
+    window.check_only_cf.setChecked(False)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window._unpacked_origins() == [], "демобаза всё ещё только в архиве"

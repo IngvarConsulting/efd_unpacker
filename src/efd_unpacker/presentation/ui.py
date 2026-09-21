@@ -55,6 +55,7 @@ from ..domain.plan import (
     PlannedItem,
     SkipReason,
     build_plan,
+    holds_data,
     keeps_configuration,
 )
 from ..domain.unpack_service import UnpackService
@@ -121,9 +122,14 @@ class MainWindow(QMainWindow):
         self._batch_thread: Optional[BatchThread] = None
         self._templates_root = ""
         self._written_kinds: set = set()
-        #: Ключи отметок того, что записано в этом запуске. По ним кнопка
-        #: «Удалить архивы» узнаёт, что исходный файл больше не нужен.
+        #: Ключи отметок того, что записано в этом запуске ЦЕЛИКОМ. По ним
+        #: кнопка «Удалить архивы» узнаёт, что исходный файл больше не нужен.
         self._written: set = set()
+        #: Ключи того, что записано не целиком: часть осталась в архиве.
+        #: Перевешивает «уже установлено» — см. _is_unpacked.
+        self._partial: set = set()
+        #: Стоял ли фильтр на старте последнего батча. См. _wrote_in_full.
+        self._filtered = False
         # Экраны настроек создаются при первом заходе: поиск программ для .rar
         # и чтение вариантов каталога ни к чему тому, кто в меню не заходил.
         self._paths = None
@@ -705,15 +711,38 @@ class MainWindow(QMainWindow):
 
     def _is_unpacked(self, item: PlannedItem) -> bool:
         """
-        Лежит ли содержимое этого элемента распакованным.
+        Лежит ли содержимое этого элемента распакованным ЦЕЛИКОМ.
 
-        Два случая: записали сейчас либо нашли на месте прошлой распаковкой.
+        Три ответа, и первый сильнее прочих. Когда мы своими руками записали
+        не всё, каталог всё равно оказывается на месте — и «уже установлено»
+        отвечает «да». Знание о собственной записи перевешивает догадку по
+        каталогу: без этого снятие фильтра одним щелчком возвращало кнопку
+        удаления архиву, в котором осталась единственная копия демобазы.
+
         Ключ отметки, а не строка: строки пересобираются при смене фильтра, и
         по ним «записано в этом запуске» не переживёт ни одного переключения.
         """
+        key = self._mark_key(item)
+        if key in self._partial:
+            return False
         if item.action is Action.SKIP and item.reason is SkipReason.ALREADY_INSTALLED:
             return True
-        return self._mark_key(item) in self._written
+        return key in self._written
+
+    def _wrote_in_full(self, item: PlannedItem) -> bool:
+        """
+        Всё ли содержимое элемента уехало на диск.
+
+        Спрашивается у содержимого, а не у флажка. Суди мы по одному флажку
+        на всю пачку — архивы, из которых фильтру нечего было унести, не
+        предлагались бы к удалению никогда, хотя терять в них нечего.
+
+        Шаблон есть только у поставки (его ставит один _supply_item), и через
+        это дистрибутив отвечает «целиком» сам собой: фильтр его не касается.
+        """
+        if not self._filtered or item.template is None:
+            return True
+        return not holds_data(item.template)
 
     def _unpacked_origins(self) -> List[str]:
         """
@@ -840,6 +869,11 @@ class MainWindow(QMainWindow):
         self._unchecked = set()
         self._written_kinds = set()
         self._written = set()
+        # _partial переживает очистку, а _written — нет, и это не оплошность.
+        # Стороны неравны: забыв «записано целиком», мы всего лишь перестанем
+        # предлагать удаление. Забыв «записано не всё», мы предложим удалить
+        # архив, в котором осталась единственная копия демобазы, — тот же
+        # список, брошенный заново, придёт «уже установленным».
         self._rebuild_plan()
 
     # --- показ ---------------------------------------------------------------
@@ -986,6 +1020,9 @@ class MainWindow(QMainWindow):
             return
 
         self._templates_root = templates_root
+        # Снимается на старте: к концу батча человек мог переключить фильтр, а
+        # писалось то, что стояло в начале.
+        self._filtered = self.check_only_cf.isChecked()
         self._started_at = time.monotonic()
         self._written_bytes = 0
         self._current_bytes = 0
@@ -1115,7 +1152,20 @@ class MainWindow(QMainWindow):
         self.progress_total.hide()
 
         self._written_kinds = {item.kind for item in result.written}
-        self._written.update(self._mark_key(item) for item in result.written)
+        # Записанным ПОЛНОСТЬЮ считается не всё записанное. С «без демобаз»
+        # из шаблона не пишется .dt, и он остаётся только внутри архива:
+        # удалить такой архив значило бы потерять демобазу насовсем.
+        #
+        # Неполнота запоминается отдельно, а не просто не попадает в
+        # записанное: каталог после такой распаковки существует, и любая
+        # следующая пересборка плана назовёт элемент «уже установленным».
+        for written in result.written:
+            key = self._mark_key(written)
+            if self._wrote_in_full(written):
+                self._written.add(key)
+                self._partial.discard(key)
+            else:
+                self._partial.add(key)
         if any(item.kind is ItemKind.SUPPLY for item in result.written):
             # Сохраняем только когда в каталог шаблонов действительно писали.
             self.settings_service.set_output_path(self._templates_root)
