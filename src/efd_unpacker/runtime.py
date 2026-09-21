@@ -37,11 +37,6 @@ os.umask(_UMASK)
 DEFAULT_PROFILE_MODE = 0o644 & ~_UMASK
 
 
-def _normalized_path_text(path: Path) -> str:
-    """Return a path string with normalized separators for platform checks."""
-    return str(path.resolve(strict=False)).replace("\\", "/")
-
-
 def detect_system_language(default: str = "en") -> str:
     """Return `ru` for Russian systems, otherwise the provided default."""
     if QLocale is not None and QLocale.system().language() == QLocale.Language.Russian:
@@ -108,6 +103,10 @@ def resolve_cli_launcher_target() -> Path | None:
         if not getattr(sys, "frozen", False):
             return None
 
+        # Путь намеренно НЕ разрешается через resolve(). На windows-2022 из
+        # матрицы тестов WindowsPath.resolve() привязывает «/Volumes/...» к
+        # текущему диску, проверка ниже перестаёт срабатывать, и запуск из
+        # смонтированного образа считается установленным (см. 53291ef).
         executable = Path(sys.executable)
         executable_str = str(executable).replace("\\", "/")
         if executable_str.startswith("/Volumes/"):

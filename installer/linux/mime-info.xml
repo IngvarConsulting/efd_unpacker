@@ -4,8 +4,5 @@
     <comment>EFD File</comment>
     <comment xml:lang="ru">EFD файл</comment>
     <glob pattern="*.efd"/>
-    <magic priority="50">
-      <match type="string" value="EFD" offset="0"/>
-    </magic>
   </mime-type>
 </mime-info> 

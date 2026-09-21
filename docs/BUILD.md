@@ -22,7 +22,7 @@
 Платформенные дополнения:
 - macOS: `create-dmg`
 - Windows: WiX Toolset для внутреннего `MSI` и итогового `setup.exe`
-- Linux: `appimagetool`, `dpkg-deb`
+- Linux: `appimagetool`, `dpkg-deb`, `fakeroot`
 
 ## Локальная подготовка
 
