@@ -665,6 +665,12 @@ class MainWindow(QMainWindow):
                 row.open_requested.connect(self.show_tools)
             else:
                 row.open_requested.connect(lambda item=item: self._open_item(item))
+                if item.reason is SkipReason.ALREADY_INSTALLED:
+                    # Каталог на месте — значит, есть куда смотреть, и человеку
+                    # ровно это и нужно: проверить, что там лежит, прежде чем
+                    # настаивать на перезаписи. У готовой строки та же кнопка;
+                    # «уже установлено» и есть «готово», только прошлым запуском.
+                    row.offer_open(self._t("MainWindow", "Open Folder"))
             self.rows_box.insertWidget(index, row)
             self.rows.append(row)
             self._row_of[id(item)] = row

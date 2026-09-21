@@ -1094,6 +1094,40 @@ def test_other_rows_still_open_their_folder(qtbot, monkeypatch):
     assert window.pages.currentIndex() == 0
 
 
+def test_an_already_installed_row_offers_its_folder(qtbot, monkeypatch):
+    """
+    «Уже установлено» — то же «готово», только прошлым запуском: каталог на
+    месте, и человеку нужно заглянуть в него прежде, чем настаивать на
+    перезаписи. Кнопка та же, что у записанной строки, и ведёт в тот же
+    каталог назначения.
+    """
+    opened = []
+    monkeypatch.setattr(ui, "open_folder", lambda path: opened.append(path) is None)
+    installed = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(installed,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    row = window.rows[0]
+    assert not row.button_open.isHidden(), "у строки «уже установлено» нет «Открыть папку»"
+    assert row.button_open.text() == "Open Folder"
+    row.button_open.click()
+
+    assert opened == [installed.destination]
+
+
+def test_other_skips_do_not_offer_a_folder(qtbot):
+    """У пропуска без каталога на диске открывать нечего."""
+    skipped = item(
+        action=Action.SKIP, reason=SkipReason.FILTERED_OUT, destination="", bytes_total=0,
+    )
+    window = make_window(qtbot, plan=Plan(items=(skipped,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].button_open.isHidden()
+
+
 def test_closing_waits_for_the_tools_search(qtbot):
     """
     QThread, разрушенный на ходу, роняет приложение при выходе.
