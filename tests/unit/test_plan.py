@@ -59,11 +59,11 @@ def settings(**kwargs):
         (["setup-full-8.3.27.2342-x86_64.run", "readme.htm"],
          ItemKind.PLATFORM, "8.3.27.2342", "full", "x86_64"),
         (["1c-enterprise-8.3.27.2342-server_8.3.27-2342_amd64.deb"],
-         ItemKind.PLATFORM, "8.3.27.2342", "packages", "amd64"),
+         ItemKind.PLATFORM, "8.3.27.2342", "server-deb", "x86_64"),
         (["1cv8-client-8.5.1.1529.pkg", "README.html"],
          ItemKind.PLATFORM, "8.5.1.1529", "client", ""),
         (["postgresql-18_18.4-1.1C_amd64.deb", "libpq5_18.4-1.1C_amd64.deb"],
-         ItemKind.PACKAGES, "18.4-1.1C", "packages", "amd64"),
+         ItemKind.PACKAGES, "18.4-1.1C", "packages-deb", "x86_64"),
         (["1cv8.dt"], ItemKind.CONTENT, "", "", ""),
         (["1cv8_en.cf", "1cv8_demo_en.dt"], ItemKind.CONTENT, "", "", ""),
         (["photo.jpg", "notes.txt"], ItemKind.OTHER, "", "", ""),
@@ -642,3 +642,261 @@ def test_missing_version_does_not_break_the_recognition():
 
     assert item.kind is ItemKind.PLATFORM
     assert item.destination.endswith("platform/unknown/full-x86_64")
+
+
+# --- дистрибутивы Linux -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "run, component, title",
+    [
+        ("setup-full-8.5.1.1529-x86_64.run", "full", "Платформа 1С:Предприятия"),
+        ("setup-thin-8.5.1.1529-x86_64.run", "thin-client",
+         "Платформа 1С:Предприятия, тонкий клиент"),
+    ],
+    ids=["полный", "тонкий клиент"],
+)
+def test_run_installer_names_its_own_component(run, component, title):
+    """
+    Комплектация читается из имени .run, а не зашита в правило.
+
+    Пока правило требовало ровно «setup-full-», thin.client64_*.zip —
+    полгигабайта — уезжал в «прочее» целиком.
+    """
+    found = classify(files(run, "installAsRoot", "readme.htm"))
+
+    assert found.kind is ItemKind.PLATFORM
+    assert found.component == component
+    assert found.version == "8.5.1.1529"
+    assert found.arch == "x86_64"
+    assert found.title == title
+
+
+def test_bundled_clients_are_recognised_next_to_a_run_installer():
+    """
+    server64_ и server64_with_all_clients_ содержат ОДИН И ТОТ ЖЕ
+    setup-full-*.run — байт в байт, до размера записи.
+
+    Отличает их только вложенный установщик клиентов, ровно как под Windows.
+    Без него два архива, 1.8 ГБ и 3.3 ГБ, легли бы в один каталог.
+    """
+    found = classify(files("setup-full-8.5.1.1529-x86_64.run",
+                           "all-clients-distr-8.5.1.1529-x86_64.run"))
+
+    assert found.component == "full-all-clients"
+
+
+def test_a_run_file_that_is_not_an_installer_is_not_a_platform():
+    """
+    Правило расширено по комплектации, а не по расширению.
+
+    Вложенный установщик клиентов — тоже .run, и сам по себе платформой не
+    является: «не знаю» обязано остаться «не знаю».
+    """
+    found = classify(files("all-clients-distr-8.5.1.1529-x86_64.run"))
+
+    assert found.kind is ItemKind.OTHER
+
+
+#: Серверный набор: четыре назначения в одном архиве, у каждого ещё и
+#: языковой пакет.
+SERVER_DEB = (
+    "1c-enterprise-8.5.1.1529-common-nls_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-common_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-server-nls_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-server_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-ws_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-crs_8.5.1-1529_amd64.deb",
+)
+THIN_DEB = (
+    "1c-enterprise-8.5.1.1529-thin-client-nls_8.5.1-1529_amd64.deb",
+    "1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_amd64.deb",
+    "v8-install-deps.sh",
+)
+THIN_RPM = (
+    "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.x86_64.rpm",
+    "1c-enterprise-8.5.1.1529-thin-client-nls-8.5.1-1529.x86_64.rpm",
+)
+
+
+def test_package_set_is_named_by_its_principal_role():
+    """
+    Назначение бралось из первого попавшегося пакета — то есть «common».
+
+    Common лежит в КАЖДОМ наборе и потому не различает ничего: серверный
+    набор и набор тонкого клиента получали одно имя каталога.
+    """
+    assert classify(files(*SERVER_DEB)).component == "server-deb"
+
+
+def test_thin_client_role_is_not_cut_in_half():
+    """Регресс: ленивая общая регулярка отрезала от «thin-client» только «thin»."""
+    assert classify(files(*THIN_DEB)).component == "thin-client-deb"
+
+
+def test_language_packages_do_not_change_the_role_of_a_set():
+    """
+    Рядом с server_*.deb всегда лежит server-nls_*.deb — это тот же сервер.
+
+    Отдельного разбора «-nls» в правиле нет: во всех четырнадцати архивах
+    языковой пакет лежит рядом со своим основным, и старшинство находит
+    основной само.
+    """
+    found = classify(files(
+        "1c-enterprise-8.5.1.1529-server-nls_8.5.1-1529_amd64.deb",
+        "1c-enterprise-8.5.1.1529-server_8.5.1-1529_amd64.deb",
+    ))
+
+    assert found.component == "server-deb"
+
+
+def test_a_language_package_alone_does_not_pretend_to_be_its_base():
+    """
+    Отрезать «-nls» было бы прямо вредно, и это стоит держать проверенным.
+
+    Языковой пакет без основного — это не серверный набор, и каталог
+    настоящего серверного набора он занимать не имеет права.
+    """
+    alone = classify(files("1c-enterprise-8.5.1.1529-server-nls_8.5.1-1529_amd64.deb"))
+
+    assert alone.component != classify(files(*SERVER_DEB)).component
+
+
+def test_an_unknown_package_set_is_named_by_everything_in_it():
+    """
+    Незнакомый набор не имеет права слиться с другим незнакомым.
+
+    Старшее назначение среди незнакомых угадывать нечем, поэтому в имя
+    каталога идут все: так два разных набора расходятся, а не перемешиваются.
+    """
+    one = classify(files("1c-enterprise-9.0.0.1-quantum_9.0.0-1_amd64.deb"))
+    two = classify(files("1c-enterprise-9.0.0.1-quantum_9.0.0-1_amd64.deb",
+                         "1c-enterprise-9.0.0.1-photon_9.0.0-1_amd64.deb"))
+
+    assert one.component == "quantum-deb"
+    assert two.component == "photon-quantum-deb"
+
+
+def test_deb_and_rpm_of_one_release_do_not_share_a_folder():
+    """
+    Формат пакетов в имени каталога обязателен.
+
+    Один выпуск приходит и в deb, и в rpm; назначение, версия и — после
+    приведения написаний — архитектура у них совпадают до буквы. Без формата
+    два разных набора легли бы в один каталог и перемешались.
+    """
+    assert classify(files(*THIN_DEB)).component != classify(files(*THIN_RPM)).component
+
+
+@pytest.mark.parametrize(
+    "deb, rpm",
+    [
+        ("1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_amd64.deb",
+         "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.x86_64.rpm"),
+        ("1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb",
+         "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.aarch64.rpm"),
+    ],
+    ids=["amd64 и x86_64", "arm64 и aarch64"],
+)
+def test_one_architecture_is_written_one_way(deb, rpm):
+    """
+    deb и rpm называют одно и то же железо по-разному.
+
+    Разные написания разводили один выпуск по двум каталогам — ровно как
+    «x86-64» против «x86_64» в имени msi.
+    """
+    assert classify(files(deb)).arch == classify(files(rpm)).arch
+
+
+def test_packages_of_one_kind_keep_their_format_too():
+    """
+    Правило одно на все наборы пакетов, не только на пакеты платформы.
+
+    После приведения amd64 к x86_64 набор deb и набор rpm одного продукта
+    различать стало бы нечем.
+    """
+    deb = classify(files("postgresql-18_18.4-1.1C_amd64.deb"))
+    rpm = classify(files("postgresql-18-18.4-1.1C.x86_64.rpm"))
+
+    assert deb.arch == rpm.arch
+    assert deb.component != rpm.component
+
+
+#: Настоящий корпус: четырнадцать дистрибутивов Linux, две версии платформы,
+#: четыре архитектуры, оба формата пакетов. Имена записей взяты из архивов
+#: как есть — на выдуманных правило не выводится: три из четырёх дефектов
+#: видны только на паре архивов, а четвёртый — только на паре из трёх.
+CORPUS = (
+    ("deb64_8_3_27_2342.zip", (
+        "1c-enterprise-8.3.27.2342-common-nls_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-common_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-server-nls_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-server_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-ws-nls_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-ws_8.3.27-2342_amd64.deb",
+        "1c-enterprise-8.3.27.2342-crs_8.3.27-2342_amd64.deb",
+    )),
+    ("deb64_8_5_1_1529.zip", SERVER_DEB),
+    ("rpm64_8_5_1_1529.zip", (
+        "1c-enterprise-8.5.1.1529-common-8.5.1-1529.x86_64.rpm",
+        "1c-enterprise-8.5.1.1529-common-nls-8.5.1-1529.x86_64.rpm",
+        "1c-enterprise-8.5.1.1529-server-8.5.1-1529.x86_64.rpm",
+        "1c-enterprise-8.5.1.1529-server-nls-8.5.1-1529.x86_64.rpm",
+        "1c-enterprise-8.5.1.1529-ws-8.5.1-1529.x86_64.rpm",
+        "1c-enterprise-8.5.1.1529-crs-8.5.1-1529.x86_64.rpm",
+    )),
+    ("server64_8_3_27_2342.zip", ("setup-full-8.3.27.2342-x86_64.run", "installAsRoot")),
+    ("server64_8_5_1_1529.zip", ("setup-full-8.5.1.1529-x86_64.run", "installAsRoot")),
+    ("server64_8_5_4_1683.zip", ("setup-full-8.5.4.1683-x86_64.run", "installAsRoot")),
+    ("server64_with_all_clients_8_5_1_1529.zip", (
+        "setup-full-8.5.1.1529-x86_64.run", "installAsRoot",
+        "all-clients-distr-8.5.1.1529-x86_64.run",
+    )),
+    ("thin.client.arm.deb64_8.5.1.1529.zip", (
+        "1c-enterprise-8.5.1.1529-thin-client-nls_8.5.1-1529_arm64.deb",
+        "1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb",
+    )),
+    ("thin.client.arm.rpm64_8.5.1.1529.zip", (
+        "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.aarch64.rpm",
+        "1c-enterprise-8.5.1.1529-thin-client-nls-8.5.1-1529.aarch64.rpm",
+    )),
+    ("thin.client.e2k_8c.deb_8.5.1.1529.zip", (
+        "1c-enterprise-8.5.1.1529-thin-client-nls_8.5.1-1529_e2k-8c.deb",
+        "1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_e2k-8c.deb",
+    )),
+    ("thin.client.e2k_8c.rpm_8.5.1.1529.zip", (
+        "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.e2k.rpm",
+        "1c-enterprise-8.5.1.1529-thin-client-nls-8.5.1-1529.e2k.rpm",
+    )),
+    ("thin.client64_8_5_1_1529.zip", ("setup-thin-8.5.1.1529-x86_64.run", "installAsRoot")),
+    ("thin.client_8_5_1_1529.deb64.zip", THIN_DEB),
+    ("thin.client_8_5_1_1529.rpm64.zip", THIN_RPM),
+)
+
+
+def corpus_plan():
+    return build_plan(
+        [Inspected(path="/d/%s" % name, files=files(*names)) for name, names in CORPUS],
+        settings(),
+    )
+
+
+def test_no_two_linux_archives_share_a_folder():
+    """
+    Главное требование задачи: распаковать все четырнадцать — и ничего не
+    перемешать.
+
+    Четыре пары ложились в один каталог: deb-набор сервера поверх deb-набора
+    тонкого клиента, то же в rpm, deb и rpm эльбруса вместе и, после
+    приведения написаний, оба серверных архива 8.5.1.1529.
+    """
+    destinations = [item.destination for item in corpus_plan().items]
+
+    assert sorted(destinations) == sorted(set(destinations))
+
+
+def test_every_linux_archive_is_recognised():
+    """Ни один из четырнадцати не уезжает в «прочее»."""
+    unrecognised = [item.origin for item in corpus_plan().items if item.kind is ItemKind.OTHER]
+
+    assert unrecognised == []
