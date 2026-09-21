@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Callable, List, Optional, Sequence, Set, Tuple
 
 from .errors import UnpackError, UnpackErrorCode
-from .supply import Catalog, Entry, Template, safe_relative_parts
+from .supply import Catalog, Entry, Template, readable_name, safe_relative_parts
 
 
 class ItemKind(Enum):
@@ -595,7 +595,7 @@ def _supply_item(
 
     return PlannedItem(
         kind=ItemKind.SUPPLY,
-        title=(info.name if info and info.name else template.relative_path),
+        title=(readable_name(info.name) if info and info.name else template.relative_path),
         version=template.version,
         source=found.trail,
         origin=result.path,

@@ -1093,3 +1093,24 @@ def test_every_archive_is_recognised():
     unrecognised = [item.origin for item in corpus_plan().items if item.kind is ItemKind.OTHER]
 
     assert unrecognised == []
+
+
+def test_the_row_title_loses_the_vendor_wrapper():
+    """
+    В план попадает наименование без служебной обёртки.
+
+    Проверяется ЗДЕСЬ, а не только у readable_name: разбор можно написать
+    верно и забыть позвать, и тогда в окне осталась бы строка вида
+    «конфигурация "…", редакция 3.0» рядом с человеческими названиями.
+    Настоящий случай — AccountingCorp_3_0_206_19.
+    """
+    plan = build_plan(
+        [Inspected(path="/d/AccountingCorp.zip", supplies=(
+            supply("1c/AccountingCorp/3_0_206_19", "3.0.206.19",
+                   [("1cv8.cf", 900), ("1cv8.mft", 505)],
+                   name='конфигурация "Бухгалтерия предприятия КОРП", редакция 3.0'),
+        ))],
+        settings(),
+    )
+
+    assert plan.items[0].title == "Бухгалтерия предприятия КОРП, редакция 3.0"
