@@ -285,13 +285,12 @@ jobs:
         run: |
           $setup = Start-Process -FilePath .\efd_unpacker_setup.exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Setup failed with exit code $($setup.ExitCode)" }
-          $exeCandidates = @(
-            "C:\Program Files\EFD Unpacker\EFDUnpacker.exe",
-            "C:\Program Files (x86)\EFD Unpacker\EFDUnpacker.exe",
-            "C:\efd_unpacker\EFDUnpacker.exe"
-          )
-          $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $exe) { throw "Installed executable not found" }
+          # Путь ровно один: MSI собирается с -arch x64 и ставит в
+          # ProgramFiles64Folder. Перебор кандидатов был следствием
+          # неопределённости — 64-битный exe мог оказаться в
+          # Program Files (x86), и смоук-тест это скрывал.
+          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"
+          if (-not (Test-Path $exe)) { throw "Installed executable not found at $exe" }
           $out = Join-Path $env:TEMP "efd-out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 

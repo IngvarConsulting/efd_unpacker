@@ -1,14 +1,58 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- UpgradeCode НЕ МЕНЯТЬ НИКОГДА. По нему Windows Installer узнаёт
+       семейство продукта: смена рвёт цепочку обновления — новый MSI
+       перестаёт видеть уже установленные версии.
+
+       Прежнее значение, 12345678-1234-…, — заглушка из туториала по WiX.
+       Любой чужой пакет, собранный по тому же шаблону, наш MajorUpgrade
+       считал «предыдущей версией EFD Unpacker»: с меньшей версией молча
+       сносил, с большей — обрывал установку сообщением, которое вдобавок
+       врало про установленный продукт. -->
   <Product
     Id="*"
     Name="EFD Unpacker"
     Language="1033"
     Version="VERSION_PLACEHOLDER"
     Manufacturer="Ingvar Consulting"
-    UpgradeCode="12345678-1234-1234-1234-123456789012">
+    UpgradeCode="24200E4F-43B8-4B51-B5E3-34C8172A128B">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of EFD Unpacker is already installed." />
+
+    <!-- ПЕРЕХОДНЫЙ БЛОК. Удалить в следующем релизе после 2.0.
+
+         Старые выпуски собраны с UpgradeCode-заглушкой, и по новому коду
+         MajorUpgrade их не видит. Само по себе это было бы полбеды, но Burn
+         ставит новую цепочку и ТОЛЬКО ПОТОМ снимает старый бандл: удаление
+         старого MSI унесло бы файлы и ярлыки, которые новый уже положил, —
+         GUID компонентов сменились, и счётчик ссылок их не защищает.
+
+         Здесь старый продукт снимается до установки новых файлов:
+         MajorUpgrade планирует RemoveExistingProducts на afterInstallValidate.
+
+         Ценой идёт риск, ради устранения которого всё и затевалось: под
+         этот код попадёт любой чужой пакет, собранный с той же заглушкой.
+         Сузить его до нашего продукта нечем — Upgrade различает пакеты
+         только по коду семейства, версии и языку, а ProductCode у нас
+         Id="*", то есть свой у каждой сборки, и «тот самый 1.2.11» назвать
+         невозможно.
+
+         Поэтому взято единственное, что сужается: диапазон версий. Выпуски
+         со старым кодом — это 1.x (1.2.6 … 1.3.0), и ниже 1.0.0 или от
+         2.0.0 блок не смотрит вовсе.
+
+         И поэтому же блок живёт РОВНО ОДИН релиз: к следующему все, кто
+         обновляется, уже перейдут на настоящий код. -->
+    <Upgrade Id="12345678-1234-1234-1234-123456789012">
+      <UpgradeVersion
+        Minimum="1.0.0"
+        IncludeMinimum="yes"
+        Maximum="2.0.0"
+        IncludeMaximum="no"
+        OnlyDetect="no"
+        IgnoreRemoveFailure="no"
+        Property="LEGACYEFDUNPACKERFOUND" />
+    </Upgrade>
     <MediaTemplate EmbedCab="yes" />
 
     <Condition Message="This application requires Windows 7 or later.">
@@ -21,7 +65,7 @@
     <Icon Id="AppIcon.ico" SourceFile="resources\icon.ico" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFilesFolder">
+      <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="EFD Unpacker" />
       </Directory>
 
@@ -33,29 +77,51 @@
     </Directory>
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <Component Id="MainExecutable" Guid="87654321-4321-4321-4321-210987654321">
+      <Component Id="MainExecutable" Guid="*">
         <File Source="dist\EFDUnpacker.exe" KeyPath="yes" Id="EFDUnpackerEXE" Name="EFDUnpacker.exe" />
 
         <!-- Полные тексты лицензий рядом с приложением. GPL v3 требует,
-             чтобы лицензия ехала ВМЕСТЕ с программой. Файлы добавлены в
-             существующий компонент намеренно: отдельный потребовал бы ещё
-             одного GUID, а они в этом файле пока заглушки (см. #17). -->
+             чтобы лицензия ехала ВМЕСТЕ с программой. Лежат в том же
+             компоненте, что и exe: тот же каталог, та же судьба при
+             удалении, а KeyPath у компонента один — сам exe. -->
         <File Source="licenses\GPL-3.0.txt" Id="LicenseGPL3" Name="GPL-3.0.txt" />
         <File Source="licenses\LGPL-3.0.txt" Id="LicenseLGPL3" Name="LGPL-3.0.txt" />
         <File Source="LICENSE" Id="LicenseMIT" Name="LICENSE.txt" />
         <File Source="build\BUILD-MANIFEST.txt" Id="LicenseManifest" Name="BUILD-MANIFEST.txt" />
 
-        <RegistryValue Root="HKCR" Key=".efd" Value="EFDFile" Type="string" />
-        <RegistryValue Root="HKCR" Key="EFDFile" Value="EFD Archive File" Type="string" />
-        <RegistryValue Root="HKCR" Key="EFDFile\DefaultIcon" Value="[INSTALLFOLDER]EFDUnpacker.exe,0" Type="string" />
-        <RegistryValue Root="HKCR" Key="EFDFile\shell\open\command" Value="&quot;[INSTALLFOLDER]EFDUnpacker.exe&quot; &quot;%1&quot;" Type="string" />
-        <RegistryValue Root="HKCR" Key="EFDFile\shell\open" Value="Open with EFD Unpacker" Type="string" />
+        <!-- Свой тип файла. Имя с точкой — соглашение ProgId: так его не
+             спутать с расширением, и два продукта не займут одно имя. -->
+        <RegistryValue Root="HKCR" Key="EFDUnpacker.efd" Value="EFD Archive File" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDUnpacker.efd\DefaultIcon" Value="[INSTALLFOLDER]EFDUnpacker.exe,0" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDUnpacker.efd\shell\open" Value="Open with EFD Unpacker" Type="string" />
+        <RegistryValue Root="HKCR" Key="EFDUnpacker.efd\shell\open\command" Value="&quot;[INSTALLFOLDER]EFDUnpacker.exe&quot; &quot;%1&quot;" Type="string" />
 
-        <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd" Value="EFD Archive File" Type="string" />
-        <RegistryValue Root="HKCR" Key="MIME\Database\Content Type\application/x-efd\Extension" Value=".efd" Type="string" />
+        <!-- Себя в список доступных обработчиков, а не в значение по
+             умолчанию ключа .efd.
+
+             Прежняя запись перехватывала расширение безусловно. Целевая
+             машина — с 1С:Предприятием, где .efd уже на что-то назначен:
+             установка затирала прежний обработчик, а удаление уносило
+             значение с собой, потому что Windows Installer прежнее не
+             запоминает. Расширение оставалось вообще без программы.
+
+             Теперь выбор за человеком: «Открыть с помощью» показывает нас
+             наравне с тем, что стояло раньше. -->
+        <RegistryValue Root="HKCR" Key=".efd\OpenWithProgids" Name="EFDUnpacker.efd" Value="" Type="string" />
+
+        <!-- Под ключом .efd не пишем НИЧЕГО, включая Content Type, и в общую
+             базу MIME тоже. Это чужие общие разделы: значение, уже заданное
+             другой программой, мы бы перезаписали, а при удалении унесли с
+             собой — Windows Installer прежнее не возвращает. Для
+             OpenWithProgids ни то ни другое не нужно, а пользы от записи
+             типа application/x-efd в реестре нет никакой: им никто не
+             пользуется. -->
       </Component>
 
-      <Component Id="PathAllUsers" Guid="44444444-4444-4444-4444-444444444444">
+      <!-- Фиксированный GUID, а не «*»: KeyPath здесь каталог (CreateFolder),
+           а для директорного KeyPath WiX v3 авто-GUID не выдаёт. Заморожен
+           так же навсегда, как UpgradeCode. -->
+      <Component Id="PathAllUsers" Guid="CD21D592-E806-4AD4-AAC8-AC50FD0EE017">
         <Condition>ADD_TO_PATH = "all"</Condition>
         <CreateFolder />
         <Environment
@@ -70,7 +136,7 @@
     </ComponentGroup>
 
     <ComponentGroup Id="ShortcutComponents" Directory="ApplicationProgramsFolder">
-      <Component Id="ApplicationShortcut" Guid="11111111-1111-1111-1111-111111111111">
+      <Component Id="ApplicationShortcut" Guid="*">
         <Shortcut
           Id="ApplicationStartMenuShortcut"
           Name="EFD Unpacker"
@@ -83,7 +149,7 @@
     </ComponentGroup>
 
     <ComponentGroup Id="DesktopShortcutComponents" Directory="DesktopFolder">
-      <Component Id="DesktopShortcut" Guid="22222222-2222-2222-2222-222222222222">
+      <Component Id="DesktopShortcut" Guid="*">
         <Shortcut
           Id="DesktopShortcut"
           Name="EFD Unpacker"
