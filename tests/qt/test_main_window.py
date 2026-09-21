@@ -16,7 +16,7 @@ import time
 
 import pytest
 from PyQt5.QtCore import Qt, QMimeData, QUrl
-from PyQt5.QtWidgets import QMessageBox, QRadioButton
+from PyQt5.QtWidgets import QLabel, QMessageBox, QRadioButton
 from PyQt5.QtGui import QCloseEvent, QDropEvent
 
 from efd_unpacker.domain.batch import BatchResult, ItemFailed, ItemStarted, ItemWritten
@@ -1617,3 +1617,31 @@ def test_a_chosen_folder_does_not_roll_back_on_the_next_choice(qtbot):
         current = window._paths.findChild(QRadioButton, "templates-0")
         assert settings.get_output_path() == expected
         assert (current.text(), current.isChecked()) == (expected, True)
+
+
+def test_the_window_shows_the_version_it_was_built_with(qtbot, monkeypatch):
+    """
+    Критерий #20: версию видит человек, а не только сборщик.
+
+    Номер был вписан в ui.py руками, и в окне стояло 2.0.0 независимо от
+    того, что собрали: разойтись с настоящим релизом ему мешало только чужое
+    внимание. Теперь он читается из version.txt, который пишет сборка.
+    """
+    monkeypatch.setattr(ui, "APP_VERSION", "4.5.6")
+    window = make_window(qtbot)
+
+    assert "4.5.6" in window.windowTitle()
+    assert "4.5.6" in [label.text() for label in window.findChildren(QLabel)]
+
+
+def test_the_window_takes_its_version_from_the_build_not_from_the_source():
+    """
+    Проверяется происхождение номера, а не его значение.
+
+    Предыдущий тест подменяет APP_VERSION и потому проходит при ЛЮБОМ
+    устройстве — в том числе при вписанном руками литерале, с которого всё и
+    началось. Связь с тем, что записала сборка, приходится сторожить отдельно.
+    """
+    from efd_unpacker import runtime
+
+    assert ui.APP_VERSION == runtime.app_version()
