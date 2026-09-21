@@ -33,14 +33,26 @@ class PlanThread(QThread):
     # QThread.finished, и повесить на него deleteLater было бы нельзя.
     ready = pyqtSignal(object, object)
 
+    #: Взялись за очередной файл: путь, его номер и сколько всего. Имя не
+    #: started по той же причине, что и выше: так называется встроенный
+    #: сигнал QThread.
+    started_file = pyqtSignal(str, int, int)
+
     def __init__(self, paths: Sequence[str], inspect_files: Callable) -> None:
         super().__init__()
         self._paths = tuple(paths)
         self._inspect_files = inspect_files
 
     def run(self) -> None:  # pragma: no cover - потоковая логика
+        total = len(self._paths)
+        done = [0]
+
+        def on_start(path: str) -> None:
+            done[0] += 1
+            self.started_file.emit(path, done[0], total)
+
         try:
-            self.ready.emit(list(self._inspect_files(self._paths)), None)
+            self.ready.emit(list(self._inspect_files(self._paths, on_start=on_start)), None)
         except Exception as exc:  # noqa: BLE001 - поток не должен падать молча
             # Из потока исключение уходит в никуда: окно осталось бы с пустым
             # списком и без единого слова о причине. Сам осмотр отказы уже

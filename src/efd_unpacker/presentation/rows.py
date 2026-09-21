@@ -36,6 +36,7 @@ PENDING = "pending"        # поедет, отмечено
 UNCHECKED = "unchecked"    # снято пользователем
 UNAVAILABLE = "unavailable"  # пропуск по делу: уже установлено, нет программы
 RUNNING = "running"
+PARTIAL = "partial"      # отмечено не всё: только у общего знака в шапке
 DONE = "done"
 FAILED = "failed"        # распаковка отказала: можно повторить
 BROKEN = "broken"        # отказ ОСМОТРА: повторять нечего
@@ -58,7 +59,7 @@ BROKEN = "broken"        # отказ ОСМОТРА: повторять неч�
 #: Готовая строка не переключается: работа сделана, и молча переделать её
 #: было бы неожиданно — у неё для этого есть «Открыть папку». «Уже
 #: установлено» и «нет программы» — тоже нет: желание тут ничего не меняет.
-TOGGLEABLE = (PENDING, UNCHECKED, FAILED)
+TOGGLEABLE = (PENDING, UNCHECKED, PARTIAL, FAILED)
 
 
 class Mark(QAbstractButton):
@@ -104,6 +105,15 @@ class Mark(QAbstractButton):
             painter.setPen(QPen(QColor(style.LINE), 1.5))
             painter.setBrush(QColor(style.SURFACE))
             painter.drawRoundedRect(box, 3, 3)
+        elif self._state == PARTIAL:
+            # Та же заливка, что у отмеченного, но черта вместо галочки:
+            # так системные чекбоксы показывают «выбрано не всё», и знак
+            # читается без подписи.
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(style.ACCENT))
+            painter.drawRoundedRect(box, 3, 3)
+            painter.setPen(QPen(QColor(style.SURFACE), 3.4, cap=Qt.RoundCap))
+            painter.drawLine(4, style.MARK_SIZE // 2, style.MARK_SIZE - 4, style.MARK_SIZE // 2)
         elif self._state == UNAVAILABLE:
             painter.setPen(QPen(QColor(style.LINE_SOFT), 1.5))
             painter.setBrush(QColor(style.SURFACE_MUTED))

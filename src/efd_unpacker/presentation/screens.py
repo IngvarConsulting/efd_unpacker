@@ -647,6 +647,10 @@ def _same_path(left: str, right: str) -> bool:
 # --- инструменты для .rar ----------------------------------------------------
 
 
+#: Как Apple называет то, что uname зовёт arm64 и x86_64.
+MAC_CHIPS = {"arm64": "Apple Silicon", "x86_64": "Intel"}
+
+
 def system_line() -> str:
     """
     Система и разрядность в шапке: то, от чего зависит и поиск, и команда.
@@ -659,7 +663,10 @@ def system_line() -> str:
     machine = platform.machine()
     system = platform.system()
     if system == "Darwin":
-        return "macOS %s · %s" % (platform.mac_ver()[0], machine)
+        # «arm64» — слово из вывода uname, а не из мира пользователя Mac.
+        # Apple называет свои процессоры Apple Silicon, а прежние — Intel,
+        # и человек ищет глазами именно эти два слова.
+        return "macOS %s · %s" % (platform.mac_ver()[0], MAC_CHIPS.get(machine, machine))
     if system == "Windows":
         return "Windows %s · %s" % (platform.release(), machine)
     return "%s · %s" % (system or "?", machine)
@@ -786,6 +793,7 @@ class ToolsScreen(Screen):
 
     def _render(self) -> None:
         self._clear_body()
+        self._copy_buttons = []
         self.body.addWidget(_paragraph(self._t(
             "Screens",
             "Archives in .rar are unpacked by an external program. The application "
@@ -804,7 +812,6 @@ class ToolsScreen(Screen):
         probe = rar.last_probe()
         used = probe.tool.path if probe is not None else None
 
-        missing = False
         for family in rar.known_families():
             found = [tool for tool in self._tools if tool.family == family]
             self.body.addWidget(_rule())
@@ -814,13 +821,9 @@ class ToolsScreen(Screen):
                         tool, used=used, first=self._tools[0] is tool,
                     ))
             else:
-                missing = True
                 self.body.addWidget(self._missing_row(family))
         self.body.addWidget(_rule())
 
-        if missing:
-            self.body.addSpacing(12)
-            self.body.addWidget(self._install_block())
         self.body.addSpacing(14)
         self.body.addWidget(_note(self._t(
             "Screens",
@@ -868,9 +871,13 @@ class ToolsScreen(Screen):
         return self._row(
             Glyph.DASH, style.DISABLED, title, badge,
             [self._t("Screens", "searched as %s") % names] if names else [],
+            commands=rar.install_hints(family),
         )
 
-    def _row(self, kind: str, glyph_color: str, title, badge, lines, note: str = "") -> QWidget:
+    def _row(
+        self, kind: str, glyph_color: str, title, badge, lines,
+        note: str = "", commands: Sequence[str] = (),
+    ) -> QWidget:
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(title, 1)
@@ -892,6 +899,10 @@ class ToolsScreen(Screen):
             result.setStyleSheet("font-size: 11.5px; color: %s;" % style.MUTED)
             body.addWidget(result)
 
+        for command in commands:
+            body.addSpacing(4)
+            body.addLayout(self._command_row(command))
+
         outer = QHBoxLayout()
         outer.setContentsMargins(0, 11, 0, 11)
         outer.setSpacing(11)
@@ -901,48 +912,35 @@ class ToolsScreen(Screen):
         holder.setLayout(outer)
         return holder
 
-    def _install_block(self) -> QWidget:
+    def _command_row(self, command: str) -> QHBoxLayout:
         """
-        Команды установки — по одной в строке, каждая со своей кнопкой.
+        Команда установки прямо в строке программы, которой не нашлось.
 
-        Не одной строкой: варианты равноправны, нужен ровно один из них, и
-        «a | b», вставленное в оболочку, становится конвейером — вторая
-        команда запустится даже после успеха первой, а её отказ человек
-        примет за отказ установки.
+        Внизу общим списком она стояла далеко от того места, где сказано,
+        чего не хватает: человек читает «The Unarchiver — не найдено», а
+        команду ищет глазами этажом ниже и гадает, которая из двух его.
 
-        По семействам программ они при этом не разложены: подсказка в rar
-        даётся на систему целиком, и раскладывать её обратно значило бы
-        сочинять имена пакетов — у Debian и Fedora они разные, и проверить их
-        мне не на чем.
+        Варианты внутри одного семейства остаются отдельными строками:
+        нужен ровно один из них, а «a | b», вставленное в оболочку, стало бы
+        конвейером.
         """
-        self._copy_buttons = []
-        box = QVBoxLayout()
-        box.setContentsMargins(0, 0, 0, 0)
-        box.setSpacing(6)
-        for command in rar.install_hints():
-            label = QLabel(command)
-            label.setStyleSheet(style.code_sheet())
-            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label = QLabel(command)
+        label.setStyleSheet(style.code_sheet())
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-            button = QPushButton(self._t("Screens", "Copy"))
-            button.setStyleSheet(style.small_button_sheet())
-            button.setCursor(Qt.PointingHandCursor)
-            button.clicked.connect(lambda _checked, text=command: self.copy_command(text))
-            self._copy_buttons.append(button)
+        button = QPushButton(self._t("Screens", "Copy"))
+        button.setStyleSheet(style.small_button_sheet())
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(lambda _checked, text=command: self.copy_command(text))
+        self._copy_buttons.append(button)
 
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            row.addWidget(label)
-            row.addWidget(button)
-            row.addStretch()
-            holder = QWidget()
-            holder.setLayout(row)
-            box.addWidget(holder)
-
-        block = QWidget()
-        block.setLayout(box)
-        return block
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(label)
+        row.addWidget(button)
+        row.addStretch()
+        return row
 
     def copy_command(self, command: str) -> None:
         """

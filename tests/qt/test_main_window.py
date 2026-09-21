@@ -147,12 +147,19 @@ class _Writers:
 def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, validator=None,
                 read_manifest=None):
     """Окно с подменённым осмотром, планом и исполнением."""
-    calls = {"inspect": [], "build": 0, "batch": []}
+    calls = {"inspect": [], "started": [], "build": 0, "batch": []}
     inspected = [object()] if inspected is None else inspected
     plan = Plan(items=(item(),)) if plan is None else plan
 
-    def fake_inspect(paths):
+    def fake_inspect(paths, on_start=None):
+        # on_start — часть договора со слоем осмотра: окно показывает по нему
+        # ход, и двойник обязан звать его так же, иначе проверка хода
+        # проходила бы на подставном поведении.
         calls["inspect"].append(tuple(paths))
+        for path in paths:
+            calls["started"].append(path)
+            if on_start is not None:
+                on_start(path)
         return inspected
 
     def fake_build(_inspected, _settings):
@@ -618,7 +625,7 @@ def test_closing_during_inspection_waits_for_the_thread(qtbot, monkeypatch):
     """
     started = {}
 
-    def slow_inspect(paths):
+    def slow_inspect(paths, on_start=None):
         started["at"] = time.monotonic()
         time.sleep(0.3)
         return [object()]
@@ -898,7 +905,7 @@ def test_russian_footer_reads_as_one_sentence(qtbot):
         settings_service=settings,
         file_validator=DummyValidator(),
         unpack_service=DummyUnpackService(),
-        inspect_files=lambda paths: [],
+        inspect_files=lambda paths, on_start=None: [],
         build=lambda _i, _s: Plan(),
         batch=lambda *args, **kwargs: BatchResult(),
         make_writers=lambda *args, **kwargs: _Writers(),
@@ -1667,3 +1674,97 @@ def test_the_menu_keeps_its_popup_behaviour_while_rounded(qtbot):
     assert menu.windowFlags() & Qt.FramelessWindowHint
     assert menu.windowFlags() & Qt.Popup, "меню перестало быть всплывающим"
     assert len(menu.actions()) == 4, "состав пунктов изменился"
+
+
+def test_the_window_says_it_is_busy_the_moment_files_are_dropped(qtbot):
+    """
+    Между броском и списком проходит время, и оно должно быть видно.
+
+    Осмотр идёт в фоне: на десятке архивов пауза до списка читается как
+    зависание. Подпись в подвале для этого мала — человек смотрит туда, куда
+    бросил, поэтому занятость показывается и в зоне броска, и в сводке над
+    списком.
+    """
+    window = make_window(qtbot)
+
+    window.set_input_files(["/d/a.zip"])
+
+    # Ещё до первого обработанного события: текст ставится сразу, а не по
+    # приходу сигнала из потока.
+    assert "Inspecting" in window.label_drop.text()
+    assert "Inspecting" in window.label_counts.text()
+
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    assert "Inspecting" not in window.label_drop.text()
+    assert "Inspecting" not in window.label_counts.text()
+
+
+def test_progress_counts_the_files_as_they_are_inspected(qtbot):
+    """
+    Счёт, а не имя файла: имена длинные, прыгают по ширине и ничего не
+    говорят о том, сколько ещё ждать.
+    """
+    window = make_window(qtbot)
+
+    window._inspection_started("/d/b.zip", 2, 7)
+
+    for label in (window.label_drop, window.label_counts, window.label_status):
+        assert "2" in label.text() and "7" in label.text()
+
+
+def test_the_inspection_layer_is_asked_to_report_progress(qtbot):
+    """
+    Ход берётся из слоя осмотра, а не выдумывается окном.
+
+    Без переданного on_start окно могло бы рисовать любой счёт, не связанный
+    с тем, что на самом деле происходит.
+    """
+    window = make_window(qtbot)
+
+    drop(window, ["/d/a.zip", "/d/b.zip"])
+    qtbot.waitUntil(lambda: window._plan_thread is None, timeout=2000)
+
+    assert window.calls["started"] == ["/d/a.zip", "/d/b.zip"]
+
+
+def test_the_header_mark_shows_what_is_marked_and_toggles_both_ways(qtbot):
+    """
+    Подпись-ссылка говорила только про снятие и о нынешнем состоянии молчала.
+
+    Знак в шапке — тот же, что в строках, и стоит там же слева: отмечено всё,
+    ничего или часть видно с первого взгляда, а щелчок работает в обе стороны.
+    """
+    window = make_window(qtbot, plan=Plan(items=(item(title="A"), item(title="B"))))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    assert window.mark_all.state() == row_widgets.PENDING
+
+    window.rows[0].mark.click()
+    assert window.mark_all.state() == row_widgets.PARTIAL, "половина отмеченного — не «всё»"
+
+    window.mark_all.click()
+    assert [row.state() for row in window.rows] == [row_widgets.PENDING] * 2
+    assert window.mark_all.state() == row_widgets.PENDING
+
+    window.mark_all.click()
+    assert [row.state() for row in window.rows] == [row_widgets.UNCHECKED] * 2
+    assert window.mark_all.state() == row_widgets.UNCHECKED
+
+
+def test_unavailable_rows_do_not_keep_the_header_mark_from_being_full(qtbot):
+    """
+    «Уже установлено» не отмечается никаким желанием.
+
+    Считай мы такие строки, знак никогда не показал бы «отмечено всё», и
+    человек искал бы, что ещё он забыл отметить.
+    """
+    plan = Plan(items=(
+        item(title="A"),
+        item(title="Б", action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED),
+    ))
+    window = make_window(qtbot, plan=plan)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    assert window.mark_all.state() == row_widgets.PENDING
