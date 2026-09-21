@@ -25,6 +25,7 @@
 - [Локализация приложения](docs/LOCALIZATION_README.md)
 - [Лицензии компонентов](docs/LICENSES.md)
 - [Конвенция коммитов](docs/COMMIT_CONVENTION.md)
+- [История изменений](CHANGELOG.md)
 
 ## Лицензия
 

@@ -40,7 +40,7 @@ help:
 	@echo "  build-windows           - Собрать для Windows (setup.exe)"
 	@echo "  test                    - Запустить тесты"
 	@echo "  generate-spec           - Сгенерировать PyInstaller spec файл"
-	@echo "  generate-release-notes  - Сгенерировать заметки о выпуске из истории git"
+	@echo "  generate-release-notes  - Описание релиза из CHANGELOG.md (раздел тега или [Unreleased])"
 	@echo "  check                   - Проверить готовность к сборке"
 	@echo ""
 	@echo "Текущая платформа: $(PLATFORM)"
@@ -135,10 +135,12 @@ generate-spec:
 	sed -e "s#{{VERSION}}#$$VERSION#g" \
 	    installer/EFDUnpacker.spec.in > EFDUnpacker.spec; \
 	
+# Описание берётся из CHANGELOG.md. На теге без раздела с его номером скрипт
+# возвращает 1, и цель падает — релиз с пересказом коммитов выйти не должен.
 generate-release-notes:
-	@echo "Generating release notes..."
-	$(PYTHON) scripts/generate_release_notes.py > release_notes.md
-	
+	@echo "Generating release notes from CHANGELOG.md..."
+	$(PYTHON) scripts/release_notes.py > release_notes.md
+
 # Зависимости разделены намеренно: test.yml незачем тянуть весь packaging-тулинг
 # (sudo apt-get, brew, choco), а разработчику на ноутбуке — тем более.
 install-test-deps:
