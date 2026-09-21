@@ -47,6 +47,7 @@ from ..domain.batch import run as run_batch
 from ..domain.errors import FileValidationError, UnpackError
 from ..domain.file_validator import FileValidator
 from ..domain.manifest import read as read_manifest
+from ..domain.manifest import summarize as summarize_appearance
 from ..domain.plan import (
     Action,
     ItemKind,
@@ -1166,13 +1167,18 @@ class MainWindow(QMainWindow):
         Показываются только те конфигурации, чей файл лёг на диск: с
         «без демобаз» демонстрационная база не пишется вовсе, и обещать её в
         1С значило бы соврать там, где человек пойдёт её искать.
+
+        Что именно попадёт в строку, решает summarize: дерево 1С повторяет
+        само себя, и печатать его дословно значит печатать одно имя трижды.
         """
         if item.kind is not ItemKind.SUPPLY:
             return
         delivered = self._read_manifest(item.destination).delivered(item.destination)
-        if delivered:
+        appearance = summarize_appearance(delivered)
+        if appearance:
             row.set_appears(
                 self._t("MainWindow", "In 1C it will appear as:"),
+                appearance,
                 [config.title for config in delivered],
             )
 

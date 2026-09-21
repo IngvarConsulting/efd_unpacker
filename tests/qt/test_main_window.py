@@ -8,6 +8,7 @@
 
 import dataclasses
 import os
+import re
 import threading
 
 os.environ.setdefault("QT_QPA_PLATFORM", "minimal")
@@ -2328,3 +2329,102 @@ def test_insistence_outlives_a_write_the_filter_cut_short(qtbot, tmp_path):
     window.check_only_cf.setChecked(False)
 
     assert window._plan.items[0].action is Action.WRITE, "настояние снято, а записано не всё"
+
+
+def test_the_finished_row_prints_the_name_once_not_four_times(qtbot):
+    """
+    Дерево 1С повторяет само себя, и строка это повторение не печатает.
+
+    До свёртки нижний ярус занимал два яруса и выглядел так:
+    «1С:Бухгалтерия предприятия КОРП / Бухгалтерия предприятия КОРП» и то же
+    самое с «(демо)». Имя стояло в строке четырежды, а вся новизна второго
+    пути — шесть знаков на хвосте, ровно там, где работает многоточие.
+
+    Исходные пути целиком остаются в подсказке: на экране показано короче, и
+    папку, в которой искать, строка называет не всегда.
+    """
+    from efd_unpacker.domain.manifest import Config, Manifest
+
+    window = make_window(qtbot, read_manifest=lambda _d: Manifest(configs=(
+        Config(catalog="1С:Бухгалтерия предприятия КОРП /Бухгалтерия предприятия КОРП"),
+        Config(catalog="1С:Бухгалтерия предприятия КОРП /Бухгалтерия предприятия КОРП (демо)"),
+    )))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    detail = window.rows[0].texts()[1]
+    # В headless-прогоне у подписи нет ширины, и имя укорачивается до
+    # MIN_ROOM. Это и делает проверку строгой: при прежней отрисовке в такую
+    # ширину не влезало НИЧЕГО, кроме начала первого пути, и «(демо)» —
+    # единственное, чем пути различались, — исчезало вместе с хвостом.
+    assert "(демо)" in detail, detail
+    assert detail.count("<span") == 1, "имя печатается один раз, а не двумя ярусами"
+    assert "1С:Бухгалтерия предприятия КОРП → Бухгалтерия предприятия КОРП (демо)" in (
+        window.rows[0].label_detail.toolTip()
+    ), "исходные пути целиком — в подсказке"
+
+
+def test_the_variant_mark_is_never_eaten_by_the_ellipsis(qtbot):
+    """
+    Многоточие ест имя, но не приписку.
+
+    Приписка — это всё, чем одно имя отличается от другого. Съесть её значит
+    оставить на экране два одинаковых имени и заставить человека гадать, чем
+    же они различались. Поэтому место ей отводится целиком, а делится только
+    остаток, и правило обязано держаться на любой ширине.
+    """
+    from efd_unpacker.domain.manifest import Appearance
+
+    label = row_widgets.DetailLabel()
+    qtbot.addWidget(label)
+    appearance = Appearance(names=("Бухгалтерия предприятия КОРП",), variants=("(демо)",))
+
+    def shown_name() -> str:
+        return re.search(r"<span[^>]*>(.*?)</span>", label.text()).group(1)
+
+    label.resize(400, 20)
+
+    label.set_appears("В 1С появится:", Appearance(names=appearance.names), ["путь"])
+    without_mark = shown_name()
+    label.set_appears("В 1С появится:", appearance, ["путь"])
+    with_mark = shown_name()
+
+    assert "(демо)" in label.text()
+    # Имя при той же ширине стало короче ровно потому, что приписке отвели
+    # место ДО того, как мерить имя. Не отведи мы его — приписка была бы в
+    # разметке и уезжала бы за правый край.
+    assert len(with_mark) < len(without_mark), (
+        "место под приписку не зарезервировано: %r против %r" % (with_mark, without_mark)
+    )
+
+    # На любой ширине приписка остаётся целой: укорачивается только имя.
+    for width in (620, 300, 140, 80):
+        label.resize(width, 20)
+        label.set_appears("В 1С появится:", appearance, ["путь"])
+
+        assert label.text().endswith("+ (демо)"), "приписка урезана при ширине %d" % width
+
+
+def test_two_different_names_share_the_room_instead_of_one_winning(qtbot):
+    """
+    Когда элементы правда разные, режутся ОБА.
+
+    Показать первое имя целиком и съесть второе значило бы умолчать о том,
+    что в 1С появится, — а умолчать нельзя: это разные вещи, а не варианты
+    одной.
+    """
+    from efd_unpacker.domain.manifest import Appearance
+
+    label = row_widgets.DetailLabel()
+    qtbot.addWidget(label)
+    label.resize(320, 20)
+
+    label.set_appears("В 1С появится:", Appearance(names=(
+        "Автоматизированная проверка конфигураций",
+        "Демонстрационная конфигурация для тестирования на АПК",
+    )), ["полный путь"])
+
+    assert label.text().count("<span") == 2, "второе имя исчезло целиком"
