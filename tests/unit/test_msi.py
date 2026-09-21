@@ -84,6 +84,19 @@ def test_number_glued_to_another_number_is_refused(tmp_path):
     assert msi.read_version(path) == ""
 
 
+def test_number_glued_before_the_shortcut_marker_is_refused(tmp_path):
+    """
+    Та же граница нужна и второму маркеру, но с другой стороны.
+
+    Перед номером в пуле тоже идут значения вплотную: «...83151~1|» здесь
+    кончается вертикальной чертой, но с тем же успехом могло бы цифрой. Без
+    проверки слева шаблон прихватил бы её и выдал «1238.5.4.1683».
+    """
+    path = blob(tmp_path, b"8315112348.5.4.1683ShortcutFolderVersion")
+
+    assert msi.read_version(path) == ""
+
+
 def test_the_same_version_twice_is_still_one_answer(tmp_path):
     """У полного 64-битного срабатывают оба маркера — и дают одно и то же."""
     path = blob(tmp_path, DESKTOP % b"8.5.4.1683" + SHORTCUT % b"8.5.4.1683")

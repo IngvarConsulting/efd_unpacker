@@ -15,9 +15,10 @@ from __future__ import annotations
 from typing import Callable, Iterable, List, Optional, Sequence
 
 from ..domain.errors import UnpackError, UnpackErrorCode
-from ..domain.plan import FoundFile, FoundSupply, Inspected
+from ..domain.plan import FoundFile, FoundSupply, Inspected, is_windows_installer
 from ..domain.supply import read_catalog
 from ..infrastructure.containers import MAX_DEPTH, Leaf
+from ..infrastructure.msi import version_from_stream
 from .sources import leaves_of
 
 EFD_SUFFIX = ".efd"
@@ -92,6 +93,7 @@ def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:
     """
     supplies: List[FoundSupply] = []
     files: List[FoundFile] = []
+    version = ""
 
     for leaf in leaves:
         if leaf.name.lower().endswith(EFD_SUFFIX):
@@ -99,9 +101,36 @@ def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:
                 catalog = read_catalog(handle)
             supplies.append(FoundSupply(trail=leaf.trail, catalog=catalog))
         else:
+            if not version and is_windows_installer(leaf.name):
+                version = _platform_version(leaf)
             files.append(FoundFile(trail=leaf.trail, size=leaf.size))
 
-    return Inspected(path=path, supplies=tuple(supplies), files=tuple(files))
+    return Inspected(
+        path=path, supplies=tuple(supplies), files=tuple(files), platform_version=version,
+    )
+
+
+def _platform_version(leaf: Leaf) -> str:
+    """
+    Версия платформы из msi установщика Windows.
+
+    Единственное место, где она записана: в именах записей её нет ни у одного
+    из десяти проверенных архивов, а имя самого архива опознание не смотрит
+    принципиально — windows64_* это сервер, а не 64-битный клиент.
+
+    Стоит это одного открытия листа: у .rar опенер извлекает запись во
+    временный каталог, то есть сотые доли секунды и несколько мегабайт,
+    которые тут же убираются за собой. Для прочих контейнеров лист читается
+    потоком и не стоит ничего.
+
+    Отказ здесь ничего не ломает: вид, комплектация и разрядность опознаны по
+    имени msi, без версии каталог просто окажется без номера.
+    """
+    try:
+        with leaf.opener() as handle:
+            return version_from_stream(handle)
+    except Exception:  # noqa: BLE001 - украшение не имеет права ронять осмотр
+        return ""
 
 
 def _os_failure(path: str, exc: OSError) -> UnpackError:

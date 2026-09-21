@@ -534,3 +534,111 @@ def test_file_count_follows_the_filter():
 
     assert full.items[0].file_count == 3
     assert only_cf.items[0].file_count == 2, "запись .dt попала в счёт вопреки фильтру"
+
+
+# --- установщик платформы под Windows ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "msi, component, arch, title",
+    [
+        ("1CEnterprise 8 Thin client (x86-64).msi", "thin-client", "x86_64",
+         "Платформа 1С:Предприятия, тонкий клиент"),
+        ("1CEnterprise 8 Thin client.msi", "thin-client", "",
+         "Платформа 1С:Предприятия, тонкий клиент"),
+        ("1CEnterprise 8 Server (x86-64).msi", "server", "x86_64",
+         "Платформа 1С:Предприятия, сервер"),
+        ("1CEnterprise 8 (x86-64).msi", "full", "x86_64", "Платформа 1С:Предприятия"),
+        ("1CEnterprise 8.msi", "full", "", "Платформа 1С:Предприятия"),
+    ],
+    ids=["тонкий-64", "тонкий-32", "сервер-64", "полный-64", "полный-32"],
+)
+def test_windows_installer_is_recognised_by_the_msi_name(msi, component, arch, title):
+    """
+    Критерий #63: установщик опознаётся как платформа с компонентой.
+
+    Все пять форм имени взяты из настоящих архивов. Имя самого архива при
+    этом не смотрится принципиально: windows64_* — это СЕРВЕР, а не
+    64-битный клиент, и опознание по имени архива соврало бы.
+    """
+    found = classify(files(msi, "Data1.cab", "setup.exe"))
+
+    assert found.kind is ItemKind.PLATFORM
+    assert (found.component, found.arch, found.title) == (component, arch, title)
+
+
+@pytest.mark.parametrize(
+    "bundle, component, title",
+    [
+        ("all-clients-distr_8.5.4.1683.exe", "server-all-clients",
+         "Платформа 1С:Предприятия, сервер, со всеми клиентами"),
+        ("win-mac-clients-distr_8.5.4.1683.exe", "server-win-mac-clients",
+         "Платформа 1С:Предприятия, сервер, с клиентами Windows и macOS"),
+    ],
+    ids=["все-клиенты", "win-mac"],
+)
+def test_bundled_clients_get_their_own_folder(bundle, component, title):
+    """
+    Три серверных архива дают ОДНО И ТО ЖЕ имя msi.
+
+    windows64_, windows64_with_clients_ и windows64_with_all_clients_
+    различаются только вложенным установщиком клиентов; Data1.cab у всех
+    трёх одинаковый. Без этого различия они легли бы в один каталог и
+    затёрли бы друг друга — притом что весят 950 МБ, 1.6 и 2.5 ГБ.
+    """
+    found = classify(files("1CEnterprise 8 Server (x86-64).msi", "Data1.cab", bundle))
+
+    assert (found.component, found.title) == (component, title)
+
+
+def test_plain_server_has_no_bundle_in_its_folder():
+    found = classify(files("1CEnterprise 8 Server (x86-64).msi", "Data1.cab", "setup.exe"))
+
+    assert found.component == "server"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["OpenOffice 4 (x86-64).msi", "Data1.cab"],
+        ["setup.msi", "Data1.cab"],
+        ["Data1.cab", "setup.exe", "1049.mst"],
+    ],
+    ids=["чужой msi", "msi без имени продукта", "без msi вовсе"],
+)
+def test_foreign_installer_still_goes_to_other(names):
+    """Критерий #63: не подошедшее ни под одно правило не угадывается."""
+    assert classify(files(*names)).kind is ItemKind.OTHER
+
+
+def test_version_read_from_the_msi_reaches_the_plan():
+    """
+    В именах записей версии нет ни у одного из десяти архивов — её приносит
+    слой осмотра, прочитав содержимое msi.
+    """
+    inspected = Inspected(
+        path="/d/windows64full_8_5_4_1683.rar",
+        files=files("1CEnterprise 8 (x86-64).msi", "Data1.cab"),
+        platform_version="8.5.4.1683",
+    )
+
+    item = build_plan([inspected], settings()).items[0]
+
+    assert item.version == "8.5.4.1683"
+    assert item.destination.endswith("platform/8.5.4.1683/full-x86_64")
+
+
+def test_missing_version_does_not_break_the_recognition():
+    """
+    Версию прочитать не удалось — вид, комплектация и разрядность всё равно
+    опознаны: каталог просто окажется без номера.
+    """
+    inspected = Inspected(
+        path="/d/windows64full.rar",
+        files=files("1CEnterprise 8 (x86-64).msi", "Data1.cab"),
+    )
+
+    item = build_plan([inspected], settings()).items[0]
+
+    assert item.kind is ItemKind.PLATFORM
+    assert item.destination.endswith("platform/unknown/full-x86_64")

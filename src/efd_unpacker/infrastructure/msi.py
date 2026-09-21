@@ -38,9 +38,14 @@ from typing import Optional
 #:
 #: Границы у номера обязательны. Без них шаблон съедает цифры, идущие
 #: следом: в пуле строк значения лежат вплотную, без разделителей.
+#: Мажорная часть ограничена двумя цифрами. Без ограничения `\d+` в начале
+#: безгранична, и «8315112348.5.4.1683» — формально те же четыре части: перед
+#: номером в пуле идут значения вплотную, и шаблон прихватывал их цифры.
+#: У платформы мажорная версия однозначная (8), запас — на случай девятки и
+#: дальше.
 VERSION = re.compile(
-    rb"DesktopFolder(\d+\.\d+\.\d+\.\d+)(?![\d.])"
-    rb"|(?<![\d.])(\d+\.\d+\.\d+\.\d+)ShortcutFolderVersion"
+    rb"DesktopFolder(\d{1,2}\.\d+\.\d+\.\d+)(?![\d.])"
+    rb"|(?<![\d.])(\d{1,2}\.\d+\.\d+\.\d+)ShortcutFolderVersion"
 )
 
 #: Сколько байт читаем. Msi тонкого клиента — три мегабайта; предел с запасом
@@ -55,8 +60,20 @@ OVERLAP = 64
 
 
 def read_version(path: str) -> str:
+    """Версия платформы из msi на диске. Пустая строка, если не узнали."""
+    try:
+        with open(path, "rb") as handle:
+            return version_from_stream(handle)
+    except Exception:  # noqa: BLE001 - опознание не должно падать из-за версии
+        return ""
+
+
+def version_from_stream(handle) -> str:
     """
-    Версия платформы из msi. Пустая строка, если её там нет или она не одна.
+    Версия платформы из потока. Пустая строка, если её нет или она не одна.
+
+    Потоком, а не путём: лист контейнера открывается именно так, и читать
+    версию тем же способом, что и оглавление .efd, дешевле, чем заводить свой.
 
     Не одна — значит не узнали: две разные версии в одном установщике мы
     объяснить не можем, и выбрать из них наугад хуже, чем не показать
@@ -65,19 +82,18 @@ def read_version(path: str) -> str:
     """
     found = set()
     try:
-        with open(path, "rb") as handle:
-            tail = b""
-            read = 0
-            while read < SIZE_LIMIT:
-                chunk = handle.read(CHUNK)
-                if not chunk:
-                    break
-                read += len(chunk)
-                for groups in VERSION.findall(tail + chunk):
-                    found.update(group for group in groups if group)
-                if len(found) > 1:
-                    return ""
-                tail = chunk[-OVERLAP:]
+        tail = b""
+        read = 0
+        while read < SIZE_LIMIT:
+            chunk = handle.read(CHUNK)
+            if not chunk:
+                break
+            read += len(chunk)
+            for groups in VERSION.findall(tail + chunk):
+                found.update(group for group in groups if group)
+            if len(found) > 1:
+                return ""
+            tail = chunk[-OVERLAP:]
     except Exception:  # noqa: BLE001 - опознание не должно падать из-за версии
         return ""
     return found.pop().decode("ascii") if len(found) == 1 else ""
