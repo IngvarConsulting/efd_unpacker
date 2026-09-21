@@ -636,6 +636,18 @@ def _filter_took_everything(entries: Sequence[Entry], kept: Sequence[Entry]) -> 
     return len(kept) != len(entries) and all(is_auxiliary(entry.path) for entry in kept)
 
 
+def _identifies_its_contents(found: Classification) -> bool:
+    """
+    Говорит ли каталог назначения о том, что в нём лежит.
+
+    Только опознанный вид с прочитанной версией: по ним адрес складывается
+    из свойств самого дистрибутива. Всё прочее берёт имя из входного файла
+    или подставляет «unknown» — такой каталог не опознаёт ничего, и
+    «он уже есть» не значит «это то же самое».
+    """
+    return found.kind in (ItemKind.PLATFORM, ItemKind.PACKAGES) and bool(found.version)
+
+
 def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem:
     found = classify(result.files)
     if not found.version and result.platform_version:
@@ -653,15 +665,38 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
     else:
         parts = ("other", stem)
 
+    destination = _join(settings.distributions_root, parts)
+
+    # Та же мерка, что у шаблонов: каталог есть — значит уже распаковано.
+    # Но только там, где адрес ОПОЗНАЁТ содержимое.
+    #
+    # У шаблона он опознаёт всегда: «1c/<продукт>/<версия>». У дистрибутива —
+    # лишь когда известны вид и версия. «content/<имя файла>» и
+    # «other/<имя файла>» берутся из имени входного файла, и два разных
+    # архива с одинаковым именем из разных папок дали бы один адрес: второй
+    # молча пропустился бы, хотя внутри у него другое. То же и с
+    # «platform/unknown/…»: версия не прочиталась, и каталог не говорит ни о
+    # чём.
+    #
+    # ВНИМАНИЕ. Оборванная распаковка тоже оставляет каталог, и такой
+    # дистрибутив будет считаться распакованным. Отменить пропуск из окна
+    # нельзя: знак у пропущенной строки не переключается (см. TOGGLEABLE в
+    # presentation/rows.py), и вернуть строку в работу можно только удалив
+    # каталог руками. Это разобрано отдельно, здесь не решается.
+    action, reason = Action.WRITE, None
+    if _identifies_its_contents(found) and settings.is_installed(destination):
+        action, reason = Action.SKIP, SkipReason.ALREADY_INSTALLED
+
     return PlannedItem(
         kind=found.kind,
         title=found.title or result.name,
         version=found.version,
         source=(result.name,),
         origin=result.path,
-        destination=_join(settings.distributions_root, parts),
+        destination=destination,
         bytes_total=sum(entry.size for entry in result.files),
-        action=Action.WRITE,
+        action=action,
+        reason=reason,
         files=result.files,
         file_count=len(result.files),
     )
