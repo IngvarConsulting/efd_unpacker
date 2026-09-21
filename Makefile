@@ -219,6 +219,8 @@ build-linux-executable:
 		--paths src \
 		--add-data "translations$(PYI_DATASEP)translations" \
 		--add-data "resources$(PYI_DATASEP)resources" \
+		--add-data "licenses$(PYI_DATASEP)licenses" \
+		--add-data "LICENSE$(PYI_DATASEP)licenses" \
 		main.py
 	@if [ ! -f "dist/efd_unpacker" ]; then \
 		echo "Error: efd_unpacker executable not found in dist directory."; \
@@ -244,6 +246,8 @@ create-linux-appimage:
 	cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
 	cp installer/linux/AppRun AppDir/; \
 	cp installer/linux/copyright AppDir/usr/share/doc/efd-unpacker/copyright; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE \
+		AppDir/usr/share/doc/efd-unpacker/; \
 	chmod +x AppDir/AppRun; \
 	appimagetool AppDir "dist/efd-unpacker-$$VERSION-linux.AppImage"; \
 	rm -rf AppDir; \
@@ -267,6 +271,7 @@ create-linux-deb:
 	cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
 	cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
 	cp installer/linux/copyright "$$DOCDIR/copyright"; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE "$$DOCDIR/"; \
 	printf 'efd-unpacker (%s) unstable; urgency=medium\n\n  * See https://github.com/IngvarConsulting/efd_unpacker/releases\n\n -- Ingvar Consulting LLC <i@ingvar.pro>  %s\n' \
 		"$$VERSION" "$$(date -R)" > "$$DOCDIR/changelog"; \
 	gzip -9n "$$DOCDIR/changelog"; \
@@ -322,6 +327,8 @@ build-windows-executable:
 		--paths src \
 		--add-data "translations$(PYI_DATASEP)translations" \
 		--add-data "resources$(PYI_DATASEP)resources" \
+		--add-data "licenses$(PYI_DATASEP)licenses" \
+		--add-data "LICENSE$(PYI_DATASEP)licenses" \
 		--name=EFDUnpacker main.py
 	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
 		echo "Error: EFDUnpacker.exe not found in dist directory."; \
@@ -416,6 +423,8 @@ create-macos-dmg:
 	rm -rf "$$STAGING_DIR"; \
 	mkdir -p "$$STAGING_DIR"; \
 	ditto "dist/EFDUnpacker.app" "$$STAGING_DIR/EFDUnpacker.app"; \
+	mkdir -p "$$STAGING_DIR/licenses"; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE "$$STAGING_DIR/licenses/"; \
 	SANDBOX_FLAG=""; \
 	if [ "$$CI" = "true" ]; then \
 		SANDBOX_FLAG="--sandbox-safe"; \

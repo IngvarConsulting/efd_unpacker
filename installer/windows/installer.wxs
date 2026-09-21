@@ -36,6 +36,14 @@
       <Component Id="MainExecutable" Guid="87654321-4321-4321-4321-210987654321">
         <File Source="dist\EFDUnpacker.exe" KeyPath="yes" Id="EFDUnpackerEXE" Name="EFDUnpacker.exe" />
 
+        <!-- Полные тексты лицензий рядом с приложением. GPL v3 требует,
+             чтобы лицензия ехала ВМЕСТЕ с программой. Файлы добавлены в
+             существующий компонент намеренно: отдельный потребовал бы ещё
+             одного GUID, а они в этом файле пока заглушки (см. #17). -->
+        <File Source="licenses\GPL-3.0.txt" Id="LicenseGPL3" Name="GPL-3.0.txt" />
+        <File Source="licenses\LGPL-3.0.txt" Id="LicenseLGPL3" Name="LGPL-3.0.txt" />
+        <File Source="LICENSE" Id="LicenseMIT" Name="LICENSE.txt" />
+
         <RegistryValue Root="HKCR" Key=".efd" Value="EFDFile" Type="string" />
         <RegistryValue Root="HKCR" Key="EFDFile" Value="EFD Archive File" Type="string" />
         <RegistryValue Root="HKCR" Key="EFDFile\DefaultIcon" Value="[INSTALLFOLDER]EFDUnpacker.exe,0" Type="string" />
