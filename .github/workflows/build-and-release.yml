@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Версия пробной сборки. Формат X.Y.Z обязателен: WiX не примет суффикс от git describe.'
+        description: 'Версия пробной сборки. Формат X.Y.Z обязателен (WiX не примет суффикс от git describe) и ВЫШЕ любой выпущенной: иначе проверка апгрейда упирается в 1638.'
         required: false
-        default: '0.0.0'
+        default: '99.0.0'
         type: string
 
 env:
@@ -428,6 +428,13 @@ jobs:
         shell: pwsh
         run: |
           $new = Start-Process -FilePath .\efd_unpacker_setup.exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
+          if ($new.ExitCode -eq 1638) {
+            # ERROR_PRODUCT_VERSION. Не дефект апгрейда, а версия сборки: код
+            # семейства у бандла не менялся с 1.x, и Burn отказывается ставить
+            # поверх то, что старше установленного. В пробном прогоне номер
+            # задаётся входом workflow_dispatch и обязан быть выше выпущенных.
+            throw "upgrade refused with 1638: this build is not newer than the installed 1.2.11 — check the version input"
+          }
           if ($new.ExitCode -ne 0) { throw "upgrade failed with $($new.ExitCode)" }
 
       - name: Check the upgrade left a working application
