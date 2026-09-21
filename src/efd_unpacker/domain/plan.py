@@ -20,7 +20,7 @@ import posixpath
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Set, Tuple
 
 from .errors import UnpackError, UnpackErrorCode
 from .supply import Catalog, Entry, Template, safe_relative_parts
@@ -160,13 +160,25 @@ class PlanSettings:
 
 # --- опознание ---------------------------------------------------------------
 
-# Установщик платформы под Linux: setup-full-8.3.27.2342-x86_64.run
-_PLATFORM_RUN = re.compile(r"^setup-full-(?P<version>[\d.]+)-(?P<arch>[\w_]+)\.run$", re.I)
+# Установщик платформы под Linux: setup-full-8.3.27.2342-x86_64.run,
+# setup-thin-8.5.1.1529-x86_64.run. Комплектация читается из имени, а не
+# зашита в правило: пока требовалось «setup-full-», тонкий клиент целиком
+# уезжал в «прочее» — полгигабайта без опознания.
+_PLATFORM_RUN = re.compile(
+    r"^setup-(?P<component>[a-z][a-z-]*)-(?P<version>[\d.]+)-(?P<arch>[\w-]+)\.run$", re.I
+)
 # Установщик платформы под macOS: 1cv8-client-8.5.1.1529.pkg
 _PLATFORM_PKG = re.compile(r"^1cv8-(?P<component>[\w.]+?)-(?P<version>[\d.]+)\.pkg$", re.I)
-# Пакет платформы: 1c-enterprise-8.3.27.2342-server_8.3.27-2342_amd64.deb
-_PLATFORM_PACKAGE = re.compile(
-    r"^1c-enterprise-(?P<version>[\d.]+)-(?P<role>[\w-]+?)[_-].*\.(?:deb|rpm)$", re.I
+# Пакеты платформы. Правил два, по одному на формат: у deb назначение
+# отделено подчёркиванием (thin-client_8.5.1-1529_amd64.deb), у rpm — дефисом
+# перед версией (thin-client-8.5.1-1529.x86_64.rpm). Общая регулярка эту
+# разницу не берёт: ленивая отрезала от «thin-client» только «thin», и
+# тонкий клиент оказывался назначением «thin».
+_PLATFORM_DEB = re.compile(
+    r"^1c-enterprise-(?P<version>[\d.]+)-(?P<role>[a-z\d-]+)_[\d.]+-\w+_[\w-]+\.deb$", re.I
+)
+_PLATFORM_RPM = re.compile(
+    r"^1c-enterprise-(?P<version>[\d.]+)-(?P<role>[a-z\d-]+)-[\d.]+-\w+\.[\w-]+\.rpm$", re.I
 )
 # Установщик платформы под Windows. Имя msi — единственное место в архиве,
 # где записана комплектация: «1CEnterprise 8 Thin client (x86-64).msi»,
@@ -179,28 +191,52 @@ _WINDOWS_MSI = re.compile(
     r"^1CEnterprise 8(?: (?P<component>[\w ]+?))?(?: \((?P<arch>[\w-]+)\))?\.msi$", re.I
 )
 
-#: Как называются компоненты Windows-установщика: слаг для каталога и имя для
-#: человека. Пустая компонента — полный комплект, у него в имени msi ничего
-#: между «8» и расширением.
-WINDOWS_COMPONENTS = {
+#: Как называется комплектация: слаг для каталога и имя для человека.
+#:
+#: Таблица общая для всех систем намеренно. Одну и ту же комплектацию три
+#: системы пишут по-разному — «Thin client» в имени msi, «thin» в имени .run,
+#: «thin-client» в имени пакета, — и без приведения к одному виду один выпуск
+#: разошёлся бы по трём каталогам. Пустая комплектация — полный комплект: у
+#: msi между «8» и расширением нет ничего.
+PLATFORM_COMPONENTS = {
     "": ("full", ""),
-    "thin client": ("thin-client", "тонкий клиент"),
+    "full": ("full", ""),
+    "thin": ("thin-client", "тонкий клиент"),
+    "thin-client": ("thin-client", "тонкий клиент"),
+    "client": ("client", "клиент"),
     "server": ("server", "сервер"),
+    "ws": ("ws", "модуль расширения веб-сервера"),
+    "crs": ("crs", "сервер хранилища"),
+    "common": ("common", "общие файлы"),
 }
 
-# Вложенный установщик клиентов. Имени msi мало: windows64_, windows64_with_
-# clients_ и windows64_with_all_clients_ дают ОДНО И ТО ЖЕ имя msi и легли бы
-# в один каталог, затирая друг друга. Отличает их ровно этот файл, а Data1.cab
-# у всех трёх одинаковый — то есть ядро одно, различается вложенное.
-_WINDOWS_CLIENTS = re.compile(r"^(?P<bundle>[\w-]+)-clients-distr_[\d.]+\.exe$", re.I)
+#: Назначения пакетов по старшинству. Серверный набор состоит из четырёх
+#: пакетов — common, server, ws, crs, — и назвать набор по первому попавшемуся
+#: значило бы назвать его «общим»: common лежит в КАЖДОМ наборе и потому не
+#: различает ничего.
+PACKAGE_ROLES = ("server", "thin-client", "client", "ws", "crs", "common")
+
+# Вложенный установщик клиентов. Имени установщика мало: windows64_,
+# windows64_with_clients_ и windows64_with_all_clients_ дают ОДНО И ТО ЖЕ имя
+# msi и легли бы в один каталог, затирая друг друга. То же и под Linux:
+# server64_ и server64_with_all_clients_ содержат один и тот же
+# setup-full-*.run, байт в байт. Отличает их ровно этот файл.
+_CLIENTS_DISTR = re.compile(
+    r"^(?P<bundle>[\w-]+)-clients-distr[_-][\d.]+(?:-[\w-]+)?\.(?:exe|run)$", re.I
+)
 
 #: Как называется комплект вложенных клиентов.
-WINDOWS_BUNDLES = {
+CLIENT_BUNDLES = {
     "all": ("all-clients", "со всеми клиентами"),
     "win-mac": ("win-mac-clients", "с клиентами Windows и macOS"),
 }
 
-_PACKAGE = re.compile(r"\.(?:deb|rpm)$", re.I)
+#: Разные написания одной архитектуры. deb зовёт её amd64 и arm64, rpm —
+#: x86_64 и aarch64, имя msi — «x86-64». Железо одно, и разные написания
+#: развели бы один выпуск по разным каталогам.
+ARCH_ALIASES = {"amd64": "x86_64", "arm64": "aarch64"}
+
+_PACKAGE = re.compile(r"\.(deb|rpm)$", re.I)
 _CONTENT = re.compile(r"\.(?:cf|cfu|cfe|dt|epf|erf)$", re.I)
 _ARCH = re.compile(r"(x86_64|amd64|aarch64|arm64|e2k|i386|noarch)", re.I)
 _ARCH_EXACT = re.compile(r"^(?:x86_64|amd64|aarch64|arm64|e2k|i386|noarch)$", re.I)
@@ -228,38 +264,39 @@ def classify(files: Sequence[FoundFile]) -> Classification:
     for found in files:
         match = _PLATFORM_RUN.match(found.name)
         if match:
-            return Classification(
-                ItemKind.PLATFORM, "Платформа 1С:Предприятия",
-                match.group("version"), "full", match.group("arch").lower(),
+            return _platform_installer(
+                files, match.group("component"), match.group("version"), match.group("arch"),
             )
 
     for found in files:
         match = _PLATFORM_PKG.match(found.name)
         if match:
-            component = match.group("component").lower()
+            slug, russian = platform_component(match.group("component"))
             return Classification(
-                ItemKind.PLATFORM, "Платформа 1С:Предприятия, %s" % component,
-                match.group("version"), component, architecture_of(files),
+                ItemKind.PLATFORM, _platform_title(russian),
+                match.group("version"), slug, architecture_of(files),
             )
 
     for found in files:
         match = _WINDOWS_MSI.match(found.name)
         if match:
-            return _windows_installer(match, files)
-
-    for found in files:
-        match = _PLATFORM_PACKAGE.match(found.name)
-        if match:
-            return Classification(
-                ItemKind.PLATFORM, "Платформа 1С:Предприятия, пакеты",
-                match.group("version"), "packages", architecture_of(files),
+            # Версия остаётся пустой — в именах записей её нет. Её подставляет
+            # слой осмотра, прочитав содержимое msi; без неё опознание всё
+            # равно верное, просто каталог окажется без номера.
+            return _platform_installer(
+                files, match.group("component") or "", "", match.group("arch") or "",
             )
+
+    platform = _platform_packages(files)
+    if platform is not None:
+        return platform
 
     packages = [found for found in files if _PACKAGE.search(found.name)]
     if packages:
         return Classification(
             ItemKind.PACKAGES, _product_of(packages) or "Набор пакетов",
-            _version_of(packages), "packages", architecture_of(files),
+            _version_of(packages), "packages-%s" % _formats_of(packages),
+            architecture_of(files),
         )
 
     if any(_CONTENT.search(found.name) for found in files):
@@ -273,47 +310,136 @@ def is_windows_installer(name: str) -> bool:
     return bool(_WINDOWS_MSI.match(name))
 
 
-def _windows_installer(match, files: Sequence[FoundFile]) -> Classification:
+def platform_component(component: str) -> Tuple[str, str]:
     """
-    Опознание по имени msi: комплектация, вложенные клиенты и разрядность.
+    Слаг каталога и русское имя комплектации.
 
-    Версия остаётся пустой — в именах записей её нет. Её подставляет слой
-    осмотра, прочитав содержимое msi; без неё опознание всё равно верное,
-    просто каталог окажется без номера.
+    Незнакомую отдаём как есть: правило «не знаю — значит прочее» здесь не
+    годится, опознание уже состоялось, и потерять его из-за незнакомого слова
+    было бы хуже, чем показать это слово человеку.
     """
-    component = (match.group("component") or "").strip().lower()
-    slug, russian = WINDOWS_COMPONENTS.get(component, (component.replace(" ", "-"), component))
+    key = component.strip().lower().replace(" ", "-").replace("_", "-").replace(".", "-")
+    return PLATFORM_COMPONENTS.get(key, (key, key))
 
-    bundle_slug, bundle_russian = _windows_bundle(files)
+
+def _platform_title(*parts: str) -> str:
+    """«Платформа 1С:Предприятия» и уточнения через запятую."""
+    named = [part for part in parts if part]
+    return "Платформа 1С:Предприятия" + (", " + ", ".join(named) if named else "")
+
+
+def _platform_installer(
+    files: Sequence[FoundFile], component: str, version: str, arch: str,
+) -> Classification:
+    """
+    Опознание установщика платформы: комплектация, вложенные клиенты, разрядность.
+
+    Одна функция на Windows и Linux намеренно. Различаются у них только имена
+    файлов, откуда берутся эти три вещи; само правило — то же самое, и
+    вложенные клиенты, выведенные на Windows в #63, ровно так же разводят по
+    каталогам server64_ и server64_with_all_clients_ под Linux.
+    """
+    slug, russian = platform_component(component)
+    bundle_slug, bundle_russian = _bundled_clients(files)
     if bundle_slug:
         slug = "%s-%s" % (slug, bundle_slug)
-
-    # «x86-64» в имени msi — та же архитектура, что «x86_64» у .run и .deb.
-    # Разные написания развели бы один выпуск по двум каталогам.
-    arch = (match.group("arch") or "").lower().replace("-", "_")
-    parts = [part for part in (russian, bundle_russian) if part]
-    title = "Платформа 1С:Предприятия"
-    if parts:
-        title = "%s, %s" % (title, ", ".join(parts))
-    return Classification(ItemKind.PLATFORM, title, "", slug, arch)
+    return Classification(
+        ItemKind.PLATFORM, _platform_title(russian, bundle_russian),
+        version, slug, normalize_arch(arch),
+    )
 
 
-def _windows_bundle(files: Sequence[FoundFile]) -> Tuple[str, str]:
+def _bundled_clients(files: Sequence[FoundFile]) -> Tuple[str, str]:
     """Комплект вложенных клиентов, если он есть. Иначе две пустые строки."""
     for found in files:
-        match = _WINDOWS_CLIENTS.match(found.name)
+        match = _CLIENTS_DISTR.match(found.name)
         if match:
             bundle = match.group("bundle").lower()
-            return WINDOWS_BUNDLES.get(bundle, ("%s-clients" % bundle, bundle))
+            return CLIENT_BUNDLES.get(bundle, ("%s-clients" % bundle, bundle))
     return "", ""
 
 
+def _platform_packages(files: Sequence[FoundFile]) -> Optional[Classification]:
+    """
+    Набор пакетов платформы: назначение, формат и версия по именам внутри.
+
+    Формат в имени каталога — не украшение. Один выпуск приходит и в deb, и в
+    rpm, и после приведения amd64 к x86_64 различать их стало бы нечем: два
+    набора легли бы в один каталог и перемешались. У эльбруса пара deb/rpm
+    сталкивалась и без всякого приведения — её архитектуру оба формата и так
+    называли одинаково.
+    """
+    matched: List[FoundFile] = []
+    roles = set()
+    version = ""
+    for found in files:
+        for pattern in (_PLATFORM_DEB, _PLATFORM_RPM):
+            match = pattern.match(found.name)
+            if match is None:
+                continue
+            roles.add(match.group("role").lower())
+            matched.append(found)
+            version = version or match.group("version")
+            break
+    if not roles:
+        return None
+
+    slug, russian = platform_component(_package_role(roles))
+    formats = _formats_of(matched)
+    return Classification(
+        ItemKind.PLATFORM, _platform_title(russian, "пакеты %s" % formats),
+        version, "%s-%s" % (slug, formats), architecture_of(matched),
+    )
+
+
+def _package_role(roles: Set[str]) -> str:
+    """
+    Назначение набора — старшее из встреченных.
+
+    Языковые пакеты (server-nls рядом с server) отдельно не разбираются, и
+    это решение, а не упущение: во всех четырнадцати проверенных архивах
+    языковой пакет лежит рядом со своим основным, и старшинство находит
+    основной само. А там, где языковой пакет пришёл БЕЗ основного, отрезать
+    «-nls» было бы прямо вредно: набор получил бы имя каталога настоящего
+    набора и лёг бы поверх него.
+
+    Незнакомый набор называем всеми назначениями сразу: угадывать старшее
+    среди незнакомых нечем, а два разных набора обязаны разойтись по разным
+    каталогам — ровно об этом вся задача.
+    """
+    for role in PACKAGE_ROLES:
+        if role in roles:
+            return role
+    return "-".join(sorted(roles))
+
+
+def _formats_of(packages: Sequence[FoundFile]) -> str:
+    """Форматы пакетов в наборе, через дефис: «deb», «rpm», «deb-rpm»."""
+    found = set()
+    for package in packages:
+        match = _PACKAGE.search(package.name)
+        if match:
+            found.add(match.group(1).lower())
+    return "-".join(sorted(found))
+
+
+def normalize_arch(arch: str) -> str:
+    """
+    Архитектура в одном написании.
+
+    Дефис в «x86-64» из имени msi — то же подчёркивание, что у .run и .deb;
+    остальные написания разводит таблица.
+    """
+    arch = arch.strip().lower().replace("-", "_")
+    return ARCH_ALIASES.get(arch, arch)
+
+
 def architecture_of(files: Sequence[FoundFile]) -> str:
-    """Архитектура из имён внутри. Пусто, если не выводится."""
+    """Архитектура из имён внутри, в одном написании. Пусто, если не выводится."""
     for found in files:
         match = _ARCH.search(found.name)
         if match:
-            return match.group(1).lower()
+            return normalize_arch(match.group(1))
     return ""
 
 
@@ -559,7 +685,7 @@ def keeps_configuration(path: str) -> bool:
 
 
 def _component(found: Classification) -> str:
-    """Имя каталога компоненты: «client», «full-x86_64», «packages-amd64»."""
+    """Имя каталога компоненты: «client», «full-x86_64», «server-deb-x86_64»."""
     parts = [part for part in (found.component, found.arch) if part]
     return "-".join(parts) or "installer"
 
