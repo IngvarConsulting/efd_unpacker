@@ -75,10 +75,28 @@ def parse_changelog(text: str) -> List[Section]:
             version = heading.group("version")
             date = heading.group("date")
             lines = []
-        elif version is not None and not LINK_DEFINITION.match(line):
+        elif version is not None:
             lines.append(line.rstrip())
     close()
+    if sections:
+        sections[-1] = without_link_footer(sections[-1])
     return sections
+
+
+def without_link_footer(section: Section) -> Section:
+    """
+    Снимает блок определений ссылок, стоящий в самом низу файла.
+
+    Определения вида «[2.0.0]: https://…» относятся ко всему CHANGELOG.md, а
+    не к разделу, под которым оказались, поэтому в описание релиза им нельзя.
+    Отрезается ровно хвост последнего раздела: определение ВНУТРИ раздела —
+    часть его текста, и выбросить его значило бы опубликовать ссылку,
+    которой некуда вести.
+    """
+    body = section.body.splitlines()
+    while body and (not body[-1].strip() or LINK_DEFINITION.match(body[-1])):
+        body.pop()
+    return Section(section.version, section.date, "\n".join(body).strip())
 
 
 def find_section(sections: List[Section], version: str) -> Optional[Section]:

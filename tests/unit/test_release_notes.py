@@ -82,6 +82,32 @@ def test_parse_changelog_drops_link_definitions_from_the_last_section():
     assert "example.test" not in "".join(section.body for section in sections)
 
 
+def test_a_link_definition_inside_a_section_stays_with_its_text():
+    """
+    Определения ссылок снимаются с хвоста файла, а не отовсюду.
+
+    Раньше отсеивалась любая строка вида «[имя]: адрес», где бы она ни
+    стояла. Раздел со ссылкой в стиле reference терял её определение, и в
+    описание релиза уезжала ссылка, которой некуда вести, — молча, потому
+    что Markdown такую строку просто печатает как текст.
+    """
+    module = load_release_notes_module()
+
+    text = (
+        "## [Unreleased]\n\n"
+        "- Подробности в [документе][doc].\n\n"
+        "[doc]: https://example.test/doc\n\n"
+        "## [1.0.0] — 2026-01-01\n\n"
+        "- Первый выпуск.\n\n"
+        "[1.0.0]: https://example.test/tag/v1.0.0\n"
+    )
+    sections = {section.version: section for section in module.parse_changelog(text)}
+
+    assert "[doc]: https://example.test/doc" in sections["Unreleased"].body
+    # А хвост файла по-прежнему остаётся за бортом.
+    assert sections["1.0.0"].body == "- Первый выпуск."
+
+
 def test_release_notes_for_takes_the_tagged_section_and_adds_downloads():
     module = load_release_notes_module()
 
