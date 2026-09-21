@@ -287,9 +287,9 @@ def classify(files: Sequence[FoundFile]) -> Classification:
                 files, match.group("component") or "", "", match.group("arch") or "",
             )
 
-    platform_packages = _platform_packages(files)
-    if platform_packages is not None:
-        return platform_packages
+    platform = _platform_packages(files)
+    if platform is not None:
+        return platform
 
     packages = [found for found in files if _PACKAGE.search(found.name)]
     if packages:
