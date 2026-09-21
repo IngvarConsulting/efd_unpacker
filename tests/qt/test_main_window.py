@@ -259,7 +259,8 @@ def test_second_drop_adds_to_the_list(qtbot):
         (item(), row_widgets.PENDING),
         (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), row_widgets.UNAVAILABLE),
         (item(action=Action.SKIP, reason=SkipReason.FILTERED_OUT), row_widgets.UNAVAILABLE),
-        (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)), row_widgets.FAILED),
+        (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)),
+         row_widgets.BROKEN),
     ],
 )
 def test_state_is_encoded_by_shape(qtbot, planned, expected):
@@ -1498,6 +1499,53 @@ def test_a_failed_row_can_be_marked_again_and_re_run(qtbot):
 
     window.unpack()
     qtbot.waitUntil(lambda: len(window.calls["batch"]) == 2, timeout=3000)
+
+
+def test_a_row_broken_at_inspection_cannot_be_marked_for_a_retry(qtbot):
+    """
+    Повторять можно только то, где есть что повторять.
+
+    Отказ осмотра план знает заранее, и исполнение такой элемент не открывает
+    вовсе: domain.batch.run повторит ту же записанную ошибку, не читая
+    источник. Кнопка повтора у него обещала бы то, чего не будет, — а чтобы
+    осмотреть файл заново, его надо бросить в окно ещё раз.
+    """
+    broken = item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.UNEXPECTED))
+    window = make_window(qtbot, plan=Plan(items=(broken,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    mark = window.rows[0].mark
+    assert mark.state() == row_widgets.BROKEN
+    assert not mark.isEnabled()
+
+    mark.click()
+
+    assert mark.state() == row_widgets.BROKEN
+    assert not window.button_unpack.isEnabled()
+
+
+def test_both_kinds_of_failure_look_the_same(qtbot):
+    """
+    Отказ осмотра и отказ распаковки — для человека одна и та же беда.
+
+    Различаются они только тем, можно ли повторить, и это видно по
+    доступности знака, а не по рисунку. Рисунок обязан быть один: две разные
+    красные пометки означали бы разницу, которой нет.
+
+    Сравнение с ненарисованным знаком здесь не придирка: состояние, забытое
+    в paintEvent, не падает и не ошибается — оно просто не рисует ничего, и
+    отказ становится пустым местом в строке.
+    """
+    def picture(state):
+        mark = row_widgets.Mark(state)
+        qtbot.addWidget(mark)
+        return mark.grab().toImage()
+
+    nothing = picture("такого состояния нет")
+
+    assert picture(row_widgets.BROKEN) == picture(row_widgets.FAILED)
+    assert picture(row_widgets.BROKEN) != nothing
 
 
 def test_a_cancelled_drag_does_not_lose_the_list(qtbot):

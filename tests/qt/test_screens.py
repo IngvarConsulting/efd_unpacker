@@ -8,6 +8,7 @@
 """
 
 import os
+from collections import namedtuple
 
 os.environ.setdefault("QT_QPA_PLATFORM", "minimal")
 os.environ.setdefault("QT_API", "pyqt5")
@@ -250,16 +251,36 @@ def test_volume_gives_up_instead_of_looping(monkeypatch):
     assert screens.volume_of(os.path.join(os.sep, "a", "b")) is None
 
 
-def test_free_space_is_read_from_an_existing_parent(tmp_path):
+#: Ответ disk_usage в подставном виде: у настоящего тома свободное место
+#: меняется само по себе, и сравнивать с ним нечего.
+_Usage = namedtuple("_Usage", "total used free")
+
+
+def test_free_space_is_read_from_an_existing_parent(tmp_path, monkeypatch):
     """
     Каталог создаётся перед распаковкой, а место интересно до неё.
 
     Спросить про несуществующий путь напрямую нельзя — disk_usage отвечает
     отказом, и подвал остался бы пустым ровно тогда, когда нужен.
+
+    Ответ тома подставлен намеренно. Раньше тест сравнивал два ЖИВЫХ замера
+    подряд, а свободное место — величина движущаяся: хватит чужой записи на
+    диск между замерами, чтобы тест покраснел на ровном месте. Так его и
+    поймали — фоновой уборкой каталога во время прогона.
     """
+    asked = []
+
+    def usage(path):
+        asked.append(path)
+        if not os.path.isdir(path):
+            raise OSError("нет такого каталога")
+        return _Usage(total=100, used=40, free=60)
+
+    monkeypatch.setattr(screens.shutil, "disk_usage", usage)
     missing = tmp_path / "нет" / "такого" / "каталога"
 
-    assert screens.free_bytes(str(missing)) == screens.free_bytes(str(tmp_path))
+    assert screens.free_bytes(str(missing)) == 60
+    assert asked[-1] == str(tmp_path), "поднимались не до существующего предка"
 
 
 def test_free_space_gives_up_instead_of_looping(monkeypatch):

@@ -619,7 +619,10 @@ class MainWindow(QMainWindow):
 
     def _initial_state(self, item: PlannedItem) -> str:
         if item.action is Action.FAIL:
-            return rows.FAILED
+            # Отказ осмотра, а не распаковки. Выглядит так же, но повторять
+            # нечего: исполнение такой элемент не открывает, а лишь повторяет
+            # уже записанную ошибку, — см. domain/batch.run.
+            return rows.BROKEN
         if item.action is Action.SKIP:
             return rows.UNAVAILABLE
         return rows.UNCHECKED if self._mark_key(item) in self._unchecked else rows.PENDING
