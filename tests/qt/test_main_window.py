@@ -6,6 +6,7 @@
 проверяется в test_inspector, что пишет исполнитель — в test_executor.
 """
 
+import dataclasses
 import os
 import threading
 
@@ -146,7 +147,7 @@ class _Writers:
 
 
 def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, validator=None,
-                read_manifest=None):
+                read_manifest=None, build=None):
     """Окно с подменённым осмотром, планом и исполнением."""
     calls = {"inspect": [], "started": [], "build": 0, "batch": []}
     inspected = [object()] if inspected is None else inspected
@@ -166,11 +167,15 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
                 on_start(path)
         return inspected
 
-    def fake_build(inspected, _settings):
+    def fake_build(inspected, settings):
         # Настоящий build_plan на пустом осмотре даёт пустой план. Двойник,
         # отдававший строки и без единого файла, скрывал бы всё, что зависит
         # от исчезновения файлов из списка.
         calls["build"] += 1
+        if build is not None:
+            # Двойник, которому нужны настройки: без них не проверить, что
+            # окно правда спрашивает план про каталог, а не решает само.
+            return build(inspected, settings)
         return plans[-1] if inspected else Plan()
 
     def fake_batch(current, sink, unpack_supply, extract_other, cancel_check=None):
@@ -272,8 +277,9 @@ def test_second_drop_adds_to_the_list(qtbot):
     "planned, expected",
     [
         (item(), row_widgets.PENDING),
-        (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), row_widgets.UNAVAILABLE),
+        (item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED), row_widgets.INSTALLED),
         (item(action=Action.SKIP, reason=SkipReason.FILTERED_OUT), row_widgets.UNAVAILABLE),
+        (item(action=Action.SKIP, reason=SkipReason.RAR_TOOL_MISSING), row_widgets.UNAVAILABLE),
         (item(action=Action.FAIL, failure=UnpackError(UnpackErrorCode.PERMISSION)),
          row_widgets.BROKEN),
     ],
@@ -757,8 +763,15 @@ def test_mark_is_reachable_from_the_keyboard(qtbot):
 
 
 def test_unavailable_mark_cannot_be_toggled(qtbot):
-    """«Уже установлено» не переключить ни мышью, ни клавишей."""
-    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    """
+    Невозможность не переключить ни мышью, ни клавишей.
+
+    Пример намеренно про отсутствие программы для .rar: желание её не
+    создаёт, и знак обещал бы действие, которого не будет. «Уже установлено»
+    выглядит так же, но это наше умолчание, а не невозможность — про него
+    соседний тест.
+    """
+    planned = item(action=Action.SKIP, reason=SkipReason.RAR_TOOL_MISSING)
     window = make_window(qtbot, plan=Plan(items=(planned,)))
     drop(window, ["/d/a.zip"])
     qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
@@ -1997,7 +2010,7 @@ def test_turning_the_filter_off_does_not_unlock_a_partially_written_archive(qtbo
     window.check_only_cf.setChecked(False)
     qtbot.waitUntil(lambda: window._plan_thread is None, timeout=3000)
 
-    assert window.rows[0].mark.state() == row_widgets.UNAVAILABLE, "план правда пересобран"
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED, "план правда пересобран"
     assert window._unpacked_origins() == [], "демобаза всё ещё только в архиве"
     assert window.button_trash.isHidden()
 
@@ -2080,3 +2093,161 @@ def test_the_buttons_come_back_when_the_thread_really_exits(qtbot):
     window._forget_batch_thread()
 
     assert not window.button_trash.isHidden(), "кнопка не вернулась по выходу из потока"
+
+
+def _installed_unless_forced(planned):
+    """
+    Двойник плана, который правда спрашивает про каталог.
+
+    Настоящий build_plan зовёт settings.is_installed и по ответу решает, будет
+    строка записью или пропуском. Двойник с готовым планом этот стык скрывал
+    бы: окно могло бы «настаивать» само в себе, а до плана настояние не
+    доходило — и исполнение строки не увидело бы, оно берёт только WRITE.
+    """
+    def build(inspected, settings):
+        if not inspected:
+            return Plan()
+        if settings.is_installed(planned.destination):
+            return Plan(items=(dataclasses.replace(
+                planned, action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED
+            ),))
+        return Plan(items=(planned,))
+    return build
+
+
+def test_an_interrupted_extraction_can_be_returned_to_work(qtbot, tmp_path):
+    """
+    Критерий #88: прерванную распаковку можно вернуть в работу из окна.
+
+    Распаковка дистрибутива прервана кнопкой «Остановить» — каталог создан и
+    наполнен наполовину. При следующем запуске план видит каталог и объявляет
+    дистрибутив установленным. Снаружи полноту не проверить, а человек знает,
+    что там было, и вправе настоять.
+
+    Проверяется не отметка, а действие: строка обязана стать ЗАПИСЬЮ. Отметки
+    одной мало — исполнение берёт из плана только то, у чего action = WRITE.
+    """
+    destination = str(tmp_path / "dist")
+    os.makedirs(destination)
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED
+    assert window.rows[0].mark.isEnabled(), "знак обязан откликаться: это умолчание, а не запрет"
+    assert not window.button_unpack.isEnabled(), "предпосылка: сама собой строка не поедет"
+
+    window.rows[0].mark.click()
+
+    assert window.rows[0].mark.state() == row_widgets.PENDING
+    assert window._plan.items[0].action is Action.WRITE, "строка не стала записью"
+    assert window.button_unpack.isEnabled()
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window.calls["batch"][0].to_write, "исполнение не получило строку на запись"
+
+
+def test_taking_the_insistence_back_returns_the_default(qtbot, tmp_path):
+    """
+    Снятая отметка возвращает «уже установлено», а не «снято пользователем».
+
+    Разница видна в нижнем ярусе: у пропуска там причина, у записи — путь.
+    Оставь мы строку записью, она обещала бы поездку, которой не будет.
+    """
+    destination = str(tmp_path / "dist")
+    os.makedirs(destination)
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.rows[0].mark.click()
+    assert window._plan.items[0].action is Action.WRITE, "предпосылка: настояли"
+
+    window.rows[0].mark.click()
+
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED
+    assert window._plan.items[0].action is Action.SKIP
+    assert window._plan.items[0].reason is SkipReason.ALREADY_INSTALLED
+
+
+def test_marking_everything_leaves_the_installed_alone(qtbot):
+    """
+    «Отметить всё» берёт то, что программа предлагает сама, и только это.
+
+    Поимённо настоять можно, скопом — нельзя: одно нажатие на списке из
+    двадцати архивов переписывало бы гигабайты, которые и так на диске, а
+    узнал бы об этом человек по времени работы.
+    """
+    plan = Plan(items=(
+        item(title="А"),
+        item(title="Б", action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED),
+    ))
+    window = make_window(qtbot, plan=plan)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+    window._clear_marks()
+
+    window.mark_all.click()
+
+    assert [row.mark.state() for row in window.rows] == [
+        row_widgets.PENDING, row_widgets.INSTALLED
+    ]
+
+
+def test_insisting_wins_over_a_mark_taken_off_long_ago(qtbot, tmp_path):
+    """
+    Давняя снятая отметка не должна пережить настояние.
+
+    Строку сняли, пока каталога не было. Потом каталог появился — соседняя
+    распаковка, прошлый запуск, — и строка стала «уже установлено». Человек
+    настаивает, план честно делает её записью, а память о давнем снятии
+    возвращает её неотмеченной: настояли и никуда не поехали.
+    """
+    destination = str(tmp_path / "dist")
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.rows[0].mark.click()
+    assert window.rows[0].mark.state() == row_widgets.UNCHECKED, "предпосылка: сняли"
+
+    os.makedirs(destination)
+    window.check_only_cf.setChecked(True)  # любая пересборка плана
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED, "предпосылка: каталог появился"
+
+    window.rows[0].mark.click()
+
+    assert window.rows[0].mark.state() == row_widgets.PENDING, "настояли, а строка не отмечена"
+    assert window._plan.items[0].action is Action.WRITE
+
+
+def test_clearing_the_list_forgets_the_insistence(qtbot, tmp_path):
+    """
+    «Очистить» забывает настояние, и это выбор, а не оплошность.
+
+    Настояние сказано про конкретный список. Забыв его, окно вернётся к
+    умолчанию «пропустить» и в худшем случае не сделает лишнего. Запомнив —
+    молча перепишет гигабайты по решению, которого для нового списка никто
+    не принимал.
+
+    У _partial (#90) стороны обратные, и там забывать нельзя: цена забывчивости
+    — потерянная демобаза, а не лишняя работа.
+    """
+    destination = str(tmp_path / "dist")
+    os.makedirs(destination)
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.rows[0].mark.click()
+    assert window._plan.items[0].action is Action.WRITE, "предпосылка: настояли"
+
+    window._clear_list()
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED
+    assert window._plan.items[0].action is Action.SKIP
