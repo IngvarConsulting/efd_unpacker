@@ -15,6 +15,7 @@ Python, запускаемые тем же интерпретатором. Эт�
 import os
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -887,12 +888,18 @@ def _forbidden_which(_name):
 
 # --- разборщики против НАСТОЯЩИХ программ ------------------------------------
 
-#: Что кладём в пробный архив. Две записи разного размера и каталог: размеры
-#: должны прочитаться, каталог — отсеяться.
+#: Что кладём в пробный архив. Две записи разного размера: размеры должны
+#: прочитаться в точности.
 SAMPLE = (
     ("readme.txt", b"a" * 11),
     (os.path.join("data", "inner.bin"), b"b" * 37),
 )
+
+#: Что передаём программе-упаковщику. Каталог целиком, а не файл внутри него:
+#: получив «data/inner.bin», обе программы кладут в архив ОДИН файл и никакой
+#: записи каталога — и проверка отсеивания каталогов становилась холостой.
+#: Получив «data», они добавляют и саму запись каталога.
+PACK_INPUTS = ("readme.txt", "data")
 
 #: Чем архив СОЗДАЁТСЯ. Годится любая из двух: важно, чтобы архив был
 #: настоящий, а не собранный нами по спецификации. The Unarchiver в список не
@@ -931,19 +938,34 @@ def _packed(tmp_path):
     source.mkdir()
     _sample_tree(str(source))
     archive = str(tmp_path / "sample.zip")
-    names = [name for name, _ in SAMPLE]
 
     for tool in _installed():
         arguments = PACKING.get(tool.family)
         if arguments is None:
             continue
         packed = subprocess.run(
-            tool.command(arguments(archive, names)),
+            tool.command(arguments(archive, list(PACK_INPUTS))),
             cwd=str(source), capture_output=True, timeout=60,
         )
         if packed.returncode == 0 and os.path.isfile(archive):
+            _assert_has_a_directory_entry(archive)
             return archive
     pytest.skip("нечем создать пробный архив")
+
+
+def _assert_has_a_directory_entry(archive):
+    """
+    В архиве обязана быть запись каталога.
+
+    Иначе отсеивать было бы нечего, и разборщик, который каталоги НЕ
+    отбрасывает, прошёл бы проверку. Смотрим самим zipfile, а не глазами той
+    же программы: ответ должен быть независим от того, чей вывод мы и
+    проверяем.
+    """
+    with zipfile.ZipFile(archive) as packed:
+        directories = [name for name in packed.namelist() if name.endswith("/")]
+
+    assert directories, "упаковщик не положил запись каталога: проверка стала бы холостой"
 
 
 @pytest.mark.parametrize("family", sorted(rar.FAMILY_TITLES))
