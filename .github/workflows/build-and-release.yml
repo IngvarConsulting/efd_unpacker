@@ -313,7 +313,7 @@ jobs:
 
           $help = Invoke-Efd -EfdArgs @("--help") -Label "help"
           if ($help.ExitCode -ne 0) { throw "--help exited with $($help.ExitCode)" }
-          if ($help.Output -notmatch [regex]::Escape("efd_unpacker unpack <input_file.efd> -tmplts <output_dir>")) {
+          if ($help.Output -notmatch [regex]::Escape("efd_unpacker unpack <file>... -tmplts <dir>")) {
             throw "--help produced no usage line; windowed build swallows stdout?"
           }
 
@@ -321,16 +321,21 @@ jobs:
           if ($unpack.ExitCode -ne 0) { throw "unpack exited with $($unpack.ExitCode)" }
           if (-not (Get-ChildItem -Path $out -Recurse -File)) { throw "unpack produced no files" }
 
-          # Повреждённый архив должен давать ненулевой код и сообщение об ошибке,
+          # Повреждённый архив должен давать ненулевой код и называть причину,
           # иначе регрессия в распаковке снова пройдёт gate незамеченной.
+          #
+          # Спрашиваем --json и ищем КОД ошибки, а не фразу: код —
+          # опознаватель, он не зависит ни от формулировки, ни от языка, на
+          # который её переведут. Прежняя проверка ждала маркер [ERROR],
+          # которого отчёт о битом архиве не печатает вовсе.
           $broken = Join-Path $env:TEMP "broken.efd"
           $bytes = [System.IO.File]::ReadAllBytes("tests/data/1cv8.efd")
           [System.IO.File]::WriteAllBytes($broken, $bytes[0..499])
           $brokenOut = Join-Path $env:TEMP "efd-broken-out"
           New-Item -ItemType Directory -Force -Path $brokenOut | Out-Null
-          $bad = Invoke-Efd -EfdArgs @("unpack", $broken, "-tmplts", $brokenOut) -Label "broken"
+          $bad = Invoke-Efd -EfdArgs @("unpack", $broken, "-tmplts", $brokenOut, "--json") -Label "broken"
           if ($bad.ExitCode -eq 0) { throw "damaged archive reported success" }
-          if ($bad.Output -notmatch "\[ERROR\]") { throw "damaged archive printed no [ERROR] line" }
+          if ($bad.Output -notmatch "unpack_corrupted_archive") { throw "damaged archive named no corrupted-archive error" }
 
   test-dmg:
     timeout-minutes: 20

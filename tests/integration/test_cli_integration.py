@@ -7,6 +7,8 @@
 
 import hashlib
 import os
+import pathlib
+import re
 import sys
 
 import pytest
@@ -17,6 +19,7 @@ from efd_unpacker.domain.unpack_service import UnpackService
 from tests.efd_builder import unpacked_tree, write_efd
 
 SAMPLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "1cv8.efd")
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # Содержимое tests/data/1cv8.efd: путь, размер, sha256.
 EXPECTED_CONTENTS = [
@@ -152,3 +155,41 @@ def test_cli_still_leaves_a_bare_file_to_the_gui(tmp_path):
 
     assert result.handled is False
     assert result.exit_code == 0
+
+
+def test_the_windows_smoke_test_waits_for_a_code_the_cli_really_emits(tmp_path):
+    """
+    Смоук-тест Windows проверяет битый архив по коду ошибки в --json. Код
+    здесь и сверяется: обещание, записанное в YAML прописью, обязано
+    совпадать с тем, что программа печатает.
+
+    Прежняя редакция ждала маркер «[ERROR]», которого отчёт о битом архиве
+    не печатает вовсе: он остался от другого пути вывода. Промах прошёл все
+    проверки — job запускается только на теге или вручную, и к моменту
+    обнаружения ждал бы прямо в релизе.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "build-and-release.yml").read_text(
+        encoding="utf-8"
+    )
+    awaited = re.search(r'\$bad\.Output -notmatch "([^"]+)"', workflow)
+    assert awaited, "проверка битого архива исчезла из смоук-теста Windows"
+
+    # Код ошибки печатается ТОЛЬКО в --json: обычный отчёт называет причину
+    # прозой. Без флага смоук-тест ждал бы невозможного, а сверка ниже всё
+    # равно бы прошла — она запускает CLI сама.
+    invocation = re.search(r'\$bad = Invoke-Efd -EfdArgs @\(([^)]*)\)', workflow)
+    assert invocation, "вызов на битом архиве исчез из смоук-теста Windows"
+    assert '"--json"' in invocation.group(1), "смоук-тест просит битый архив без --json"
+
+    damaged = tmp_path / "damaged.efd"
+    damaged.write_bytes(open(SAMPLE, "rb").read()[:4000])
+    messages = []
+
+    result = _cli(messages.append).run(
+        ["efd_unpacker", "unpack", str(damaged), "-tmplts", str(tmp_path / "out"), "--json"]
+    )
+
+    assert result.exit_code != 0, "битый архив обязан давать ненулевой код"
+    assert awaited.group(1) in "\n".join(messages), (
+        "смоук-тест Windows ждёт %r, а CLI этого не печатает" % awaited.group(1)
+    )

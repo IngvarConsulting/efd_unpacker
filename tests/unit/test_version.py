@@ -8,6 +8,7 @@
 """
 
 import pathlib
+import re
 
 import pytest
 
@@ -87,3 +88,31 @@ def test_the_build_puts_the_file_where_the_application_looks():
 
     assert makefile.count('--add-data "version.txt$(PYI_DATASEP)."') == 2
     assert '("version.txt", ".")' in spec
+
+
+def test_the_windows_smoke_test_waits_for_a_line_the_help_really_prints():
+    """
+    Смоук-тест Windows ищет в выводе `--help` строку использования, и ищет её
+    не зря: exe собирается с --hide-console, и проглоченный stdout был бы виден
+    только там. Но строка записана в YAML прописью, а справка живёт в
+    help_text — и они разъехались.
+
+    Разъезд стоил релиза. Поправка синтаксиса («<file>...» вместо
+    «<input_file.efd>») прошла все проверки: ни один тест справку с YAML не
+    сверял, а сам job запускается только на теге или вручную. Обнаружилось
+    на пробном прогоне, через недели после правки.
+
+    Здесь сверка делается на каждом прогоне.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "build-and-release.yml").read_text(
+        encoding="utf-8"
+    )
+    awaited = re.search(
+        r'\$help\.Output -notmatch \[regex\]::Escape\("([^"]+)"\)', workflow
+    )
+    assert awaited, "проверка вывода --help исчезла из смоук-теста Windows"
+
+    assert awaited.group(1) in format_help_text(Literal()), (
+        "смоук-тест Windows ждёт строку, которой справка не печатает: %r"
+        % awaited.group(1)
+    )
