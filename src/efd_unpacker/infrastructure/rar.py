@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import locale
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -43,11 +44,14 @@ _LISTING_DATE = re.compile(r"\s([A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4}))
 
 LIBARCHIVE = "libarchive"
 SEVENZIP = "sevenzip"
+UNAR = "unar"
 
 #: Как семейство называется человеку. Имя в PATH («7zz») ничего не говорит,
 #: а «7-Zip» узнаётся с первого взгляда и совпадает с тем, что человек будет
 #: искать в поисковике.
-FAMILY_TITLES = {LIBARCHIVE: "libarchive", SEVENZIP: "7-Zip"}
+FAMILY_TITLES = {
+    LIBARCHIVE: "libarchive", SEVENZIP: "7-Zip", UNAR: "The Unarchiver",
+}
 
 
 @dataclass(frozen=True)
@@ -65,8 +69,22 @@ class Tool:
     def name(self) -> str:
         return os.path.basename(self.path)
 
+    @property
+    def extractor(self) -> str:
+        """
+        Чем распаковывать. У большинства это сам path, у The Unarchiver —
+        парный бинарник рядом: перечисляет lsar, распаковывает unar. Ставятся
+        они одним пакетом и лежат в одном каталоге.
+        """
+        if self.family != UNAR:
+            return self.path
+        return _sibling(self.path, "unar")
+
     def command(self, arguments: Sequence[str]) -> List[str]:
         return list(self.prefix) + [self.path] + list(arguments)
+
+    def extract_command(self, arguments: Sequence[str]) -> List[str]:
+        return list(self.prefix) + [self.extractor] + list(arguments)
 
 
 @dataclass(frozen=True)
@@ -78,6 +96,16 @@ class RarEntry:
     #: Символьная ссылка. На диске она не файл заявленного размера, поэтому
     #: проверять пригодность программы на ней нельзя.
     link: bool = False
+    #: Номер записи в оглавлении. Нужен только The Unarchiver: выбрать одну
+    #: запись он умеет по номеру, а не по имени. У прочих семейств остаётся
+    #: -1 и не используется.
+    index: int = -1
+
+
+def _sibling(path: str, name: str) -> str:
+    """Парный бинарник в том же каталоге, с тем же расширением."""
+    suffix = ".exe" if path.lower().endswith(".exe") else ""
+    return os.path.join(os.path.dirname(path), name + suffix)
 
 
 def _environment() -> Dict[str, str]:
@@ -100,11 +128,16 @@ def _environment() -> Dict[str, str]:
 #: Ни того, ни другого мне не на чем проверить, а разборщик вывода, который
 #: никогда не видел настоящей программы, — это молчаливый дефект.
 _NAMES = {
-    "darwin": (("bsdtar", LIBARCHIVE), ("7zz", SEVENZIP), ("7z", SEVENZIP)),
+    "darwin": (
+        ("bsdtar", LIBARCHIVE), ("7zz", SEVENZIP), ("7z", SEVENZIP), ("lsar", UNAR),
+    ),
+    # Под Windows The Unarchiver не ищем: он там редкость, а поиск стоит
+    # запуска процесса на каждый кандидат.
     "win32": (("tar", LIBARCHIVE), ("7z", SEVENZIP), ("7za", SEVENZIP)),
 }
 _DEFAULT_NAMES = (
     ("bsdtar", LIBARCHIVE), ("7zz", SEVENZIP), ("7z", SEVENZIP), ("7za", SEVENZIP),
+    ("lsar", UNAR),
 )
 
 #: Где Windows хранит путь установки. Перебирать каталоги нельзя: Program Files
@@ -239,6 +272,11 @@ def _candidates(extra: Optional[str]) -> List[Tool]:
         real = os.path.realpath(path)
         if real in seen or not os.path.isfile(real):
             return
+        if family == UNAR and not os.path.isfile(_sibling(path, "unar")):
+            # Перечисляет lsar, распаковывает unar. Один без другого
+            # бесполезен, и брать такую «программу» в кандидаты — значит
+            # обещать распаковку, которой не будет.
+            return
         seen.add(real)
         found.append(Tool(path=path, family=family, version=_version(path, family)))
 
@@ -260,7 +298,9 @@ def _guess_family(path: str) -> str:
     for suffix in (".exe", ".bat", ".cmd"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
-    return LIBARCHIVE if stem in ("bsdtar", "tar") else SEVENZIP
+    if stem in ("bsdtar", "tar"):
+        return LIBARCHIVE
+    return UNAR if stem in ("lsar", "unar") else SEVENZIP
 
 
 def _from_registry() -> List[Tuple[str, str]]:
@@ -296,7 +336,7 @@ def _version(path: str, family: str, prefix: Sequence[str] = ()) -> str:
     """
     # 7-Zip печатает баннер с версией, если запустить его без аргументов;
     # --version он не понимает вовсе.
-    arguments = ["--version"] if family == LIBARCHIVE else []
+    arguments = {LIBARCHIVE: ["--version"], UNAR: ["-v"]}.get(family, [])
     try:
         completed = subprocess.run(
             list(prefix) + [path] + arguments, capture_output=True,
@@ -392,11 +432,10 @@ def _produced(destination: str, entry: RarEntry) -> bool:
 
 def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
     """Оглавление этой программой, либо None, если она не справилась."""
-    arguments = (
-        ["-tvf", archive]
-        if tool.family == LIBARCHIVE
-        else ["l", "-slt", "-ba", "-sccUTF-8", archive]
-    )
+    arguments = {
+        LIBARCHIVE: ["-tvf", archive],
+        UNAR: ["-j", archive],
+    }.get(tool.family, ["l", "-slt", "-ba", "-sccUTF-8", archive])
     completed = _run(tool.command(arguments), LIST_TIMEOUT)
     if completed is None or completed.returncode != 0:
         return None
@@ -404,7 +443,10 @@ def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
     # Пустой кортеж и None — разные ответы: первый значит «архив пуст», второй
     # «программа не справилась». Сливать их значило бы объявить пустой архив
     # неподдерживаемым форматом.
-    return _parse_libarchive(output) if tool.family == LIBARCHIVE else _parse_sevenzip(output)
+    parse = {
+        LIBARCHIVE: _parse_libarchive, UNAR: _parse_unar,
+    }.get(tool.family, _parse_sevenzip)
+    return parse(output)
 
 
 def _parse_libarchive(output: str) -> Tuple[RarEntry, ...]:
@@ -468,6 +510,53 @@ def _parse_sevenzip(output: str) -> Tuple[RarEntry, ...]:
             folder = value.strip().upper().startswith("D")
     flush()
     return tuple(entries)
+
+
+def _parse_unar(output: str) -> Optional[Tuple[RarEntry, ...]]:
+    """
+    Разбор `lsar -j`: оглавление в JSON.
+
+    JSON, а не колонки `lsar -l`: у той таблицы ширина колонок пляшет от
+    длины имён, а флаги и режим сжатия ещё и от формата архива. Здесь же
+    ничего не зависит ни от локали, ни от вёрстки.
+
+    Номер записи сохраняется: выбрать одну запись The Unarchiver умеет по
+    номеру (`unar -i`), а не по имени — в отличие от прочих семейств.
+    """
+    try:
+        data = json.loads(output)
+        listing = data["lsarContents"]
+    except (ValueError, KeyError, TypeError):
+        # Не наш ответ: программа промолчала или выдала не то. Это «не
+        # справилась», а не пустой архив, и None здесь именно об этом.
+        return None
+
+    entries = []
+    for item in listing:
+        if not isinstance(item, dict) or item.get("XADIsDirectory"):
+            continue
+        name = item.get("XADFileName")
+        size = item.get("XADFileSize")
+        index = item.get("XADIndex")
+        if not isinstance(name, str) or not isinstance(size, int):
+            continue
+        entries.append(RarEntry(
+            name=name.replace("\\", "/"),
+            size=size,
+            link=bool(item.get("XADIsLink")),
+            index=index if isinstance(index, int) else -1,
+        ))
+
+    # Пустое оглавление считаем отказом, а не пустым архивом, — и только у
+    # этого семейства. На обрезанном RAR5 lsar выходит с нулём и печатает
+    # пустой список: отличить «пусто» от «не прочитал» он не даёт, а
+    # lsarConfidence равен нулю и на битом файле, и на исправном.
+    #
+    # Промолчать тут значило бы объявить повреждённый архив пустым, то есть
+    # соврать ровно в том случае, ради которого проверка и заведена: битая
+    # загрузка. Прочие семейства обрезанный архив честно отвергают кодом
+    # возврата, и для них пустой кортеж по-прежнему значит пустой архив.
+    return tuple(entries) or None
 
 
 # --- распаковка --------------------------------------------------------------
@@ -539,23 +628,39 @@ def verify(tool: Tool, archive: str, entries: Sequence[RarEntry]) -> bool:
     smallest = min(probes, key=lambda entry: entry.size)
     probe = tempfile.mkdtemp(prefix="efd-rar-")
     try:
-        return _extract_with(tool, archive, probe, only=smallest.name) and _produced(probe, smallest)
+        return _extract_with(tool, archive, probe, only=smallest) and _produced(probe, smallest)
     finally:
         shutil.rmtree(probe, ignore_errors=True)
 
 
 def _extract_with(
-    tool: Tool, archive: str, destination: str, only: Optional[str] = None
+    tool: Tool, archive: str, destination: str, only: Optional[RarEntry] = None
 ) -> bool:
+    """
+    Распаковывает архив целиком либо одну запись.
+
+    Запись, а не её имя: The Unarchiver выбирает одну по НОМЕРУ, остальные —
+    по имени, и передавать сюда только имя значило бы потерять номер по
+    дороге.
+    """
     if tool.family == LIBARCHIVE:
         arguments = ["-xf", archive, "-C", destination]
         if only is not None:
-            arguments.append(only)
+            arguments.append(only.name)
+    elif tool.family == UNAR:
+        # -D обязателен: по умолчанию unar кладёт содержимое в каталог,
+        # названный по архиву, и распакованное оказалось бы этажом ниже, чем
+        # его ждут. Видно это только на живой программе.
+        arguments = ["-o", destination, "-f", "-q", "-D"]
+        if only is not None:
+            arguments += ["-i", archive, str(only.index)]
+        else:
+            arguments.append(archive)
     else:
         arguments = ["x", archive, "-o" + destination, "-y", "-bso0", "-bsp0"]
         if only is not None:
-            arguments.append(only)
-    completed = _run(tool.command(arguments), EXTRACT_TIMEOUT)
+            arguments.append(only.name)
+    completed = _run(tool.extract_command(arguments), EXTRACT_TIMEOUT)
     return completed is not None and completed.returncode == 0
 
 
@@ -602,9 +707,12 @@ def _decode(raw: bytes) -> str:
 #: последовательность: на Linux один пакет ставится apt, другой dnf, и нужен
 #: ровно один из них, смотря какой менеджер пакетов в системе.
 _HINTS = {
-    "darwin": ("brew install sevenzip",),
+    "darwin": ("brew install sevenzip", "brew install unar"),
     "win32": ("winget install 7zip.7zip",),
-    "linux": ("sudo apt install libarchive-tools", "sudo dnf install p7zip"),
+    "linux": (
+        "sudo apt install libarchive-tools", "sudo dnf install p7zip",
+        "sudo apt install unar",
+    ),
 }
 
 #: Чем варианты разделяются в одной строке. Не вертикальная черта: строку
@@ -644,4 +752,4 @@ def extract_entry(tool: Tool, archive: str, destination: str, entry: RarEntry) -
     которая вышла с нулём и ничего не создала, иначе считалась бы успешной,
     а поток падал бы голым FileNotFoundError.
     """
-    return _extract_with(tool, archive, destination, entry.name) and _produced(destination, entry)
+    return _extract_with(tool, archive, destination, entry) and _produced(destination, entry)
