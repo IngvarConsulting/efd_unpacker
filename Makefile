@@ -69,8 +69,6 @@ check:
 	  command -v appimagetool >/dev/null 2>&1 && echo "✓ appimagetool" || { echo "✗ appimagetool"; FAILED=1; }; \
 	  command -v dpkg-deb >/dev/null 2>&1 && echo "✓ dpkg-deb" || { echo "✗ dpkg-deb"; FAILED=1; }; \
 	  command -v fakeroot >/dev/null 2>&1 && echo "✓ fakeroot" || { echo "✗ fakeroot"; FAILED=1; }; \
-	  command -v rpmbuild >/dev/null 2>&1 && echo "✓ rpmbuild" || { echo "✗ rpmbuild"; FAILED=1; }; \
-	  command -v zip >/dev/null 2>&1 && echo "✓ zip" || { echo "✗ zip"; FAILED=1; }; \
 	fi; \
 	if [ "$(PLATFORM)" = "windows" ]; then \
 	  command -v candle >/dev/null 2>&1 && echo "✓ candle" || { echo "✗ candle"; FAILED=1; }; \
@@ -162,7 +160,7 @@ install-build-deps: install-test-deps
 	if [ "$(PLATFORM)" = "linux" ]; then \
 		sudo apt-get update; \
 		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-			rpm fuse libfuse2 binutils fakeroot dpkg-dev zip patchelf zsync \
+			fuse libfuse2 binutils fakeroot dpkg-dev zip patchelf zsync \
 			curl coreutils xz-utils file lintian; \
 		if ! command -v appimagetool >/dev/null 2>&1; then \
 			curl -fL --proto '=https' --tlsv1.2 --retry 3 \
@@ -280,29 +278,6 @@ create-linux-deb:
 	fakeroot dpkg-deb -Zxz --build debian "dist/efd-unpacker-$$VERSION-linux-amd64.deb"; \
 	rm -rf debian; \
 	test -f "dist/efd-unpacker-$$VERSION-linux-amd64.deb"
-
-create-linux-rpm:
-	@echo "Creating Linux RPM package..."
-	@if command -v rpmbuild >/dev/null 2>&1; then \
-		mkdir -p rpmbuild/BUILD rpmbuild/BUILDROOT rpmbuild/RPMS rpmbuild/SOURCES rpmbuild/SPECS; \
-		mkdir -p rpm_temp/usr/bin rpm_temp/usr/share/applications rpm_temp/usr/share/icons/hicolor/1024x1024/apps rpm_temp/usr/share/mime/packages; \
-		cp dist/efd_unpacker rpm_temp/usr/bin/efd_unpacker; \
-		if [ -f "resources/icon.png" ]; then \
-			cp resources/icon.png rpm_temp/usr/share/icons/hicolor/1024x1024/apps/efd_unpacker.png; \
-		fi; \
-		cp installer/linux/efd_unpacker.desktop rpm_temp/usr/share/applications/; \
-		cp installer/linux/mime-info.xml rpm_temp/usr/share/mime/packages/; \
-		mkdir -p rpm_temp/usr/share/doc/efd-unpacker; \
-		cp installer/linux/copyright rpm_temp/usr/share/doc/efd-unpacker/copyright; \
-		cp installer/linux/efd-unpacker.spec.in rpmbuild/SPECS/efd-unpacker.spec; \
-		sed -i "s/VERSION_PLACEHOLDER/$$(cat version.txt)/g" rpmbuild/SPECS/efd-unpacker.spec; \
-		tar -czf rpmbuild/SOURCES/efd-unpacker-$$(cat version.txt).tar.gz -C rpm_temp .; \
-		rpmbuild --define "_topdir $(PWD)/rpmbuild" -bb rpmbuild/SPECS/efd-unpacker.spec; \
-		cp rpmbuild/RPMS/*/efd-unpacker-*.rpm dist/; \
-		rm -rf rpmbuild rpm_temp; \
-	else \
-		echo "Warning: rpmbuild not found. Skipping RPM package creation."; \
-	fi
 
 create-linux-archives:
 	@echo "Creating Linux portable archives..."
