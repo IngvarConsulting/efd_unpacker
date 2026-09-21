@@ -27,7 +27,13 @@
 - [Конвенция коммитов](docs/COMMIT_CONVENTION.md)
 
 ## Лицензия
-MIT. См. [LICENSE](LICENSE).
+
+Исходный код — MIT, см. [LICENSE](LICENSE).
+
+**Готовые сборки распространяются по GPL v3.** В .exe, .dmg, .AppImage и .deb
+линкуется PyQt5 под GPL v3, и собранное целое наследует его условия. Полные
+тексты — в [`licenses/`](licenses) и внутри каждой сборки; подробности и
+перечень компонентов — в [docs/LICENSES.md](docs/LICENSES.md).
 
 ## Поддержка
 - [Issues](https://github.com/IngvarConsulting/efd_unpacker/issues)

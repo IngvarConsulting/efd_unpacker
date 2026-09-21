@@ -66,11 +66,19 @@ RELEASES_URL = "https://github.com/IngvarConsulting/efd_unpacker/releases"
 LICENSES_URL = "https://github.com/IngvarConsulting/efd_unpacker/blob/main/docs/LICENSES.md"
 COMPANY_URL = "https://ingvar.pro"
 
+#: На каких условиях распространяется САМА сборка. Не лицензия проекта: код
+#: остаётся MIT, но PyQt5 под GPL v3 линкуется внутрь исполняемого файла, и
+#: собранное целое наследует его условия. Человек, открывший «О программе»,
+#: должен увидеть это, не уходя по ссылке.
+BUILD_LICENSE = "GPL v3"
+
 #: Что из чего собрано. Список сверяется с requirements.txt тестом: зависимость
 #: добавят, а сюда дописать забудут — и экран начнёт умалчивать о лицензии.
 LICENSES = (
     ("EFD Unpacker", "MIT"),
     ("PyQt5", "GPL v3"),
+    ("PyQt5-Qt5", "LGPL v3"),
+    ("PyQt5-sip", "BSD-2-Clause"),
     ("onec_dtools", "MIT"),
 )
 
@@ -1051,6 +1059,10 @@ class AboutScreen(Screen):
             holder.setLayout(row)
             column.addWidget(holder)
             column.addSpacing(6)
+        column.addSpacing(3)
+        column.addWidget(_paragraph("%s — %s" % (
+            self._t("Screens", "This build as a whole"), BUILD_LICENSE,
+        )))
         column.addSpacing(3)
         column.addWidget(self._link(self._t("Screens", "Full texts"), LICENSES_URL))
         column.addSpacing(12)

@@ -1,6 +1,6 @@
 # EFD Unpacker Makefile
 
-.PHONY: help clean lint test-cov build-macos build-linux build-windows test install-deps install-test-deps install-build-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
+.PHONY: help clean lint test-cov create-build-manifest build-macos build-linux build-windows test install-deps install-test-deps install-build-deps create-version generate-release-notes check generate-spec create-linux-archives create-windows-zip create-macos-zip
 
 # Определяем ОС
 ifeq ($(OS),Windows_NT)
@@ -93,18 +93,18 @@ check:
 		echo "✓ Все проверки пройдены успешно!"; \
 	fi'
 
-build-macos: clean create-version check generate-spec
+build-macos: clean create-version create-build-manifest check generate-spec
 	@echo "Building for macOS..."
 	@$(MAKE) build-macos-app
 	@$(MAKE) create-macos-dmg
 
-build-linux: clean create-version check generate-spec
+build-linux: clean create-version create-build-manifest check generate-spec
 	@echo "Building for Linux..."
 	@$(MAKE) build-linux-executable
 	@$(MAKE) create-linux-appimage
 	@$(MAKE) create-linux-deb
 
-build-windows: clean create-version check generate-spec
+build-windows: clean create-version create-build-manifest check generate-spec
 	@echo "Building for Windows..."
 	@$(MAKE) build-windows-executable
 	@$(MAKE) create-windows-msi
@@ -184,6 +184,23 @@ install-build-deps: install-test-deps
 # Обратная совместимость: старое имя цели.
 install-deps: install-build-deps
 
+create-build-manifest:
+	@echo "Recording the exact dependency set..."
+	@mkdir -p build
+	@{ \
+		echo "EFD Unpacker $$(cat version.txt) — $(PLATFORM)"; \
+		echo "Собрано: $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+		echo ""; \
+		echo "Состав окружения, в котором собран этот бинарь."; \
+		echo "Версии различаются между системами: под Windows PyQt5-Qt5"; \
+		echo "публикуется только до 5.15.2, под macOS и Linux — новее,"; \
+		echo "поэтому единым списком в requirements.txt их не задать."; \
+		echo "Исходники каждой зависимости берутся с PyPI по имени и версии."; \
+		echo ""; \
+		$(PYTHON) -m pip list --format=freeze; \
+	} > build/BUILD-MANIFEST.txt
+	@test -s build/BUILD-MANIFEST.txt
+
 create-version:
 	@echo "Creating version.txt from git tag or commit..."
 	@if [ -n "$(VERSION)" ]; then \
@@ -217,6 +234,9 @@ build-linux-executable:
 		--paths src \
 		--add-data "translations$(PYI_DATASEP)translations" \
 		--add-data "resources$(PYI_DATASEP)resources" \
+		--add-data "licenses$(PYI_DATASEP)licenses" \
+		--add-data "LICENSE$(PYI_DATASEP)licenses" \
+		--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
 		main.py
 	@if [ ! -f "dist/efd_unpacker" ]; then \
 		echo "Error: efd_unpacker executable not found in dist directory."; \
@@ -242,6 +262,8 @@ create-linux-appimage:
 	cp AppDir/usr/share/applications/efd_unpacker.desktop AppDir/; \
 	cp installer/linux/AppRun AppDir/; \
 	cp installer/linux/copyright AppDir/usr/share/doc/efd-unpacker/copyright; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE build/BUILD-MANIFEST.txt \
+		AppDir/usr/share/doc/efd-unpacker/; \
 	chmod +x AppDir/AppRun; \
 	appimagetool AppDir "dist/efd-unpacker-$$VERSION-linux.AppImage"; \
 	rm -rf AppDir; \
@@ -265,6 +287,7 @@ create-linux-deb:
 	cp installer/linux/efd_unpacker.desktop debian/usr/share/applications/; \
 	cp installer/linux/mime-info.xml debian/usr/share/mime/packages/; \
 	cp installer/linux/copyright "$$DOCDIR/copyright"; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE build/BUILD-MANIFEST.txt "$$DOCDIR/"; \
 	printf 'efd-unpacker (%s) unstable; urgency=medium\n\n  * See https://github.com/IngvarConsulting/efd_unpacker/releases\n\n -- Ingvar Consulting LLC <i@ingvar.pro>  %s\n' \
 		"$$VERSION" "$$(date -R)" > "$$DOCDIR/changelog"; \
 	gzip -9n "$$DOCDIR/changelog"; \
@@ -297,6 +320,9 @@ build-windows-executable:
 		--paths src \
 		--add-data "translations$(PYI_DATASEP)translations" \
 		--add-data "resources$(PYI_DATASEP)resources" \
+		--add-data "licenses$(PYI_DATASEP)licenses" \
+		--add-data "LICENSE$(PYI_DATASEP)licenses" \
+		--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
 		--name=EFDUnpacker main.py
 	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
 		echo "Error: EFDUnpacker.exe not found in dist directory."; \
@@ -391,6 +417,9 @@ create-macos-dmg:
 	rm -rf "$$STAGING_DIR"; \
 	mkdir -p "$$STAGING_DIR"; \
 	ditto "dist/EFDUnpacker.app" "$$STAGING_DIR/EFDUnpacker.app"; \
+	mkdir -p "$$STAGING_DIR/licenses"; \
+	cp licenses/GPL-3.0.txt licenses/LGPL-3.0.txt LICENSE build/BUILD-MANIFEST.txt \
+		"$$STAGING_DIR/licenses/"; \
 	SANDBOX_FLAG=""; \
 	if [ "$$CI" = "true" ]; then \
 		SANDBOX_FLAG="--sandbox-safe"; \

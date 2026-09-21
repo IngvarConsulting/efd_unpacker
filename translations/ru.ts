@@ -613,6 +613,10 @@
         <translation>Лицензии</translation>
     </message>
     <message>
+        <source>This build as a whole</source>
+        <translation>Сборка целиком</translation>
+    </message>
+    <message>
         <source>Full texts</source>
         <translation>Полные тексты</translation>
     </message>

@@ -6,6 +6,13 @@ block_cipher = None
 
 datas = [(path, "translations") for path in glob("translations/*.ts")]
 datas += [(path, "resources") for path in glob("resources/*")]
+# Полные тексты лицензий. GPL v3 требует, чтобы лицензия ехала ВМЕСТЕ с
+# программой: ссылки на gnu.org недостаточно.
+datas += [(path, "licenses") for path in glob("licenses/*")]
+datas += [("LICENSE", "licenses")]
+# Состав ЭТОЙ сборки: версии зависимостей различаются между системами,
+# и одним списком в requirements.txt их не зафиксировать.
+datas += [("build/BUILD-MANIFEST.txt", "licenses")]
 
 a = Analysis(
     ['main.py'],
