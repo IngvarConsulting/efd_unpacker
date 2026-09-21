@@ -1930,3 +1930,40 @@ def test_marking_everything_takes_the_failed_rows_too(qtbot):
 
     assert window.rows[0].mark.state() == row_widgets.PENDING
     assert window.button_unpack.isEnabled()
+
+
+def test_a_filtered_supply_does_not_let_its_archive_be_deleted(qtbot):
+    """
+    С «без демобаз» выгрузка .dt из шаблона не пишется и остаётся только
+    внутри архива.
+
+    Удалить такой архив значило бы потерять демобазу насовсем — и взять её
+    будет неоткуда. Записанное с фильтром не считается записанным целиком.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == [], "архив с невыгруженной демобазой удалять нельзя"
+    assert window.button_trash.isHidden()
+
+
+def test_a_filter_does_not_hold_back_a_distribution(qtbot):
+    """
+    Фильтр уносит .dt только из поставок. Дистрибутива он не касается, и
+    держать его архив из-за чужой оговорки незачем.
+    """
+    planned = item(kind=ItemKind.PACKAGES, template=None)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == [planned.origin]

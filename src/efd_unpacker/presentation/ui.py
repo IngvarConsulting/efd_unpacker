@@ -124,6 +124,8 @@ class MainWindow(QMainWindow):
         #: Ключи отметок того, что записано в этом запуске. По ним кнопка
         #: «Удалить архивы» узнаёт, что исходный файл больше не нужен.
         self._written: set = set()
+        #: Писался ли последний батч без фильтра. См. _batch_finished.
+        self._wrote_in_full = True
         # Экраны настроек создаются при первом заходе: поиск программ для .rar
         # и чтение вариантов каталога ни к чему тому, кто в меню не заходил.
         self._paths = None
@@ -986,6 +988,9 @@ class MainWindow(QMainWindow):
             return
 
         self._templates_root = templates_root
+        # Снимается на старте: к концу батча человек мог переключить фильтр, а
+        # писалось то, что стояло в начале.
+        self._wrote_in_full = not self.check_only_cf.isChecked()
         self._started_at = time.monotonic()
         self._written_bytes = 0
         self._current_bytes = 0
@@ -1115,7 +1120,14 @@ class MainWindow(QMainWindow):
         self.progress_total.hide()
 
         self._written_kinds = {item.kind for item in result.written}
-        self._written.update(self._mark_key(item) for item in result.written)
+        # Записанным ПОЛНОСТЬЮ считается не всё записанное. С «без демобаз»
+        # из шаблона не пишется .dt, и он остаётся только внутри архива:
+        # удалить такой архив значило бы потерять демобазу насовсем. Выгрузку
+        # фильтр уносит лишь у поставок, дистрибутивов он не касается.
+        self._written.update(
+            self._mark_key(item) for item in result.written
+            if self._wrote_in_full or item.kind is not ItemKind.SUPPLY
+        )
         if any(item.kind is ItemKind.SUPPLY for item in result.written):
             # Сохраняем только когда в каталог шаблонов действительно писали.
             self.settings_service.set_output_path(self._templates_root)
