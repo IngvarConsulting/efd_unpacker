@@ -77,13 +77,20 @@
     </Directory>
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <Component Id="MainExecutable" Guid="*">
+      <!-- Фиксированный GUID, а не «*»: файлов в компоненте больше одного, а
+           для такого WiX v3 выдаёт авто-GUID только когда KeyPath —
+           ВЕРСИОНИРОВАННЫЙ файл. Exe от PyInstaller версии не несёт: ресурс
+           версии он кладёт только по флагу version-file, а мы его не
+           передаём. Линковка падала с LGHT0367. Заморожен
+           так же навсегда, как UpgradeCode. -->
+      <Component Id="MainExecutable" Guid="F95DCD4F-08F8-4BDC-BD38-5933D64F0D3E">
         <File Source="dist\EFDUnpacker.exe" KeyPath="yes" Id="EFDUnpackerEXE" Name="EFDUnpacker.exe" />
 
         <!-- Полные тексты лицензий рядом с приложением. GPL v3 требует,
              чтобы лицензия ехала ВМЕСТЕ с программой. Лежат в том же
-             компоненте, что и exe: тот же каталог, та же судьба при
-             удалении, а KeyPath у компонента один — сам exe. -->
+             компоненте, что и exe: тот же каталог и та же судьба при
+             удалении. Именно они и делают компонент многофайловым — см.
+             GUID выше. -->
         <File Source="licenses\GPL-3.0.txt" Id="LicenseGPL3" Name="GPL-3.0.txt" />
         <File Source="licenses\LGPL-3.0.txt" Id="LicenseLGPL3" Name="LGPL-3.0.txt" />
         <File Source="LICENSE" Id="LicenseMIT" Name="LICENSE.txt" />
