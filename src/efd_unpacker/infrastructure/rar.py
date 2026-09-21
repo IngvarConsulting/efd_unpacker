@@ -706,13 +706,24 @@ def _decode(raw: bytes) -> str:
 #: Вариантов может быть несколько — это РАВНОПРАВНЫЕ альтернативы, а не
 #: последовательность: на Linux один пакет ставится apt, другой dnf, и нужен
 #: ровно один из них, смотря какой менеджер пакетов в системе.
+#: Разложены по семействам: команда должна стоять там, где сказано, чего не
+#: хватает, а не общим списком внизу. Какой пакет какую программу приносит —
+#: это известно точно; неизвестно другое, каким менеджером пакетов
+#: пользуется человек, и поэтому внутри семейства варианты остаются
+#: равноправными.
 _HINTS = {
-    "darwin": ("brew install sevenzip", "brew install unar"),
-    "win32": ("winget install 7zip.7zip",),
-    "linux": (
-        "sudo apt install libarchive-tools", "sudo dnf install p7zip",
-        "sudo apt install unar",
-    ),
+    "darwin": {
+        SEVENZIP: ("brew install sevenzip",),
+        UNAR: ("brew install unar",),
+    },
+    "win32": {
+        SEVENZIP: ("winget install 7zip.7zip",),
+    },
+    "linux": {
+        LIBARCHIVE: ("sudo apt install libarchive-tools",),
+        SEVENZIP: ("sudo dnf install p7zip",),
+        UNAR: ("sudo apt install unar",),
+    },
 }
 
 #: Чем варианты разделяются в одной строке. Не вертикальная черта: строку
@@ -722,9 +733,20 @@ _HINTS = {
 HINT_SEPARATOR = "  либо  "
 
 
-def install_hints() -> Tuple[str, ...]:
-    """Команды установки по отдельности: каждая — самостоятельный вариант."""
-    return _HINTS.get(sys.platform, _HINTS["linux"])
+def install_hints(family: Optional[str] = None) -> Tuple[str, ...]:
+    """
+    Команды установки по отдельности: каждая — самостоятельный вариант.
+
+    Без семейства — все, какие есть для этой системы: так они уходят в текст
+    отказа, где места на разбор по программам нет. С семейством — только его
+    команды, для строки, которая и говорит, что этой программы не нашлось.
+    """
+    system = _HINTS.get(sys.platform, _HINTS["linux"])
+    if family is not None:
+        return system.get(family, ())
+    return tuple(
+        command for name in known_families() for command in system.get(name, ())
+    )
 
 
 def install_hint() -> str:
