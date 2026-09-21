@@ -8,7 +8,7 @@ import sys
 import urllib.parse
 from typing import Optional
 
-from PyQt5.QtCore import QEvent, QTimer
+from PyQt5.QtCore import QEvent, Qt, QTimer
 from PyQt5.QtWidgets import QApplication
 
 from ..constants import FileExtensions, URLSchemes
@@ -20,6 +20,21 @@ from ..presentation.ui import MainWindow
 from ..runtime import detect_system_language, install_cli_launcher
 from .cli import CLIApplication, is_read_only_command, wants_help
 from .help_text import format_help_text
+
+
+def enable_high_dpi_pixmaps() -> None:
+    """
+    Просит Qt не срезать разрешение у значков. До создания QApplication.
+
+    Значки шестерёнки и «назад» рисуются вдвое крупнее и помечаются
+    devicePixelRatio=2 — но без этого атрибута QIcon.pixmap() отдаёт кнопке
+    копию по ЛОГИЧЕСКОМУ размеру и с dpr=1, а экран растягивает её обратно
+    вдвое. Замер на Retina: в значке 54×30 точек, кнопке доставалось 24×13.
+
+    Отдельной функцией, а не строкой в main: main поднимает GUI и покрытием
+    не берётся, а так шаг можно позвать и проверить.
+    """
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
 
 def looks_like_input(argument: str) -> bool:
@@ -142,6 +157,7 @@ def should_install_launcher(argv: list) -> bool:
 
 
 def main() -> None:  # pragma: no cover - интеграция с PyQt
+    enable_high_dpi_pixmaps()
     if should_install_launcher(sys.argv):
         try:
             install_cli_launcher()

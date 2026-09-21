@@ -6,11 +6,16 @@ process_file_argument больше не валидирует: он привод�
 терялась вместе с кодом ошибки, и GUI открывался пустым.
 """
 
+import inspect
 from pathlib import Path
 
 import pytest
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication
 
+from efd_unpacker.application import main as app_main
 from efd_unpacker.application.main import (
+    enable_high_dpi_pixmaps,
     looks_like_input,
     process_file_argument,
     should_install_launcher,
@@ -198,3 +203,39 @@ def test_read_only_command_does_not_register_the_launcher(argv, expected):
     не видно: resolve_cli_launcher_target() вне бандла отдаёт None.
     """
     assert should_install_launcher(argv) is expected
+
+
+def test_qt_is_asked_not_to_downscale_icons():
+    """
+    Без AA_UseHighDpiPixmaps значки кнопок пикселизуются на Retina.
+
+    Рисуются они правильно — вдвое крупнее и с пометкой
+    devicePixelRatio=2, — но QIcon.pixmap() без этого атрибута отдаёт кнопке
+    копию по ЛОГИЧЕСКОМУ размеру и с dpr=1, а экран растягивает её обратно.
+    Замер на настоящем Retina: в значке шестерёнки 54×30 точек, кнопке
+    доставалось 24×13; с атрибутом — 48×26.
+
+    Проверяется именно атрибут, а не размер отданного pixmap: тесты идут на
+    QT_QPA_PLATFORM=minimal, где devicePixelRatio всегда 1, и уменьшения там
+    не происходит ни с атрибутом, ни без. Сравнение пикселей проходило бы
+    вхолостую на любой машине, включая ту, где дефект видно глазами.
+    """
+    enable_high_dpi_pixmaps()
+
+    assert QApplication.testAttribute(Qt.AA_UseHighDpiPixmaps)
+
+
+def test_startup_asks_for_high_dpi_pixmaps_before_anything_else():
+    """
+    Атрибут действует только на приложение, созданное ПОСЛЕ него, поэтому
+    вызов обязан стоять в main до FileAssociationApp.
+
+    Сам main под pragma: no cover — он поднимает GUI, — так что связь
+    проверяется по исходнику. Без этой проверки вызов можно было бы убрать
+    из main, и тест выше продолжал бы проходить: он зовёт функцию сам.
+    """
+    source = inspect.getsource(app_main.main)
+    call = source.index("enable_high_dpi_pixmaps()")
+    creation = source.index("FileAssociationApp(")
+
+    assert call < creation, "атрибут ставится после создания приложения — он не подействует"
