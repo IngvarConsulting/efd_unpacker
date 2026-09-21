@@ -39,6 +39,19 @@ RUNNING = "running"
 DONE = "done"
 FAILED = "failed"
 
+#: Состояния, в которых знак можно переключить.
+#:
+#: Отказ здесь намеренно. Ничего не записано, а причина — кончилось место,
+#: права на файлах от прошлой распаковки, вынутая флешка — чинится снаружи
+#: программы, и после починки естественное действие «повторить». Пока отказ
+#: не переключался, повторить было нечем: кнопка «Распаковать» гасла, и
+#: единственным выходом оставалось бросить тот же файл ещё раз.
+#:
+#: Готовая строка не переключается: работа сделана, и молча переделать её
+#: было бы неожиданно — у неё для этого есть «Открыть папку». «Уже
+#: установлено» и «нет программы» — тоже нет: желание тут ничего не меняет.
+TOGGLEABLE = (PENDING, UNCHECKED, FAILED)
+
 
 class Mark(QAbstractButton):
     """
@@ -48,9 +61,9 @@ class Mark(QAbstractButton):
     Enter, и имя для средств доступности. Мышью-то щёлкнуть можно и по
     виджету, а вот с клавиатуры строку было не отметить вовсе.
 
-    Недоступные состояния гасятся: выключенная кнопка не берёт фокус и не
-    срабатывает, так что «уже установлено» и отказ не переключить ни мышью,
-    ни клавишей.
+    Непереключаемые состояния гасятся: выключенная кнопка не берёт фокус и
+    не срабатывает, так что готовую строку и «уже установлено» не тронуть ни
+    мышью, ни клавишей. Что считается переключаемым — см. TOGGLEABLE.
     """
 
     def __init__(self, state: str = PENDING) -> None:
@@ -58,12 +71,12 @@ class Mark(QAbstractButton):
         self._state = state
         self.setFixedSize(style.MARK_SIZE, style.MARK_SIZE)
         self.setCursor(Qt.PointingHandCursor)
-        self.setEnabled(state in (PENDING, UNCHECKED))
+        self.setEnabled(state in TOGGLEABLE)
 
     def set_state(self, state: str) -> None:
         if state != self._state:
             self._state = state
-            self.setEnabled(state in (PENDING, UNCHECKED))
+            self.setEnabled(state in TOGGLEABLE)
             self.update()
 
     def state(self) -> str:

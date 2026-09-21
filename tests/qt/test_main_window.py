@@ -1457,3 +1457,115 @@ def test_markup_in_a_supply_name_is_not_rendered_in_the_tooltip(qtbot):
     qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     assert name in _tooltip_text(window.rows[0].mark)
+
+
+# --- #14: окно не тупиковое ---------------------------------------------------
+
+
+def failing_batch(current, sink, _supply, _other, _cancel=None):
+    """Батч, в котором отказывает всё. Ничего не записано — повтор осмыслен."""
+    failures = []
+    for planned in current.to_write:
+        sink(ItemStarted(planned))
+        error = UnpackError(UnpackErrorCode.PERMISSION)
+        sink(ItemFailed(planned, error))
+        failures.append((planned, error))
+    return BatchResult(failed=tuple(failures))
+
+
+def test_a_failed_row_can_be_marked_again_and_re_run(qtbot):
+    """
+    #14: после отказа повторить распаковку было нечем.
+
+    Знак отказавшей строки не переключался, значит выбранных строк не
+    оставалось, значит «Распаковать» гасла. А отказы здесь — кончилось место,
+    права на файлах от прошлой распаковки, вынутая флешка — чинятся снаружи
+    программы, и после починки человек хочет ровно повтора. Единственным
+    выходом было бросить тот же файл ещё раз.
+    """
+    window = make_window(qtbot, batch=failing_batch)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.FAILED, timeout=2000)
+    assert not window.button_unpack.isEnabled(), "отказ сам по себе не должен быть выбран"
+
+    window.rows[0].mark.click()
+
+    assert window.rows[0].mark.state() == row_widgets.PENDING
+    assert window.button_unpack.isEnabled()
+
+    window.unpack()
+    qtbot.waitUntil(lambda: len(window.calls["batch"]) == 2, timeout=3000)
+
+
+def test_a_cancelled_drag_does_not_lose_the_list(qtbot):
+    """
+    #14: начатое и отменённое перетаскивание стирало показ выбранного файла,
+    хотя сам файл оставался выбранным.
+
+    В прежнем окне метка выбора и БЫЛА состоянием, поэтому подсказка в зоне
+    броска затирала выбор. Теперь состояние — список, а надпись в зоне только
+    подсказка; проверка держит это врозь.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    before = window.rows[0].texts()
+
+    window._set_drag_active(True)
+    window._set_drag_active(False)
+
+    assert len(window.rows) == 1
+    assert window.rows[0].texts() == before
+    assert window.button_unpack.isEnabled()
+
+
+class TwoFolders(DummySettings):
+    """
+    Двойник с двумя РАЗНЫМИ каталогами на выбор.
+
+    DummySettings отдаёт второй пункт неизменным, и после выбора именно его
+    оба пункта становятся одним путём: список вырождается, и «выбор держится»
+    на нём не проверить. Здесь текущий каталог всегда первый, другой — второй.
+    """
+
+    FIRST = os.path.join(os.sep, "t", "tmplts")
+    SECOND = os.path.join(os.sep, "другой", "tmplts")
+
+    def get_output_path_items(self, manual_selected_path=None):
+        from efd_unpacker.infrastructure.settings_service import (
+            ORIGIN_DEFAULT,
+            ORIGIN_LAST_USED,
+            PathChoice,
+        )
+
+        other = self.SECOND if self.templates == self.FIRST else self.FIRST
+        return [
+            PathChoice(path=self.templates, origin=ORIGIN_LAST_USED, label=self.templates),
+            PathChoice(path=other, origin=ORIGIN_DEFAULT, label=other),
+        ]
+
+
+def test_a_chosen_folder_does_not_roll_back_on_the_next_choice(qtbot):
+    """
+    #14: выбранный вручную каталог откатывался на «использованный прошлый
+    раз» при следующем выборе из списка, и распаковка уходила не туда.
+
+    Выпадающего списка больше нет, но последовательность осталась: выбрать
+    один пункт, потом другой. Список вариантов пересобирается после каждого
+    выбора — ровно то место, где прежняя версия его и теряла.
+    """
+    settings = TwoFolders()
+    window = make_window(qtbot, settings=settings)
+    window.show_paths()
+
+    for expected in (TwoFolders.SECOND, TwoFolders.FIRST, TwoFolders.SECOND):
+        other = window._paths.findChild(QRadioButton, "templates-1")
+        assert other.text() == expected
+        other.click()
+
+        current = window._paths.findChild(QRadioButton, "templates-0")
+        assert settings.get_output_path() == expected
+        assert (current.text(), current.isChecked()) == (expected, True)
