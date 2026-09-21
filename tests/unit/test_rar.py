@@ -13,7 +13,9 @@ Python, запускаемые тем же интерпретатором. Эт�
 """
 
 import os
+import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -281,7 +283,9 @@ def test_verification_extracts_only_the_smallest_entry(tmp_path, monkeypatch):
     real = rar._extract_with
 
     def spy(tool, archive, destination, only=None):
-        created.append(only)
+        # Запись целиком, а не её имя: The Unarchiver выбирает одну по
+        # номеру, и потерять номер по дороге нельзя.
+        created.append(None if only is None else only.name)
         return real(tool, archive, destination, only)
 
     monkeypatch.setattr(rar, "_extract_with", spy)
@@ -880,3 +884,131 @@ def test_found_does_not_start_a_search(tmp_path, monkeypatch):
 
 def _forbidden_which(_name):
     raise AssertionError("found() не должен запускать поиск")
+
+
+# --- разборщики против НАСТОЯЩИХ программ ------------------------------------
+
+#: Что кладём в пробный архив. Две записи разного размера: размеры должны
+#: прочитаться в точности.
+SAMPLE = (
+    ("readme.txt", b"a" * 11),
+    (os.path.join("data", "inner.bin"), b"b" * 37),
+)
+
+#: Что передаём программе-упаковщику. Каталог целиком, а не файл внутри него:
+#: получив «data/inner.bin», обе программы кладут в архив ОДИН файл и никакой
+#: записи каталога — и проверка отсеивания каталогов становилась холостой.
+#: Получив «data», они добавляют и саму запись каталога.
+PACK_INPUTS = ("readme.txt", "data")
+
+#: Чем архив СОЗДАЁТСЯ. Годится любая из двух: важно, чтобы архив был
+#: настоящий, а не собранный нами по спецификации. The Unarchiver в список не
+#: входит — он только читает.
+PACKING = {
+    rar.LIBARCHIVE: lambda archive, names: ["-a", "-c", "-f", archive] + names,
+    rar.SEVENZIP: lambda archive, names: ["a", "-bso0", "-bsp0", archive] + names,
+}
+
+
+def _sample_tree(root):
+    for name, payload in SAMPLE:
+        path = os.path.join(root, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+
+
+def _installed():
+    """Все настоящие программы, какие есть на этой машине."""
+    rar.reset()
+    return rar.discover()
+
+
+def _packed(tmp_path):
+    """
+    Настоящий zip, созданный настоящей программой.
+
+    Zip, а не rar: создавать RAR не умеет ни одна из них — WinRAR
+    проприетарен и на машинах сборки его нет. Непроверенным же оставался
+    РАЗБОРЩИК вывода, а он у каждой программы один на все форматы. Читает ли
+    программа именно RAR, выясняется на самом файле во время работы — в этом
+    и была задумка задачи.
+    """
+    source = tmp_path / "src"
+    source.mkdir()
+    _sample_tree(str(source))
+    archive = str(tmp_path / "sample.zip")
+
+    for tool in _installed():
+        arguments = PACKING.get(tool.family)
+        if arguments is None:
+            continue
+        packed = subprocess.run(
+            tool.command(arguments(archive, list(PACK_INPUTS))),
+            cwd=str(source), capture_output=True, timeout=60,
+        )
+        if packed.returncode == 0 and os.path.isfile(archive):
+            _assert_has_a_directory_entry(archive)
+            return archive
+    pytest.skip("нечем создать пробный архив")
+
+
+def _assert_has_a_directory_entry(archive):
+    """
+    В архиве обязана быть запись каталога.
+
+    Иначе отсеивать было бы нечего, и разборщик, который каталоги НЕ
+    отбрасывает, прошёл бы проверку. Смотрим самим zipfile, а не глазами той
+    же программы: ответ должен быть независим от того, чей вывод мы и
+    проверяем.
+    """
+    with zipfile.ZipFile(archive) as packed:
+        directories = [name for name in packed.namelist() if name.endswith("/")]
+
+    assert directories, "упаковщик не положил запись каталога: проверка стала бы холостой"
+
+
+@pytest.mark.parametrize("family", sorted(rar.FAMILY_TITLES))
+def test_listing_is_read_from_a_real_tool(tmp_path, family, monkeypatch):
+    """
+    Разборщик вывода проверяется на настоящей программе, а не на подставной.
+
+    Подставная печатает то, что я про неё думаю, — и если думаю неверно,
+    молчит об этом. Так и вышло с The Unarchiver: пока программы не было, в
+    коде стояла оговорка, что выбрать одну запись он не умеет. Умеет — по
+    номеру.
+    """
+    monkeypatch.undo()  # поиск не изолируем: нужна живая машина
+    tools = [tool for tool in _installed() if tool.family == family]
+    if not tools:
+        pytest.skip("нет программы семейства %s" % family)
+    archive = _packed(tmp_path)
+
+    entries = rar.list_entries(tools[0], archive)
+
+    assert entries is not None, "%s не смогла перечислить архив" % tools[0].path
+    assert {entry.name: entry.size for entry in entries} == {
+        name.replace("\\", "/"): len(payload) for name, payload in SAMPLE
+    }
+
+
+@pytest.mark.parametrize("family", sorted(rar.FAMILY_TITLES))
+def test_a_single_entry_is_extracted_by_a_real_tool(tmp_path, family, monkeypatch):
+    """
+    Проверка пригодности достаёт ОДНУ запись — и у каждой программы свой
+    способ её назвать.
+
+    У The Unarchiver их два отличия разом: запись выбирается по номеру, а не
+    по имени, и без -D он кладёт содержимое в каталог, названный по архиву,
+    то есть этажом ниже, чем его ждут. Оба видны только на живой программе.
+    """
+    monkeypatch.undo()
+    tools = [tool for tool in _installed() if tool.family == family]
+    if not tools:
+        pytest.skip("нет программы семейства %s" % family)
+    archive = _packed(tmp_path)
+    entries = rar.list_entries(tools[0], archive)
+
+    assert rar.verify(tools[0], archive, entries), (
+        "%s не достала одну запись из собственного архива" % tools[0].path
+    )
