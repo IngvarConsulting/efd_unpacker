@@ -60,11 +60,14 @@ def test_the_product_family_code_is_present_and_fixed():
     product = document().find("%sProduct" % WIX)
 
     assert product is not None
-    assert len(product.get("UpgradeCode") or "") == 36
+    # Именно это значение, а не «какой-нибудь GUID из 36 знаков»: смена на
+    # другой, столь же настоящий, ломает семейство продукта ровно так же, и
+    # проверка на длину этого не заметила бы.
+    assert product.get("UpgradeCode") == "24200E4F-43B8-4B51-B5E3-34C8172A128B"
     assert "НЕ МЕНЯТЬ НИКОГДА" in text
 
 
-def test_nothing_is_written_under_the_extension_key_itself():
+def test_only_our_own_registry_keys_are_touched():
     """
     Критерий #17: у расширения не отбирают ни обработчик, ни сведения о нём.
 
@@ -74,13 +77,21 @@ def test_nothing_is_written_under_the_extension_key_itself():
     запоминает. На машине с 1С:Предприятием расширение оставалось ни с чем.
 
     Именованные значения ничем не лучше: Content Type, который я сперва
-    оставил, — та же общая запись, только с именем. Поэтому проверка
-    запрещает ЛЮБУЮ запись прямо под .efd; разрешён лишь подключ
-    OpenWithProgids, куда себя и добавляют.
+    оставил, — та же общая запись, только с именем. Общая база MIME — тоже:
+    ключ назван нашим типом, но раздел не наш, и удаление унесло бы чужое
+    значение.
+
+    Поэтому проверка перевёрнута: разрешены ровно два места — собственный
+    тип EFDUnpacker.efd и подключ .efd\\OpenWithProgids, куда себя
+    добавляют. Всё остальное — чужое.
     """
+    # Проверяется HKCR — общий раздел классов, где живут чужие ассоциации.
+    # Собственные настройки под HKCU\\Software\\EFD Unpacker к делу не
+    # относятся: это наше пространство имён, и ничьё больше.
+    allowed = ("EFDUnpacker.efd", ".efd\\OpenWithProgids")
     intrusions = [
-        value.get("Name") for value in document().iter("%sRegistryValue" % WIX)
-        if value.get("Key") == ".efd"
+        value.get("Key") for value in document().iter("%sRegistryValue" % WIX)
+        if value.get("Root") == "HKCR" and not value.get("Key", "").startswith(allowed)
     ]
 
     assert intrusions == []
@@ -107,6 +118,13 @@ def test_the_only_placeholder_left_is_the_transitional_one():
         "старый выпуск только обнаруживается, но не снимается"
     )
     assert "Удалить в следующем релизе" in text, "не сказано, что блок временный"
+
+    # Сузить снятие до НАШЕГО продукта нечем: Upgrade различает пакеты по
+    # коду семейства, версии и языку, а ProductCode у нас Id="*" — свой у
+    # каждой сборки. Единственное, что сужается, — диапазон версий, и он
+    # обязан покрывать только реально выпускавшиеся 1.x.
+    assert (version.get("Minimum"), version.get("Maximum")) == ("1.0.0", "2.0.0")
+    assert version.get("IncludeMaximum") == "no"
 
 
 def test_the_application_registers_itself_as_one_of_the_handlers():
