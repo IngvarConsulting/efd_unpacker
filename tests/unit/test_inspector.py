@@ -342,3 +342,125 @@ def test_unexpected_error_on_one_file_does_not_stop_the_rest(tmp_path, monkeypat
 
     assert results[0].failure.code is UnpackErrorCode.UNEXPECTED
     assert results[1].failure is None, "осмотр второго файла не состоялся"
+
+
+# --- версия платформы из msi -------------------------------------------------
+
+
+def test_version_is_read_from_the_windows_installer(tmp_path, monkeypatch):
+    """
+    В именах записей установщика Windows версии нет — она внутри msi.
+
+    Лист открывается тем же способом, что и .efd: осмотр не заводит ради
+    версии своего пути чтения.
+    """
+    from efd_unpacker.application import inspector as module
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    payload = b"docsDOCS.:DesktopDesktopFolder8.5.4.1683ENLPRO~1|en.lproj"
+    msi_file = tmp_path / "1CEnterprise 8 (x86-64).msi"
+    msi_file.write_bytes(payload)
+    leaves = (
+        Leaf(trail=("a.rar", "1CEnterprise 8 (x86-64).msi"), size=len(payload),
+             opener=lambda: open(str(msi_file), "rb")),
+        Leaf(trail=("a.rar", "Data1.cab"), size=100, opener=lambda: io.BytesIO(b"")),
+    )
+    monkeypatch.setattr(module, "leaves_of", _leaves(leaves))
+
+    result = module.inspect("/d/a.rar")
+
+    assert result.platform_version == "8.5.4.1683"
+
+
+def test_other_entries_are_not_opened(monkeypatch):
+    """
+    Открывается только msi, и только он.
+
+    У .rar опенер извлекает запись во временный каталог; открыть заодно
+    Data1.cab значило бы вытащить девятьсот мегабайт ради ничего.
+
+    Считаем открытия, а не бросаем из опенера: чтение версии ловит любое
+    исключение — ему нельзя ронять осмотр, — и брошенная ловушка была бы
+    проглочена вместе с настоящими отказами.
+    """
+    from efd_unpacker.application import inspector as module
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    opened = []
+
+    def watcher(name):
+        def opener():
+            opened.append(name)
+            return io.BytesIO(b"")
+        return opener
+
+    leaves = (
+        Leaf(trail=("a.rar", "Data1.cab"), size=100, opener=watcher("Data1.cab")),
+        Leaf(trail=("a.rar", "setup.exe"), size=100, opener=watcher("setup.exe")),
+    )
+    monkeypatch.setattr(module, "leaves_of", _leaves(leaves))
+
+    assert module.inspect("/d/a.rar").platform_version == ""
+    assert opened == [], "открыта запись, которая опознанию не нужна"
+
+
+def test_unreadable_msi_does_not_break_the_inspection(monkeypatch):
+    """Версия — украшение: опознание вида идёт по именам записей."""
+    from efd_unpacker.application import inspector as module
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    def refuse():
+        raise OSError("файл не читается")
+
+    leaves = (Leaf(trail=("a.rar", "1CEnterprise 8.msi"), size=10, opener=refuse),)
+    monkeypatch.setattr(module, "leaves_of", _leaves(leaves))
+
+    result = module.inspect("/d/a.rar")
+
+    assert result.platform_version == ""
+    assert result.failure is None
+    assert [found.name for found in result.files] == ["1CEnterprise 8.msi"]
+
+
+def _leaves(items):
+    import contextlib
+
+    @contextlib.contextmanager
+    def fake(_path, _max_depth=None):
+        yield items
+
+    return fake
+
+
+def test_only_the_first_installer_is_examined(monkeypatch):
+    """
+    Смотрим первый установщик, а не первый удачно прочитанный.
+
+    Комплектацию classify берёт из первого msi. Если по пустой версии пойти
+    читать следующий, план соберётся из компоненты одного установщика и
+    версии другого — и покажет «тонкий клиент 8.5.4.1683» там, где на диске
+    окажется что-то третье.
+    """
+    from efd_unpacker.application import inspector as module
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    opened = []
+
+    def unreadable():
+        opened.append("первый")
+        raise OSError("не читается")
+
+    def readable():
+        opened.append("второй")
+        return io.BytesIO(b"DesktopFolder8.5.4.1683ENLPRO")
+
+    leaves = (
+        Leaf(trail=("a.rar", "1CEnterprise 8 Thin client.msi"), size=10, opener=unreadable),
+        Leaf(trail=("a.rar", "1CEnterprise 8 Server (x86-64).msi"), size=10, opener=readable),
+    )
+    monkeypatch.setattr(module, "leaves_of", _leaves(leaves))
+
+    result = module.inspect("/d/a.rar")
+
+    assert result.platform_version == ""
+    assert opened == ["первый"], "прочитан не тот установщик"

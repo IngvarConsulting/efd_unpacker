@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
 
@@ -87,6 +87,9 @@ class Inspected:
     supplies: Tuple[FoundSupply, ...] = ()
     files: Tuple[FoundFile, ...] = ()
     failure: Optional[UnpackError] = None
+    #: Версия платформы, прочитанная из содержимого. Нужна установщику
+    #: Windows: в именах его записей версии нет, а в msi — есть.
+    platform_version: str = ""
 
     @property
     def name(self) -> str:
@@ -165,6 +168,38 @@ _PLATFORM_PKG = re.compile(r"^1cv8-(?P<component>[\w.]+?)-(?P<version>[\d.]+)\.p
 _PLATFORM_PACKAGE = re.compile(
     r"^1c-enterprise-(?P<version>[\d.]+)-(?P<role>[\w-]+?)[_-].*\.(?:deb|rpm)$", re.I
 )
+# Установщик платформы под Windows. Имя msi — единственное место в архиве,
+# где записана комплектация: «1CEnterprise 8 Thin client (x86-64).msi»,
+# «1CEnterprise 8 Server (x86-64).msi», «1CEnterprise 8.msi». Имя самого
+# архива обманывает — windows64_* это СЕРВЕР, а не 64-битный клиент.
+#
+# Версии здесь нет вовсе: в именах записей её не бывает ни у одного из десяти
+# проверенных архивов. Её читает слой осмотра из содержимого msi.
+_WINDOWS_MSI = re.compile(
+    r"^1CEnterprise 8(?: (?P<component>[\w ]+?))?(?: \((?P<arch>[\w-]+)\))?\.msi$", re.I
+)
+
+#: Как называются компоненты Windows-установщика: слаг для каталога и имя для
+#: человека. Пустая компонента — полный комплект, у него в имени msi ничего
+#: между «8» и расширением.
+WINDOWS_COMPONENTS = {
+    "": ("full", ""),
+    "thin client": ("thin-client", "тонкий клиент"),
+    "server": ("server", "сервер"),
+}
+
+# Вложенный установщик клиентов. Имени msi мало: windows64_, windows64_with_
+# clients_ и windows64_with_all_clients_ дают ОДНО И ТО ЖЕ имя msi и легли бы
+# в один каталог, затирая друг друга. Отличает их ровно этот файл, а Data1.cab
+# у всех трёх одинаковый — то есть ядро одно, различается вложенное.
+_WINDOWS_CLIENTS = re.compile(r"^(?P<bundle>[\w-]+)-clients-distr_[\d.]+\.exe$", re.I)
+
+#: Как называется комплект вложенных клиентов.
+WINDOWS_BUNDLES = {
+    "all": ("all-clients", "со всеми клиентами"),
+    "win-mac": ("win-mac-clients", "с клиентами Windows и macOS"),
+}
+
 _PACKAGE = re.compile(r"\.(?:deb|rpm)$", re.I)
 _CONTENT = re.compile(r"\.(?:cf|cfu|cfe|dt|epf|erf)$", re.I)
 _ARCH = re.compile(r"(x86_64|amd64|aarch64|arm64|e2k|i386|noarch)", re.I)
@@ -208,6 +243,11 @@ def classify(files: Sequence[FoundFile]) -> Classification:
             )
 
     for found in files:
+        match = _WINDOWS_MSI.match(found.name)
+        if match:
+            return _windows_installer(match, files)
+
+    for found in files:
         match = _PLATFORM_PACKAGE.match(found.name)
         if match:
             return Classification(
@@ -226,6 +266,46 @@ def classify(files: Sequence[FoundFile]) -> Classification:
         return Classification(ItemKind.CONTENT, "Файлы конфигураций и выгрузок")
 
     return Classification(ItemKind.OTHER, "")
+
+
+def is_windows_installer(name: str) -> bool:
+    """Тот самый msi, из которого слой осмотра достаёт версию платформы."""
+    return bool(_WINDOWS_MSI.match(name))
+
+
+def _windows_installer(match, files: Sequence[FoundFile]) -> Classification:
+    """
+    Опознание по имени msi: комплектация, вложенные клиенты и разрядность.
+
+    Версия остаётся пустой — в именах записей её нет. Её подставляет слой
+    осмотра, прочитав содержимое msi; без неё опознание всё равно верное,
+    просто каталог окажется без номера.
+    """
+    component = (match.group("component") or "").strip().lower()
+    slug, russian = WINDOWS_COMPONENTS.get(component, (component.replace(" ", "-"), component))
+
+    bundle_slug, bundle_russian = _windows_bundle(files)
+    if bundle_slug:
+        slug = "%s-%s" % (slug, bundle_slug)
+
+    # «x86-64» в имени msi — та же архитектура, что «x86_64» у .run и .deb.
+    # Разные написания развели бы один выпуск по двум каталогам.
+    arch = (match.group("arch") or "").lower().replace("-", "_")
+    parts = [part for part in (russian, bundle_russian) if part]
+    title = "Платформа 1С:Предприятия"
+    if parts:
+        title = "%s, %s" % (title, ", ".join(parts))
+    return Classification(ItemKind.PLATFORM, title, "", slug, arch)
+
+
+def _windows_bundle(files: Sequence[FoundFile]) -> Tuple[str, str]:
+    """Комплект вложенных клиентов, если он есть. Иначе две пустые строки."""
+    for found in files:
+        match = _WINDOWS_CLIENTS.match(found.name)
+        if match:
+            bundle = match.group("bundle").lower()
+            return WINDOWS_BUNDLES.get(bundle, ("%s-clients" % bundle, bundle))
+    return "", ""
 
 
 def architecture_of(files: Sequence[FoundFile]) -> str:
@@ -420,6 +500,10 @@ def _filter_took_everything(entries: Sequence[Entry], kept: Sequence[Entry]) -> 
 
 def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem:
     found = classify(result.files)
+    if not found.version and result.platform_version:
+        # Опознание идёт по именам записей и версии у Windows-установщика не
+        # находит — её принёс слой осмотра, прочитав содержимое msi.
+        found = replace(found, version=result.platform_version)
     stem = _stem(result.name)
 
     if found.kind is ItemKind.PLATFORM:
