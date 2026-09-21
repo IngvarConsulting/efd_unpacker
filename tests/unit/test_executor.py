@@ -156,8 +156,8 @@ def test_distribution_files_keep_their_structure(tmp_path):
     writers.extract_other(plan.items[0])
 
     assert _tree(roots.distributions_root) == [
-        "platform/8.3.27.2342/full-x86_64/docs/readme.txt",
-        "platform/8.3.27.2342/full-x86_64/setup-full-8.3.27.2342-x86_64.run",
+        "platform/8.3.27.2342/linux-full-x86_64/docs/readme.txt",
+        "platform/8.3.27.2342/linux-full-x86_64/setup-full-8.3.27.2342-x86_64.run",
     ]
 
 
@@ -263,7 +263,7 @@ def test_existing_read_only_file_is_replaced(tmp_path):
         ("setup-full-8.3.27.2342-x86_64.run", "новая версия".encode("utf-8")),
     ]))
     target = os.path.join(
-        roots.distributions_root, "platform", "8.3.27.2342", "full-x86_64",
+        roots.distributions_root, "platform", "8.3.27.2342", "linux-full-x86_64",
         "setup-full-8.3.27.2342-x86_64.run",
     )
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -294,7 +294,7 @@ def test_extracted_file_keeps_usable_permissions(tmp_path):
     Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
 
     target = os.path.join(
-        roots.distributions_root, "platform", "8.3.27.2342", "full-x86_64",
+        roots.distributions_root, "platform", "8.3.27.2342", "linux-full-x86_64",
         "setup-full-8.3.27.2342-x86_64.run",
     )
     assert os.stat(target).st_mode & 0o077 != 0, "режим остался 0600"

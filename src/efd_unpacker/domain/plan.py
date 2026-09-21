@@ -191,6 +191,13 @@ _WINDOWS_MSI = re.compile(
     r"^1CEnterprise 8(?: (?P<component>[\w ]+?))?(?: \((?P<arch>[\w-]+)\))?\.msi$", re.I
 )
 
+#: Система, под которую собран дистрибутив. Задаёт её правило, по которому
+#: архив опознан: .run и пакеты — Linux, .pkg — macOS, msi — Windows.
+LINUX, WINDOWS, MACOS = "linux", "windows", "macos"
+
+#: Как система называется для человека.
+SYSTEM_TITLES = {LINUX: "Linux", WINDOWS: "Windows", MACOS: "macOS"}
+
 #: Как называется комплектация: слаг для каталога и имя для человека.
 #:
 #: Таблица общая для всех систем намеренно. Одну и ту же комплектацию три
@@ -252,6 +259,7 @@ class Classification:
     version: str = ""
     component: str = ""
     arch: str = ""
+    system: str = ""
 
 
 def classify(files: Sequence[FoundFile]) -> Classification:
@@ -265,7 +273,8 @@ def classify(files: Sequence[FoundFile]) -> Classification:
         match = _PLATFORM_RUN.match(found.name)
         if match:
             return _platform_installer(
-                files, match.group("component"), match.group("version"), match.group("arch"),
+                files, LINUX,
+                match.group("component"), match.group("version"), match.group("arch"),
             )
 
     for found in files:
@@ -273,8 +282,8 @@ def classify(files: Sequence[FoundFile]) -> Classification:
         if match:
             slug, russian = platform_component(match.group("component"))
             return Classification(
-                ItemKind.PLATFORM, _platform_title(russian),
-                match.group("version"), slug, architecture_of(files),
+                ItemKind.PLATFORM, _platform_title(MACOS, russian),
+                match.group("version"), slug, architecture_of(files), MACOS,
             )
 
     for found in files:
@@ -284,7 +293,7 @@ def classify(files: Sequence[FoundFile]) -> Classification:
             # слой осмотра, прочитав содержимое msi; без неё опознание всё
             # равно верное, просто каталог окажется без номера.
             return _platform_installer(
-                files, match.group("component") or "", "", match.group("arch") or "",
+                files, WINDOWS, match.group("component") or "", "", match.group("arch") or "",
             )
 
     platform = _platform_packages(files)
@@ -322,14 +331,17 @@ def platform_component(component: str) -> Tuple[str, str]:
     return PLATFORM_COMPONENTS.get(key, (key, key))
 
 
-def _platform_title(*parts: str) -> str:
-    """«Платформа 1С:Предприятия» и уточнения через запятую."""
+def _platform_title(system: str, *parts: str) -> str:
+    """«Платформа 1С:Предприятия для Windows» и уточнения через запятую."""
+    head = "Платформа 1С:Предприятия"
+    if system:
+        head = "%s для %s" % (head, SYSTEM_TITLES.get(system, system))
     named = [part for part in parts if part]
-    return "Платформа 1С:Предприятия" + (", " + ", ".join(named) if named else "")
+    return head + (", " + ", ".join(named) if named else "")
 
 
 def _platform_installer(
-    files: Sequence[FoundFile], component: str, version: str, arch: str,
+    files: Sequence[FoundFile], system: str, component: str, version: str, arch: str,
 ) -> Classification:
     """
     Опознание установщика платформы: комплектация, вложенные клиенты, разрядность.
@@ -344,8 +356,8 @@ def _platform_installer(
     if bundle_slug:
         slug = "%s-%s" % (slug, bundle_slug)
     return Classification(
-        ItemKind.PLATFORM, _platform_title(russian, bundle_russian),
-        version, slug, normalize_arch(arch),
+        ItemKind.PLATFORM, _platform_title(system, russian, bundle_russian),
+        version, slug, normalize_arch(arch), system,
     )
 
 
@@ -387,8 +399,8 @@ def _platform_packages(files: Sequence[FoundFile]) -> Optional[Classification]:
     slug, russian = platform_component(_package_role(roles))
     formats = _formats_of(matched)
     return Classification(
-        ItemKind.PLATFORM, _platform_title(russian, "пакеты %s" % formats),
-        version, "%s-%s" % (slug, formats), architecture_of(matched),
+        ItemKind.PLATFORM, _platform_title(LINUX, russian, "пакеты %s" % formats),
+        version, "%s-%s" % (slug, formats), architecture_of(matched), LINUX,
     )
 
 
@@ -685,8 +697,18 @@ def keeps_configuration(path: str) -> bool:
 
 
 def _component(found: Classification) -> str:
-    """Имя каталога компоненты: «client», «full-x86_64», «server-deb-x86_64»."""
-    parts = [part for part in (found.component, found.arch) if part]
+    """
+    Имя каталога компоненты: «macos-client», «linux-server-deb-x86_64».
+
+    Система идёт первой, и она обязательна для платформы: комплектации у всех
+    систем называются одинаково — «полный», «тонкий клиент», «сервер», — и
+    полный установщик Linux с полным установщиком Windows одной версии
+    совпадали по всем трём признакам разом.
+
+    Чужому набору пакетов система не нужна и не ставится: он назван продуктом
+    и форматом, и двух систем под одним таким именем не бывает.
+    """
+    parts = [part for part in (found.system, found.component, found.arch) if part]
     return "-".join(parts) or "installer"
 
 
