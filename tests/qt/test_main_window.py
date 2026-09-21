@@ -2047,3 +2047,36 @@ def test_clearing_the_list_does_not_forget_a_partial_write(qtbot):
     qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
 
     assert window._unpacked_origins() == [], "демобаза всё ещё только в архиве"
+
+
+def test_the_buttons_come_back_when_the_thread_really_exits(qtbot):
+    """
+    Кнопки возвращаются по выходу из потока, а не по приходу completed.
+
+    completed испускается изнутри run(), и к моменту доставки QThread ещё
+    числится работающим: _unpacking() отвечает «да», и обновление в конце
+    батча прячет то, что обязано было показать. Кто выиграет гонку — дело
+    случая: на Linux и Windows completed обычно приходит уже после выхода
+    из run(), на macOS не всегда.
+
+    Проигравший порядок воспроизводится напрямую: ждать его от планировщика
+    значило бы ловить падение раз в сотню прогонов и только на одной системе.
+    """
+    class _StillRunning:
+        def isRunning(self):
+            return True
+
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    assert not window.button_trash.isHidden(), "предпосылка: после распаковки кнопка есть"
+
+    window._batch_thread = _StillRunning()
+    window._refresh()
+    assert window.button_trash.isHidden(), "предпосылка: пока поток жив, кнопки нет"
+
+    window._forget_batch_thread()
+
+    assert not window.button_trash.isHidden(), "кнопка не вернулась по выходу из потока"
