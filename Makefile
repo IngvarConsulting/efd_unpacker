@@ -346,7 +346,7 @@ create-windows-msi:
 		echo "WiX Toolset found, creating MSI installer..."; \
 		VERSION=$$(cat version.txt); \
 		sed "s/VERSION_PLACEHOLDER/$$VERSION/g" installer/windows/installer.wxs > installer/windows/installer_temp.wxs; \
-		candle installer/windows/installer_temp.wxs -out installer/windows/installer.wixobj; \
+		candle -arch x64 installer/windows/installer_temp.wxs -out installer/windows/installer.wixobj; \
 		if [ $$? -eq 0 ]; then \
 			light installer/windows/installer.wixobj -out dist/efd-unpacker-$$VERSION-windows.msi; \
 			if [ $$? -eq 0 ]; then \
