@@ -1216,6 +1216,13 @@ class MainWindow(QMainWindow):
             if self._wrote_in_full(written):
                 self._written.add(key)
                 self._partial.discard(key)
+                # Настояние отработало и больше не нужно: каталог неполон был
+                # до нас, а теперь мы сами его дописали. Оставь мы его, любая
+                # следующая пересборка плана — щелчок по фильтру, новый файл в
+                # списке — снова объявляла бы каталог неустановленным и
+                # возвращала строку ОТМЕЧЕННОЙ. Настаивали один раз, а
+                # переписывалось бы при каждом запуске.
+                self._forced.discard(written.destination)
             else:
                 self._partial.add(key)
         if any(item.kind is ItemKind.SUPPLY for item in result.written):

@@ -2251,3 +2251,80 @@ def test_clearing_the_list_forgets_the_insistence(qtbot, tmp_path):
 
     assert window.rows[0].mark.state() == row_widgets.INSTALLED
     assert window._plan.items[0].action is Action.SKIP
+
+
+def test_a_finished_insistence_does_not_arm_the_row_again(qtbot, tmp_path):
+    """
+    Настояние отработало — и кончилось.
+
+    Каталог был неполон до нас, а теперь мы сами его дописали, и повода
+    считать его неустановленным больше нет. Останься настояние в силе, любая
+    следующая пересборка плана — щелчок по фильтру, новый файл в списке —
+    снова объявляла бы каталог неустановленным и возвращала строку
+    ОТМЕЧЕННОЙ: настаивали один раз, а переписывалось бы при каждом запуске.
+    """
+    destination = str(tmp_path / "dist")
+    os.makedirs(destination)
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.rows[0].mark.click()
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    window.check_only_cf.setChecked(True)  # любая пересборка плана
+
+    assert window._plan.items[0].action is Action.SKIP, "настояние пережило свою работу"
+    assert window.rows[0].mark.state() == row_widgets.INSTALLED
+
+
+def test_insistence_outlives_a_write_that_failed(qtbot, tmp_path):
+    """
+    А вот отказ настояния не отменяет.
+
+    Каталог как был неизвестной полноты, так и остался: мы ничего не
+    записали. Забудь мы настояние здесь, человеку пришлось бы объявлять его
+    заново после каждой неудачи — притом что причина отказа (права, место,
+    вынутая флешка) чинится снаружи, и естественное действие «повторить».
+    """
+    destination = str(tmp_path / "dist")
+    os.makedirs(destination)
+    planned = item(kind=ItemKind.PACKAGES, template=None, destination=destination)
+    window = make_window(
+        qtbot, build=_installed_unless_forced(planned), batch=failing_batch
+    )
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.rows[0].mark.click()
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    window.check_only_cf.setChecked(True)
+
+    assert window._plan.items[0].action is Action.WRITE, "настояние потеряно после отказа"
+
+
+def test_insistence_outlives_a_write_the_filter_cut_short(qtbot, tmp_path):
+    """
+    Записали не всё — настояние остаётся в силе.
+
+    С «без демобаз» выгрузка не поехала, и каталог как был неполным, так и
+    остался: дописывать в нём есть что. Сними мы настояние здесь, человеку
+    пришлось бы объявлять его заново, чтобы забрать демобазу без фильтра.
+    """
+    destination = str(tmp_path / "tmplts")
+    os.makedirs(destination)
+    planned = item(destination=destination)
+    window = make_window(qtbot, build=_installed_unless_forced(planned))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.check_only_cf.setChecked(True)
+    window.rows[0].mark.click()
+    assert window._plan.items[0].action is Action.WRITE, "предпосылка: настояли"
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+    window.check_only_cf.setChecked(False)
+
+    assert window._plan.items[0].action is Action.WRITE, "настояние снято, а записано не всё"
