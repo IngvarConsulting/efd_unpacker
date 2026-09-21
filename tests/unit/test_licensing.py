@@ -40,14 +40,22 @@ ARTIFACT_TARGETS = {
     "build-linux-executable": (
         '--add-data "licenses$(PYI_DATASEP)licenses"',
         '--add-data "LICENSE$(PYI_DATASEP)licenses"',
+        '--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses"',
     ),
     "build-windows-executable": (
         '--add-data "licenses$(PYI_DATASEP)licenses"',
         '--add-data "LICENSE$(PYI_DATASEP)licenses"',
+        '--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses"',
     ),
-    "create-linux-appimage": ("licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt"),
-    "create-linux-deb": ("licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt"),
-    "create-macos-dmg": ("licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt"),
+    "create-linux-appimage": (
+        "licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt", "build/BUILD-MANIFEST.txt",
+    ),
+    "create-linux-deb": (
+        "licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt", "build/BUILD-MANIFEST.txt",
+    ),
+    "create-macos-dmg": (
+        "licenses/GPL-3.0.txt", "licenses/LGPL-3.0.txt", "build/BUILD-MANIFEST.txt",
+    ),
 }
 
 
@@ -117,7 +125,9 @@ def test_the_installer_promises_the_files_it_actually_installs():
 
     installed = re.findall(r'Id="License\w+" Name="([^"]+)"', wxs)
 
-    assert len(installed) == 3, "ожидались три файла лицензий, найдено %r" % installed
+    assert set(installed) == {
+        "LICENSE.txt", "GPL-3.0.txt", "LGPL-3.0.txt", "BUILD-MANIFEST.txt",
+    }, "установщик кладёт не тот набор: %r" % sorted(installed)
     for name in installed:
         assert name in rtf, "установщик кладёт %s, но на экране о нём ни слова" % name
 
@@ -140,40 +150,36 @@ def test_the_installer_license_screen_shows_the_whole_gpl():
     assert missing == [], "в экране лицензии нет строк: %r" % missing[:3]
 
 
-def test_every_bundled_dependency_is_pinned_exactly():
+def test_the_manifest_is_made_before_anything_is_built():
     """
     GPL v3 обещает получателю исходники, СООТВЕТСТВУЮЩИЕ его бинарю.
 
-    Пока PyQt5-Qt5 и PyQt5-sip приходили транзитивно, диапазоном
-    (>=5.15.2,<5.16.0 и >=12.15,<13), две сборки одного тега могли получить
-    разные Qt и разный sip — и обещание становилось непроверяемым.
-    Транзитивность тут не оправдание: в бинарь вкомпилированы именно они.
+    Закрепить версии в requirements.txt нельзя: под Windows колесо PyQt5-Qt5
+    публикуется только до 5.15.2, под macOS и Linux — новее, и пин на любую
+    из них ломает сборку на другой системе (так и вышло: windows-2022 упал на
+    «No matching distribution»). Поэтому состав записывается по факту, и
+    записан он должен быть ДО того, как собран первый артефакт.
     """
-    from importlib import metadata
+    text = (ROOT / "Makefile").read_text(encoding="utf-8")
 
-    from packaging.requirements import Requirement
+    for target in ("build-macos", "build-linux", "build-windows"):
+        line = re.search(r"^%s:.*$" % re.escape(target), text, re.M)
+        assert line is not None, "нет цели %s" % target
+        assert "create-build-manifest" in line.group(0), (
+            "%s собирает артефакт, не записав состав" % target
+        )
 
-    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
-    listed = {}
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith("#"):
-            listed[Requirement(line).name.lower()] = line
 
-    assert listed, "requirements.txt пуст"
-    assert [line for line in listed.values() if "==" not in line] == []
+def test_the_manifest_records_the_versions_and_not_just_the_names():
+    """
+    Манифест без версий бесполезен: имя пакета не даёт исходников.
 
-    # Мало закрепить перечисленное: дыра была в том, что Qt и sip в списке не
-    # значились вовсе. Что именно тянет за собой PyQt5, спрашиваем у него
-    # самого — иначе тест пришлось бы править вручную при каждой новой
-    # зависимости, а это ровно тот случай, когда забывают.
-    bundled = {
-        Requirement(text).name.lower()
-        for text in (metadata.requires("PyQt5") or [])
-        if "extra ==" not in text
-    }
+    pip list --format=freeze печатает «имя==версия»; обычный pip list рисует
+    таблицу, и разница между ними — ровно то, ради чего манифест заведён.
+    """
+    body = makefile_target("create-build-manifest")
 
-    assert not bundled - set(listed), "не закреплены: %s" % sorted(bundled - set(listed))
+    assert "--format=freeze" in body
 
 
 def test_the_documents_say_what_the_builds_are_licensed_under():

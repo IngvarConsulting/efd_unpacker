@@ -43,6 +43,7 @@
         <File Source="licenses\GPL-3.0.txt" Id="LicenseGPL3" Name="GPL-3.0.txt" />
         <File Source="licenses\LGPL-3.0.txt" Id="LicenseLGPL3" Name="LGPL-3.0.txt" />
         <File Source="LICENSE" Id="LicenseMIT" Name="LICENSE.txt" />
+        <File Source="build\BUILD-MANIFEST.txt" Id="LicenseManifest" Name="BUILD-MANIFEST.txt" />
 
         <RegistryValue Root="HKCR" Key=".efd" Value="EFDFile" Type="string" />
         <RegistryValue Root="HKCR" Key="EFDFile" Value="EFD Archive File" Type="string" />
