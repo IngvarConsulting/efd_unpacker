@@ -121,7 +121,7 @@ def test_distribution_goes_to_the_distributions_root():
         settings(),
     )
 
-    assert plan.items[0].destination == "/dist/platform/8.3.27.2342/full-x86_64"
+    assert plan.items[0].destination == "/dist/platform/8.3.27.2342/linux-full-x86_64"
 
 
 def test_macos_client_keeps_its_component_in_the_path():
@@ -131,7 +131,7 @@ def test_macos_client_keeps_its_component_in_the_path():
         settings(),
     )
 
-    assert plan.items[0].destination == "/dist/platform/8.5.1.1529/client"
+    assert plan.items[0].destination == "/dist/platform/8.5.1.1529/macos-client"
 
 
 def test_library_without_efd_goes_to_content():
@@ -543,13 +543,14 @@ def test_file_count_follows_the_filter():
     "msi, component, arch, title",
     [
         ("1CEnterprise 8 Thin client (x86-64).msi", "thin-client", "x86_64",
-         "Платформа 1С:Предприятия, тонкий клиент"),
+         "Платформа 1С:Предприятия для Windows, тонкий клиент"),
         ("1CEnterprise 8 Thin client.msi", "thin-client", "",
-         "Платформа 1С:Предприятия, тонкий клиент"),
+         "Платформа 1С:Предприятия для Windows, тонкий клиент"),
         ("1CEnterprise 8 Server (x86-64).msi", "server", "x86_64",
-         "Платформа 1С:Предприятия, сервер"),
-        ("1CEnterprise 8 (x86-64).msi", "full", "x86_64", "Платформа 1С:Предприятия"),
-        ("1CEnterprise 8.msi", "full", "", "Платформа 1С:Предприятия"),
+         "Платформа 1С:Предприятия для Windows, сервер"),
+        ("1CEnterprise 8 (x86-64).msi", "full", "x86_64",
+         "Платформа 1С:Предприятия для Windows"),
+        ("1CEnterprise 8.msi", "full", "", "Платформа 1С:Предприятия для Windows"),
     ],
     ids=["тонкий-64", "тонкий-32", "сервер-64", "полный-64", "полный-32"],
 )
@@ -571,9 +572,9 @@ def test_windows_installer_is_recognised_by_the_msi_name(msi, component, arch, t
     "bundle, component, title",
     [
         ("all-clients-distr_8.5.4.1683.exe", "server-all-clients",
-         "Платформа 1С:Предприятия, сервер, со всеми клиентами"),
+         "Платформа 1С:Предприятия для Windows, сервер, со всеми клиентами"),
         ("win-mac-clients-distr_8.5.4.1683.exe", "server-win-mac-clients",
-         "Платформа 1С:Предприятия, сервер, с клиентами Windows и macOS"),
+         "Платформа 1С:Предприятия для Windows, сервер, с клиентами Windows и macOS"),
     ],
     ids=["все-клиенты", "win-mac"],
 )
@@ -625,7 +626,7 @@ def test_version_read_from_the_msi_reaches_the_plan():
     item = build_plan([inspected], settings()).items[0]
 
     assert item.version == "8.5.4.1683"
-    assert item.destination.endswith("platform/8.5.4.1683/full-x86_64")
+    assert item.destination.endswith("platform/8.5.4.1683/windows-full-x86_64")
 
 
 def test_missing_version_does_not_break_the_recognition():
@@ -641,7 +642,7 @@ def test_missing_version_does_not_break_the_recognition():
     item = build_plan([inspected], settings()).items[0]
 
     assert item.kind is ItemKind.PLATFORM
-    assert item.destination.endswith("platform/unknown/full-x86_64")
+    assert item.destination.endswith("platform/unknown/windows-full-x86_64")
 
 
 # --- дистрибутивы Linux -------------------------------------------------------
@@ -650,9 +651,9 @@ def test_missing_version_does_not_break_the_recognition():
 @pytest.mark.parametrize(
     "run, component, title",
     [
-        ("setup-full-8.5.1.1529-x86_64.run", "full", "Платформа 1С:Предприятия"),
+        ("setup-full-8.5.1.1529-x86_64.run", "full", "Платформа 1С:Предприятия для Linux"),
         ("setup-thin-8.5.1.1529-x86_64.run", "thin-client",
-         "Платформа 1С:Предприятия, тонкий клиент"),
+         "Платформа 1С:Предприятия для Linux, тонкий клиент"),
     ],
     ids=["полный", "тонкий клиент"],
 )
@@ -822,10 +823,83 @@ def test_packages_of_one_kind_keep_their_format_too():
     assert deb.component != rpm.component
 
 
-#: Настоящий корпус: четырнадцать дистрибутивов Linux, две версии платформы,
-#: четыре архитектуры, оба формата пакетов. Имена записей взяты из архивов
-#: как есть — на выдуманных правило не выводится: три из четырёх дефектов
-#: видны только на паре архивов, а четвёртый — только на паре из трёх.
+# --- система дистрибутива -----------------------------------------------------
+
+
+def test_linux_and_windows_installers_do_not_share_a_folder():
+    """
+    Комплектации всех систем названы одинаково, и это сделано нарочно:
+    «1CEnterprise 8.msi» и setup-full-*.run — один и тот же полный комплект.
+
+    Но, сведя названия, мы убрали последнее, чем система себя выдавала:
+    полный установщик Linux 8.5.4.1683 (1.8 ГБ) и полный установщик Windows
+    той же версии (1.2 ГБ) совпадали по комплектации, версии и разрядности
+    разом и ложились в один каталог.
+    """
+    linux = Inspected(
+        path="/d/server64_8_5_4_1683.zip",
+        files=files("setup-full-8.5.4.1683-x86_64.run", "installAsRoot"),
+    )
+    windows = Inspected(
+        path="/d/windows64full_8_5_4_1683.rar",
+        files=files("1CEnterprise 8 (x86-64).msi", "Data1.cab"),
+        platform_version="8.5.4.1683",
+    )
+
+    plan = build_plan([linux, windows], settings())
+
+    assert plan.items[0].destination != plan.items[1].destination
+
+
+def test_two_systems_do_not_read_as_the_same_row():
+    """
+    Каталоги разошлись, но человек смотрит в строку плана, а не в путь.
+
+    Без системы в заголовке две строки читались бы слово в слово одинаково —
+    и разное место назначения выглядело бы ошибкой программы.
+    """
+    linux = classify(files("setup-full-8.5.4.1683-x86_64.run"))
+    windows = classify(files("1CEnterprise 8 (x86-64).msi", "Data1.cab"))
+
+    assert linux.title != windows.title
+
+
+@pytest.mark.parametrize(
+    "names, system",
+    [
+        (["setup-full-8.5.4.1683-x86_64.run"], "linux"),
+        (["1c-enterprise-8.5.1.1529-server_8.5.1-1529_amd64.deb"], "linux"),
+        (["1cv8-client-8.5.1.1529.pkg"], "macos"),
+        (["1CEnterprise 8 (x86-64).msi", "Data1.cab"], "windows"),
+    ],
+    ids=["установщик Linux", "пакеты Linux", "macOS", "Windows"],
+)
+def test_the_rule_that_matched_names_the_system(names, system):
+    """Систему задаёт правило, по которому архив опознан, а не имя архива."""
+    assert classify(files(*names)).system == system
+
+
+def test_a_third_party_package_set_gets_no_system():
+    """
+    Чужому набору пакетов система не нужна и не ставится.
+
+    Он назван продуктом и форматом, и двух систем под одним таким именем не
+    бывает: «linux-» в имени каталога сказало бы ровно то, что уже сказано
+    словом «deb».
+    """
+    found = classify(files("postgresql-18_18.4-1.1C_amd64.deb"))
+
+    assert found.system == ""
+    assert found.component == "packages-deb"
+
+
+#: Настоящий корпус: двадцать четыре дистрибутива — четырнадцать Linux и
+#: десять Windows, три версии платформы, четыре архитектуры, оба формата
+#: пакетов. Имена записей взяты из архивов как есть: на выдуманных правила не
+#: выводятся, почти каждый дефект виден только на ПАРЕ архивов, а не на одном.
+#:
+#: Третьим полем идёт версия платформы: у Windows её в именах записей нет
+#: вовсе, и в план её приносит слой осмотра, прочитав содержимое msi.
 CORPUS = (
     ("deb64_8_3_27_2342.zip", (
         "1c-enterprise-8.3.27.2342-common-nls_8.3.27-2342_amd64.deb",
@@ -835,8 +909,8 @@ CORPUS = (
         "1c-enterprise-8.3.27.2342-ws-nls_8.3.27-2342_amd64.deb",
         "1c-enterprise-8.3.27.2342-ws_8.3.27-2342_amd64.deb",
         "1c-enterprise-8.3.27.2342-crs_8.3.27-2342_amd64.deb",
-    )),
-    ("deb64_8_5_1_1529.zip", SERVER_DEB),
+    ), ""),
+    ("deb64_8_5_1_1529.zip", SERVER_DEB, ""),
     ("rpm64_8_5_1_1529.zip", (
         "1c-enterprise-8.5.1.1529-common-8.5.1-1529.x86_64.rpm",
         "1c-enterprise-8.5.1.1529-common-nls-8.5.1-1529.x86_64.rpm",
@@ -844,59 +918,99 @@ CORPUS = (
         "1c-enterprise-8.5.1.1529-server-nls-8.5.1-1529.x86_64.rpm",
         "1c-enterprise-8.5.1.1529-ws-8.5.1-1529.x86_64.rpm",
         "1c-enterprise-8.5.1.1529-crs-8.5.1-1529.x86_64.rpm",
-    )),
-    ("server64_8_3_27_2342.zip", ("setup-full-8.3.27.2342-x86_64.run", "installAsRoot")),
-    ("server64_8_5_1_1529.zip", ("setup-full-8.5.1.1529-x86_64.run", "installAsRoot")),
-    ("server64_8_5_4_1683.zip", ("setup-full-8.5.4.1683-x86_64.run", "installAsRoot")),
+    ), ""),
+    ("server64_8_3_27_2342.zip", ("setup-full-8.3.27.2342-x86_64.run", "installAsRoot"), ""),
+    ("server64_8_5_1_1529.zip", ("setup-full-8.5.1.1529-x86_64.run", "installAsRoot"), ""),
+    ("server64_8_5_4_1683.zip", ("setup-full-8.5.4.1683-x86_64.run", "installAsRoot"), ""),
     ("server64_with_all_clients_8_5_1_1529.zip", (
         "setup-full-8.5.1.1529-x86_64.run", "installAsRoot",
         "all-clients-distr-8.5.1.1529-x86_64.run",
-    )),
+    ), ""),
     ("thin.client.arm.deb64_8.5.1.1529.zip", (
         "1c-enterprise-8.5.1.1529-thin-client-nls_8.5.1-1529_arm64.deb",
         "1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_arm64.deb",
-    )),
+    ), ""),
     ("thin.client.arm.rpm64_8.5.1.1529.zip", (
         "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.aarch64.rpm",
         "1c-enterprise-8.5.1.1529-thin-client-nls-8.5.1-1529.aarch64.rpm",
-    )),
+    ), ""),
     ("thin.client.e2k_8c.deb_8.5.1.1529.zip", (
         "1c-enterprise-8.5.1.1529-thin-client-nls_8.5.1-1529_e2k-8c.deb",
         "1c-enterprise-8.5.1.1529-thin-client_8.5.1-1529_e2k-8c.deb",
-    )),
+    ), ""),
     ("thin.client.e2k_8c.rpm_8.5.1.1529.zip", (
         "1c-enterprise-8.5.1.1529-thin-client-8.5.1-1529.e2k.rpm",
         "1c-enterprise-8.5.1.1529-thin-client-nls-8.5.1-1529.e2k.rpm",
-    )),
-    ("thin.client64_8_5_1_1529.zip", ("setup-thin-8.5.1.1529-x86_64.run", "installAsRoot")),
-    ("thin.client_8_5_1_1529.deb64.zip", THIN_DEB),
-    ("thin.client_8_5_1_1529.rpm64.zip", THIN_RPM),
+    ), ""),
+    ("thin.client64_8_5_1_1529.zip", ("setup-thin-8.5.1.1529-x86_64.run", "installAsRoot"), ""),
+    ("thin.client_8_5_1_1529.deb64.zip", THIN_DEB, ""),
+    ("thin.client_8_5_1_1529.rpm64.zip", THIN_RPM, ""),
+    ("setuptc64_8_3_27_2342.rar", (
+        "setup.exe", "1CEnterprise 8 Thin client (x86-64).msi", "Data1.cab",
+    ), "8.3.27.2342"),
+    ("setuptc64_8_5_4_1683.rar", (
+        "setup.exe", "1CEnterprise 8 Thin client (x86-64).msi", "Data1.cab",
+    ), "8.5.4.1683"),
+    ("setuptc_8_5_4_1683.rar", (
+        "1CEnterprise 8 Thin client.msi", "setup.exe", "Data1.cab",
+    ), "8.5.4.1683"),
+    ("windows64_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "setup.exe", "Data1.cab",
+        "1CEnterprise 8 Server (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows64_with_all_clients_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "setup.exe", "all-clients-distr_8.5.4.1683.exe",
+        "Data1.cab", "1CEnterprise 8 Server (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows64_with_clients_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "win-mac-clients-distr_8.5.4.1683.exe", "setup.exe",
+        "Data1.cab", "1CEnterprise 8 Server (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows64full_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "setup.exe", "Data1.cab", "1CEnterprise 8 (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows64full_with_all_clients_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "setup.exe", "all-clients-distr_8.5.4.1683.exe",
+        "Data1.cab", "1CEnterprise 8 (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows64full_with_clients_8_5_4_1683.rar", (
+        "vc_redist.x64.exe", "win-mac-clients-distr_8.5.4.1683.exe", "setup.exe",
+        "Data1.cab", "1CEnterprise 8 (x86-64).msi",
+    ), "8.5.4.1683"),
+    ("windows_8_5_4_1683.rar", (
+        "setup.exe", "Data1.cab", "vc_redist.x86.exe", "1CEnterprise 8.msi",
+    ), "8.5.4.1683"),
 )
 
 
 def corpus_plan():
     return build_plan(
-        [Inspected(path="/d/%s" % name, files=files(*names)) for name, names in CORPUS],
+        [
+            Inspected(path="/d/%s" % name, files=files(*names), platform_version=version)
+            for name, names, version in CORPUS
+        ],
         settings(),
     )
 
 
-def test_no_two_linux_archives_share_a_folder():
+def test_no_two_archives_share_a_folder():
     """
-    Главное требование задачи: распаковать все четырнадцать — и ничего не
+    Главное требование: распаковать все двадцать четыре — и ничего не
     перемешать.
 
-    Четыре пары ложились в один каталог: deb-набор сервера поверх deb-набора
-    тонкого клиента, то же в rpm, deb и rpm эльбруса вместе и, после
-    приведения написаний, оба серверных архива 8.5.1.1529.
+    Пар, ложившихся в один каталог, набралось пять. Четыре внутри Linux:
+    deb-набор сервера поверх deb-набора тонкого клиента, то же в rpm, deb и
+    rpm эльбруса вместе и оба серверных архива 8.5.1.1529. Пятая — между
+    системами: полный установщик Linux и полный установщик Windows версии
+    8.5.4.1683 совпадали по комплектации, версии и разрядности разом.
     """
     destinations = [item.destination for item in corpus_plan().items]
 
     assert sorted(destinations) == sorted(set(destinations))
 
 
-def test_every_linux_archive_is_recognised():
-    """Ни один из четырнадцати не уезжает в «прочее»."""
+def test_every_archive_is_recognised():
+    """Ни один из двадцати четырёх не уезжает в «прочее»."""
     unrecognised = [item.origin for item in corpus_plan().items if item.kind is ItemKind.OTHER]
 
     assert unrecognised == []
