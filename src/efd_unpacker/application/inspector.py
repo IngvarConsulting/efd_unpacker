@@ -94,6 +94,11 @@ def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:
     supplies: List[FoundSupply] = []
     files: List[FoundFile] = []
     version = ""
+    # Смотрим ПЕРВЫЙ установщик, а не первый удачно прочитанный. Признак
+    # отдельный от версии намеренно: по «пустой версии» цикл пошёл бы читать
+    # следующий msi, а комплектацию classify берёт всё равно из первого — и
+    # план собрался бы из компоненты одного установщика и версии другого.
+    examined = False
 
     for leaf in leaves:
         if leaf.name.lower().endswith(EFD_SUFFIX):
@@ -101,7 +106,8 @@ def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:
                 catalog = read_catalog(handle)
             supplies.append(FoundSupply(trail=leaf.trail, catalog=catalog))
         else:
-            if not version and is_windows_installer(leaf.name):
+            if not examined and is_windows_installer(leaf.name):
+                examined = True
                 version = _platform_version(leaf)
             files.append(FoundFile(trail=leaf.trail, size=leaf.size))
 

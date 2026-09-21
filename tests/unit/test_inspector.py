@@ -430,3 +430,37 @@ def _leaves(items):
         yield items
 
     return fake
+
+
+def test_only_the_first_installer_is_examined(monkeypatch):
+    """
+    Смотрим первый установщик, а не первый удачно прочитанный.
+
+    Комплектацию classify берёт из первого msi. Если по пустой версии пойти
+    читать следующий, план соберётся из компоненты одного установщика и
+    версии другого — и покажет «тонкий клиент 8.5.4.1683» там, где на диске
+    окажется что-то третье.
+    """
+    from efd_unpacker.application import inspector as module
+    from efd_unpacker.infrastructure.containers import Leaf
+
+    opened = []
+
+    def unreadable():
+        opened.append("первый")
+        raise OSError("не читается")
+
+    def readable():
+        opened.append("второй")
+        return io.BytesIO(b"DesktopFolder8.5.4.1683ENLPRO")
+
+    leaves = (
+        Leaf(trail=("a.rar", "1CEnterprise 8 Thin client.msi"), size=10, opener=unreadable),
+        Leaf(trail=("a.rar", "1CEnterprise 8 Server (x86-64).msi"), size=10, opener=readable),
+    )
+    monkeypatch.setattr(module, "leaves_of", _leaves(leaves))
+
+    result = module.inspect("/d/a.rar")
+
+    assert result.platform_version == ""
+    assert opened == ["первый"], "прочитан не тот установщик"
