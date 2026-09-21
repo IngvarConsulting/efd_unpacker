@@ -280,6 +280,14 @@ jobs:
           $setup = Get-ChildItem -Path dist -Recurse -File -Filter *-windows-setup.exe | Select-Object -First 1
           if (-not $setup) { throw "Windows setup artifact not found under dist" }
           Move-Item $setup.FullName .\efd_unpacker_setup.exe
+      # Расширение .efd на целевой машине уже занято 1С. Установщик обязан
+      # встать РЯДОМ, а не вместо: подсадной обработчик ставится до установки
+      # и обязан пережить её.
+      - name: Plant a prior .efd handler
+        shell: pwsh
+        run: |
+          New-Item -Path "HKLM:\SOFTWARE\Classes\.efd" -Force | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\.efd" -Name "(default)" -Value "Prior.efd"
       - name: Test Windows setup
         shell: pwsh
         run: |
@@ -337,6 +345,19 @@ jobs:
           if ($bad.ExitCode -eq 0) { throw "damaged archive reported success" }
           if ($bad.Output -notmatch "unpack_corrupted_archive") { throw "damaged archive named no corrupted-archive error" }
 
+      - name: Check .efd was not taken over
+        shell: pwsh
+        run: |
+          $owner = (Get-ItemProperty "HKLM:\SOFTWARE\Classes\.efd")."(default)"
+          if ($owner -ne "Prior.efd") {
+            throw "the installer took .efd over: it now says '$owner' instead of 'Prior.efd'"
+          }
+          $progids = Get-Item "HKLM:\SOFTWARE\Classes\.efd\OpenWithProgids" -ErrorAction SilentlyContinue
+          if (-not $progids -or -not ($progids.GetValueNames() -contains "EFDUnpacker.efd")) {
+            throw "EFD Unpacker is not offered in Open With"
+          }
+          Write-Host "prior handler intact, EFD Unpacker offered alongside"
+
       # Русские подписи мастера обязаны лежать внутри setup.exe по пути,
       # который wixstdba будет искать на русской системе: «1049\thm.wxl».
       # Ошибка в имени или номере языка ничего не ломает — мастер просто
@@ -361,6 +382,101 @@ jobs:
           if ($text -notmatch 'Language="1049"') { throw "the embedded wxl is not Russian" }
           if ($text -notmatch "Установить") { throw "the embedded wxl has no Russian text" }
           Write-Host "Russian wizard strings found: $($wxl.FullName)"
+
+  # Переходный апгрейд с 1.x. Проверять его рассуждением нельзя: Burn ставит
+  # новую цепочку и только потом снимает старый бандл, а удаление старого MSI
+  # уносит файлы, которые новый уже положил, — коды компонентов сменились, и
+  # счётчик ссылок их не защищает. Блок RemoveExistingProducts это чинит, но
+  # до сих пор был доводом, а не проверкой (критерий 5 в #17).
+  test-windows-upgrade:
+    timeout-minutes: 25
+    needs: build-windows
+    runs-on: windows-2022
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-builds
+          path: dist
+      - name: Move setup.exe to root
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path dist -Recurse -File -Filter *-windows-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "Windows setup artifact not found under dist" }
+          Move-Item $setup.FullName .\efd_unpacker_setup.exe
+
+      - name: Install the released 1.2.11
+        shell: pwsh
+        run: |
+          # Последний выпуск со старым UpgradeCode-заглушкой. Именно с него
+          # обновляется тот, кто ставил EFD Unpacker до 2.0.
+          $url = "https://github.com/IngvarConsulting/efd_unpacker/releases/download/v1.2.11/efd-unpacker-1.2.11-windows-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile .\old_setup.exe
+          $old = Start-Process -FilePath .\old_setup.exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
+          if ($old.ExitCode -ne 0) { throw "1.2.11 setup failed with $($old.ExitCode)" }
+
+          # Куда лёг старый — выясняем, а не предполагаем: он собирался
+          # 32-битным, то есть мог уйти в Program Files (x86).
+          $found = @()
+          foreach ($dir in @("C:\Program Files\EFD Unpacker", "C:\Program Files (x86)\EFD Unpacker")) {
+            if (Test-Path $dir) { $found += $dir; Get-ChildItem $dir | ForEach-Object { Write-Host "  $($_.FullName)" } }
+          }
+          if ($found.Count -eq 0) { throw "1.2.11 installed nothing we can find" }
+          Write-Host "1.2.11 landed in: $($found -join ', ')"
+
+      - name: Upgrade to the new setup
+        shell: pwsh
+        run: |
+          $new = Start-Process -FilePath .\efd_unpacker_setup.exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
+          if ($new.ExitCode -ne 0) { throw "upgrade failed with $($new.ExitCode)" }
+
+      - name: Check the upgrade left a working application
+        shell: pwsh
+        run: |
+          # Ровно один путь: MSI собирается с -arch x64 и ставит в
+          # ProgramFiles64Folder.
+          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"
+          if (-not (Test-Path $exe)) {
+            Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Filter "EFD Unpacker" -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ChildItem $_.FullName -Recurse | ForEach-Object { Write-Host $_.FullName } }
+            throw "after the upgrade $exe is gone — the old uninstall took the new files"
+          }
+
+          $out = Join-Path $env:TEMP "help.txt"
+          $p = Start-Process -FilePath $exe -ArgumentList "--help" -PassThru -RedirectStandardOutput $out
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "--help timed out after the upgrade" }
+          if ($p.ExitCode -ne 0) { throw "--help exited with $($p.ExitCode) after the upgrade" }
+          if ((Get-Content $out -Raw) -notmatch [regex]::Escape("efd_unpacker unpack <file>... -tmplts <dir>")) {
+            throw "--help produced no usage line after the upgrade"
+          }
+
+          $menus = @(
+            "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\EFD Unpacker",
+            "$env:AppData\Microsoft\Windows\Start Menu\Programs\EFD Unpacker"
+          )
+          $live = $menus | Where-Object { Test-Path $_ }
+          if (-not $live) { throw "no Start Menu entry after the upgrade" }
+          Write-Host "Start Menu entry at: $($live -join ', ')"
+
+      - name: Uninstall and check nothing is left behind
+        shell: pwsh
+        run: |
+          $gone = Start-Process -FilePath .\efd_unpacker_setup.exe -ArgumentList "/uninstall","/quiet","/norestart" -Wait -PassThru
+          if ($gone.ExitCode -ne 0) { throw "uninstall failed with $($gone.ExitCode)" }
+
+          foreach ($menu in @(
+            "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\EFD Unpacker",
+            "$env:AppData\Microsoft\Windows\Start Menu\Programs\EFD Unpacker"
+          )) {
+            if (Test-Path $menu) {
+              Get-ChildItem $menu | ForEach-Object { Write-Host $_.FullName }
+              throw "Start Menu folder survived the uninstall: $menu"
+            }
+          }
+          if (Test-Path "C:\Program Files\EFD Unpacker\EFDUnpacker.exe") {
+            throw "the executable survived the uninstall"
+          }
+          Write-Host "nothing left behind"
 
   test-dmg:
     timeout-minutes: 20
@@ -415,7 +531,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    needs: [test-appimage, test-deb, test-windows-setup, test-dmg]
+    needs: [test-appimage, test-deb, test-windows-setup, test-windows-upgrade, test-dmg]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:

@@ -285,3 +285,28 @@ def test_the_promise_and_the_mechanism_stand_or_fall_together():
     assert promised == delivered, (
         "обещано «%s», а сделано «%s»" % (promised, delivered)
     )
+
+
+def test_the_transitional_upgrade_is_actually_run_somewhere():
+    """
+    Переходный блок обязан быть не только написан, но и прогнан.
+
+    Он снимает старый продукт ДО установки новых файлов, и без этого
+    обновление с 1.x ломалось бы каждый раз: Burn ставит новую цепочку и
+    только потом снимает старый бандл, а удаление старого MSI уносит файлы,
+    которые новый уже положил. До #17 это было рассуждением, а не проверкой.
+
+    Проверка живёт в CI, на настоящей Windows, и релиз от неё зависит —
+    иначе её можно было бы тихо выключить и узнать об этом от людей.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "build-and-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "efd-unpacker-1.2.11-windows-setup.exe" in workflow, (
+        "прогон апгрейда с последнего выпуска старого семейства исчез"
+    )
+    assert "test-windows-upgrade" in workflow
+    assert re.search(
+        r"needs: \[[^\]]*test-windows-upgrade[^\]]*\]", workflow
+    ), "релиз не ждёт проверку апгрейда"
