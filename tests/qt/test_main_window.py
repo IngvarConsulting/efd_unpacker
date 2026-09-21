@@ -1645,3 +1645,25 @@ def test_the_window_takes_its_version_from_the_build_not_from_the_source():
     from efd_unpacker import runtime
 
     assert ui.APP_VERSION == runtime.app_version()
+
+
+def test_the_menu_keeps_its_popup_behaviour_while_rounded(qtbot):
+    """
+    Скругление углов меню не должно стоить ему поведения всплывающего окна.
+
+    Чёрные треугольники по углам берутся от непрозрачного окна под
+    скруглённой карточкой, и лечатся они прозрачным фоном и безрамочностью.
+    Но флаг Popup — это то, чем меню закрывается по щелчку мимо и по Esc:
+    потеряв его вместе с рамкой, меню осталось бы висеть на экране.
+
+    Увидеть это глазами удаётся не всегда — на полноэкранном рабочем столе
+    окно не показать, — поэтому механизм закреплён здесь.
+    """
+    window = make_window(qtbot)
+    menu = window.menu()
+    qtbot.addWidget(menu)
+
+    assert menu.testAttribute(Qt.WA_TranslucentBackground), "фон остался непрозрачным"
+    assert menu.windowFlags() & Qt.FramelessWindowHint
+    assert menu.windowFlags() & Qt.Popup, "меню перестало быть всплывающим"
+    assert len(menu.actions()) == 4, "состав пунктов изменился"

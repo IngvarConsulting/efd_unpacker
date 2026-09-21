@@ -64,7 +64,11 @@ HOME_URL = "https://github.com/IngvarConsulting/efd_unpacker"
 ISSUE_URL = "https://github.com/IngvarConsulting/efd_unpacker/issues/new"
 RELEASES_URL = "https://github.com/IngvarConsulting/efd_unpacker/releases"
 LICENSES_URL = "https://github.com/IngvarConsulting/efd_unpacker/blob/main/docs/LICENSES.md"
-COMPANY_URL = "https://ingvar.pro"
+#: Метки перехода. Без них визит из «О программе» в статистике неотличим от
+#: прямого захода, и понять, что человек пришёл из приложения, нечем. Домен
+#: тот же, поэтому в подсказке показывается ссылка целиком, как она есть.
+COMPANY_UTM = "utm_source=efd_unpacker&utm_medium=app&utm_campaign=about"
+COMPANY_URL = "https://ingvar.pro/?" + COMPANY_UTM
 
 #: На каких условиях распространяется САМА сборка. Не лицензия проекта: код
 #: остаётся MIT, но PyQt5 под GPL v3 линкуется внутрь исполняемого файла, и
@@ -1134,11 +1138,37 @@ class AboutScreen(Screen):
         grid.addWidget(link, 1, 1, Qt.AlignLeft)
         grid.setColumnStretch(1, 1)
 
-        band = QFrame()
+        band = _Band(COMPANY_URL, self._open_url)
         band.setObjectName("brand")
         band.setLayout(grid)
         band.setStyleSheet(style.brand_sheet())
         return band
+
+
+class _Band(QFrame):
+    """
+    Полоса партнёра целиком: щелчок в любом месте ведёт на сайт.
+
+    Карточка выглядит одной большой ссылкой — логотип, текст и подпись со
+    стрелкой, — а кликабельна была только сама подпись в две строки текста.
+    Человек ведёт мышь на логотип или на карточку, видит обычную стрелку и
+    решает, что ссылки тут нет. Курсор-рука наследуется детьми, так что
+    подсказка одна на всю полосу.
+    """
+
+    def __init__(self, url: str, open_url) -> None:
+        super().__init__()
+        self._url = url
+        self._open_url = open_url
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(url)
+
+    def mouseReleaseEvent(self, event) -> None:
+        # Отпускание, а не нажатие: увести курсор с кнопки и отпустить — это
+        # отказ от щелчка, и так ведут себя все прочие кнопки окна.
+        if event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
+            self._open_url(self._url)
+        super().mouseReleaseEvent(event)
 
 
 def _ratio() -> int:

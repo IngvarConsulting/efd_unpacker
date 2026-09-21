@@ -431,11 +431,12 @@ create-macos-dmg:
 		--volname "EFD Unpacker" \
 		--volicon "resources/icon.icns" \
 		--window-pos 200 120 \
-		--window-size 600 300 \
-		--icon-size 100 \
-		--icon "EFDUnpacker.app" 175 120 \
+		--window-size 640 460 \
+		--icon-size 96 \
+		--icon "EFDUnpacker.app" 170 115 \
 		--hide-extension "EFDUnpacker.app" \
-		--app-drop-link 425 120 \
+		--app-drop-link 470 115 \
+		--icon "licenses" 320 290 \
 		"dist/efd-unpacker-$${VERSION}-macos-$(MACOS_ARCH).dmg" \
 		"$$STAGING_DIR"
 

@@ -376,6 +376,15 @@ class MainWindow(QMainWindow):
         """
         menu = QMenu(self)
         menu.setStyleSheet(style.menu_sheet())
+        # Скругление задаётся таблицей стилей, а окно под меню остаётся
+        # непрозрачным — и по углам вылезают чёрные треугольники. Прозрачный
+        # фон убирает их, безрамочность нужна, чтобы система не рисовала
+        # собственную рамку поверх, а отказ от тени — чтобы тень не осталась
+        # прямоугольной вокруг скруглённой карточки.
+        menu.setAttribute(Qt.WA_TranslucentBackground)
+        menu.setWindowFlags(
+            menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+        )
 
         paths = menu.addAction(self._t("MainWindow", "Where to unpack…"), self.show_paths)
         # Посреди распаковки менять каталог нельзя: писатели уже получили
