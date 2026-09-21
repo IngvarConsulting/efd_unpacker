@@ -13,6 +13,7 @@ Python, запускаемые тем же интерпретатором. Эт�
 """
 
 import os
+import subprocess
 import sys
 
 import pytest
@@ -880,3 +881,75 @@ def test_found_does_not_start_a_search(tmp_path, monkeypatch):
 
 def _forbidden_which(_name):
     raise AssertionError("found() не должен запускать поиск")
+
+
+# --- разборщики против НАСТОЯЩИХ программ ------------------------------------
+
+#: Что кладём в пробный архив. Две записи разного размера и каталог: размеры
+#: должны прочитаться, каталог — отсеяться.
+SAMPLE = (
+    ("readme.txt", b"a" * 11),
+    (os.path.join("data", "inner.bin"), b"b" * 37),
+)
+
+#: Чем архив создаётся и во что. 7-Zip не умеет писать RAR — и не нужно:
+#: непроверенным оставался РАЗБОРЩИК вывода, а формат `l -slt` у 7-Zip один
+#: на все архивы. Читает ли программа именно RAR, выясняется на самом файле
+#: во время работы, и знать это заранее не требуется.
+PACKING = {
+    rar.LIBARCHIVE: ("sample.zip", lambda archive, names: ["-a", "-c", "-f", archive] + names),
+    rar.SEVENZIP: ("sample.7z", lambda archive, names: ["a", "-bso0", "-bsp0", archive] + names),
+}
+
+
+def _sample_tree(root):
+    for name, payload in SAMPLE:
+        path = os.path.join(root, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+
+
+def _installed(family):
+    """Настоящая программа этого семейства, если она есть на машине."""
+    rar.reset()
+    for tool in rar.discover():
+        if tool.family == family:
+            return tool
+    return None
+
+
+@pytest.mark.parametrize("family", sorted(PACKING), ids=sorted(PACKING))
+def test_listing_is_read_from_a_real_tool(tmp_path, family, monkeypatch):
+    """
+    Разборщик вывода проверяется на настоящей программе, а не на подставной.
+
+    Подставная печатает то, что я про неё думаю, — и если думаю неверно,
+    молчит об этом. Здесь программа сама создаёт архив, сама его перечисляет,
+    и наш код читает её настоящий вывод: команда, кодировка, разбор.
+
+    Пропускается, когда программы нет: на машине сборки бывает то одна, то
+    другая, и врать про непроверенное хуже, чем пропустить.
+    """
+    monkeypatch.undo()  # поиск не должен быть изолирован: нужна живая машина
+    tool = _installed(family)
+    if tool is None:
+        pytest.skip("нет программы семейства %s" % family)
+
+    name, arguments = PACKING[family]
+    source = tmp_path / "src"
+    source.mkdir()
+    _sample_tree(str(source))
+    archive = str(tmp_path / name)
+    packed = subprocess.run(
+        tool.command(arguments(archive, [entry for entry, _ in SAMPLE])),
+        cwd=str(source), capture_output=True, timeout=60,
+    )
+    assert packed.returncode == 0, packed.stderr[:400]
+
+    entries = rar.list_entries(tool, archive)
+
+    assert entries is not None, "%s не смогла перечислить собственный архив" % tool.path
+    assert {entry.name: entry.size for entry in entries} == {
+        name.replace("\\", "/"): len(payload) for name, payload in SAMPLE
+    }
