@@ -16,7 +16,7 @@
 
 | Ваш Mac | Файл |
 |---------|------|
-| Apple Silicon (M1–M4) | `efd-unpacker-<версия>-macos-arm64.dmg` |
+| Apple Silicon | `efd-unpacker-<версия>-macos-arm64.dmg` |
 | Intel | `efd-unpacker-<версия>-macos-x86_64.dmg` |
 
 Проверить свою архитектуру: `uname -m` в Терминале — `arm64` или `x86_64`. Либо меню ` → Об этом Mac`: строка «Чип» означает Apple Silicon, «Процессор» — Intel.
