@@ -173,3 +173,26 @@ def test_the_installer_definitions_are_well_formed(path):
     нет — значит поймать это можно только так.
     """
     ET.parse(ROOT / path)
+
+
+def test_a_component_with_several_files_names_its_guid():
+    """
+    Авто-GUID «*» многофайловому компоненту WiX v3 не выдаёт — разве что
+    KeyPath у него ВЕРСИОНИРОВАННЫЙ файл, а остальные без версии.
+
+    Exe от PyInstaller версии не несёт: --version-file мы не передаём. Пока
+    в компоненте лежал один exe, «*» работал; четыре текста лицензий рядом
+    сделали компонент многофайловым, и линковка легла с LGHT0367 — но узналось
+    это только через четыре дня, на первой же сборке под Windows. Здесь WiX
+    нет, а правило видно в исходнике.
+    """
+    offenders = []
+    for component in document().iter(WIX + "Component"):
+        files = component.findall(WIX + "File")
+        if len(files) > 1 and component.get("Guid") == "*":
+            offenders.append(component.get("Id"))
+
+    assert offenders == [], (
+        "многофайловый компонент с авто-GUID, WiX откажет на линковке: %s"
+        % ", ".join(offenders)
+    )
