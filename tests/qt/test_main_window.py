@@ -29,6 +29,7 @@ from efd_unpacker.domain.errors import (
 from efd_unpacker.domain.file_validator import FileValidator
 from efd_unpacker.domain.plan import (
     Action,
+    Inspected,
     ItemKind,
     Plan,
     PlannedItem,
@@ -155,9 +156,12 @@ def make_window(qtbot, inspected=None, plan=None, batch=None, settings=None, val
         calls["inspect"].append(tuple(paths))
         return inspected
 
-    def fake_build(_inspected, _settings):
+    def fake_build(inspected, _settings):
+        # Настоящий build_plan на пустом осмотре даёт пустой план. Двойник,
+        # отдававший строки и без единого файла, скрывал бы всё, что зависит
+        # от исчезновения файлов из списка.
         calls["build"] += 1
-        return plan
+        return plan if inspected else Plan()
 
     def fake_batch(current, sink, unpack_supply, extract_other, cancel_check=None):
         calls["batch"].append(current)
@@ -1645,3 +1649,115 @@ def test_the_window_takes_its_version_from_the_build_not_from_the_source():
     from efd_unpacker import runtime
 
     assert ui.APP_VERSION == runtime.app_version()
+
+
+# --- удаление распакованных архивов -------------------------------------------
+
+
+def test_the_button_appears_only_when_something_is_unpacked(qtbot):
+    """
+    Кнопка удаления не висит на экране, пока удалять нечего.
+
+    Она трогает чужие файлы, и показывать её над нераспакованным списком
+    значило бы предлагать действие, которое сейчас неверно.
+    """
+    window = make_window(qtbot)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window.button_trash.isHidden()
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert not window.button_trash.isHidden()
+
+
+def test_an_archive_is_kept_while_any_of_its_parts_is_not_unpacked(qtbot):
+    """
+    Удалять можно только то, что распаковано ЦЕЛИКОМ.
+
+    В одной поставке бывает несколько шаблонов. Записали один, второй
+    отказал — архив ещё нужен, и взять второй шаблон будет неоткуда.
+    """
+    def half(current, sink, _supply, _other, _cancel=None):
+        first, second = current.to_write
+        sink(ItemStarted(first))
+        sink(ItemWritten(first))
+        error = UnpackError(UnpackErrorCode.PERMISSION)
+        sink(ItemStarted(second))
+        sink(ItemFailed(second, error))
+        return BatchResult(written=(first,), failed=((second, error),))
+
+    same = dict(origin=os.path.join(os.sep, "d", "supply.zip"))
+    plan = Plan(items=(item(title="A", **same), item(title="B", **same)))
+    window = make_window(qtbot, plan=plan, batch=half)
+    drop(window, ["/d/supply.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert window._unpacked_origins() == []
+    assert window.button_trash.isHidden()
+
+
+def test_an_already_installed_archive_counts_as_unpacked(qtbot):
+    """Распакованное прошлым запуском — тоже распакованное."""
+    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    assert window._unpacked_origins() == [planned.origin]
+
+
+def test_deleting_asks_first_and_keeps_the_list_when_refused(qtbot, monkeypatch):
+    """
+    Файлы чужие: человек скачивал их сам и вправе увидеть список до, а не
+    после. Отказ должен оставлять всё как было.
+    """
+    asked = []
+    monkeypatch.setattr(
+        ui.QMessageBox, "question",
+        lambda *args, **kwargs: asked.append(args[2]) or ui.QMessageBox.No,
+    )
+    moved = []
+    monkeypatch.setattr(ui, "move_to_trash", lambda paths: moved.append(paths) or (paths, []))
+
+    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    window = make_window(qtbot, plan=Plan(items=(planned,)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.delete_unpacked_archives()
+
+    assert asked, "не спросили"
+    assert moved == [], "отказ не остановил удаление"
+    assert len(window.rows) == 1
+
+
+def test_a_deleted_archive_leaves_the_list(qtbot, monkeypatch):
+    """
+    Строка, чей файл уехал в корзину, обещала бы распаковку, которой не
+    выйдет.
+    """
+    monkeypatch.setattr(
+        ui.QMessageBox, "question", lambda *args, **kwargs: ui.QMessageBox.Yes
+    )
+    monkeypatch.setattr(ui, "move_to_trash", lambda paths: (list(paths), []))
+
+    planned = item(action=Action.SKIP, reason=SkipReason.ALREADY_INSTALLED)
+    # Настоящий Inspected, а не заглушка: окно убирает из списка по пути
+    # исходного файла, и на «object()» проверка прошла бы мимо сути.
+    window = make_window(
+        qtbot, plan=Plan(items=(planned,)),
+        inspected=[Inspected(path=planned.origin)],
+    )
+    drop(window, [planned.origin])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+
+    window.delete_unpacked_archives()
+
+    assert window.rows == []
+    assert window.button_trash.isHidden()
