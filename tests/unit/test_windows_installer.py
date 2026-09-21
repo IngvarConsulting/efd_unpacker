@@ -196,3 +196,92 @@ def test_a_component_with_several_files_names_its_guid():
         "многофайловый компонент с авто-GUID, WiX откажет на линковке: %s"
         % ", ".join(offenders)
     )
+
+
+# --- русский мастер установки ------------------------------------------------
+
+RU_WXL = ROOT / "installer" / "windows" / "1049" / "thm.wxl"
+LOC = "{http://schemas.microsoft.com/wix/2006/localization}"
+
+
+def test_the_russian_wizard_strings_are_where_wixstdba_looks_for_them():
+    """
+    Путь и имя файла продиктованы wixstdba, а не нами.
+
+    Он ищет локализацию по «<папка BA>\\<номер языка>\\thm.wxl», перебирая
+    языки системы (locutil.cpp, LocProbeForFileEx), и под именем «thm.wxl»
+    кладёт тему в бандл сам (wixstdba.wxs). 1049 — русский. Ошибись мы в
+    имени или номере — мастер молча останется английским: ни сборка, ни
+    установка на это не пожалуются.
+    """
+    assert RU_WXL.is_file(), "нет файла с русскими подписями мастера"
+
+    root = ET.parse(RU_WXL).getroot()
+
+    assert root.get("Culture") == "ru-ru"
+    assert root.get("Language") == "1049"
+
+
+def test_every_russian_string_says_something():
+    """
+    Пустая строка в локализации — это пустая подпись на кнопке.
+
+    Проверяются и подстановки: [WixBundleName] и [WixBundleVersion] на месте
+    заполняет Burn, и перевести их значило бы показать человеку скобки
+    вместо имени программы.
+    """
+    strings = {
+        node.get("Id"): (node.text or "")
+        for node in ET.parse(RU_WXL).getroot().findall(LOC + "String")
+    }
+
+    assert len(strings) == 48, "строк должно быть столько же, сколько в оригинале WiX"
+    empty = sorted(key for key, value in strings.items() if not value.strip())
+    assert empty == [], "пустые подписи: %s" % ", ".join(empty)
+
+    assert "[WixBundleName]" in strings["Caption"]
+    assert "[WixBundleVersion]" in strings["InstallVersion"]
+    # Буквы быстрого доступа: без «&» кнопка теряет подчёркнутую букву.
+    assert strings["InstallInstallButton"].startswith("&")
+
+
+def test_the_bundle_carries_the_russian_strings_and_asks_to_use_them():
+    """
+    Две половины, и порознь они не работают.
+
+    bal:UseUILanguages выбирает из того, что в бандле ЕСТЬ, а WiX v3.14
+    кладёт у темы RtfLicense единственную локализацию — английскую. Значит
+    нужен и флаг, и вложенный файл. Убери любую половину — мастер останется
+    английским, и узнать об этом можно будет только глазами на русской
+    Windows.
+    """
+    bundle = (ROOT / "installer" / "windows" / "bundle.wxs").read_text(encoding="utf-8")
+
+    assert 'bal:UseUILanguages="yes"' in bundle, "выбор по языку системы выключен"
+    assert 'Name="1049\\thm.wxl"' in bundle, "русская локализация не вложена в бандл"
+    assert 'SourceFile="installer\\windows\\1049\\thm.wxl"' in bundle
+
+
+def test_the_promise_and_the_mechanism_stand_or_fall_together():
+    """
+    Критерий #83: обещание из docs/INSTALL.md и механика снимаются ВМЕСТЕ,
+    промежуточного состояния нет.
+
+    Документ обещает русский мастер на русской локали. Если однажды
+    выяснится, что держать это обещание нечем, снять придётся и обещание —
+    иначе останется написанное, которого не происходит. И наоборот: молча
+    выключенная механика оставит документ врать.
+    """
+    install = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    bundle = (ROOT / "installer" / "windows" / "bundle.wxs").read_text(encoding="utf-8")
+
+    promised = "Установщик автоматически выберет" in install
+    delivered = (
+        'bal:UseUILanguages="yes"' in bundle
+        and 'Name="1049\\thm.wxl"' in bundle
+        and RU_WXL.is_file()
+    )
+
+    assert promised == delivered, (
+        "обещано «%s», а сделано «%s»" % (promised, delivered)
+    )

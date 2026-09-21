@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Русские подписи мастера установки (WixStandardBootstrapperApplication).
+
+  Имя файла и папки продиктованы самим wixstdba, менять их нельзя. Он ищет
+  локализацию по пути «<папка BA>\<номер языка>\thm.wxl», перебирая языки
+  системы (locutil.cpp, LocProbeForFileEx), а «thm.wxl» — то имя, под которым
+  тема кладётся в бандл (wixstdba.wxs: Payload Name='thm.wxl'). 1049 — русский.
+
+  Строки и их идентификаторы взяты из RtfTheme.wxl WiX v3.14. Подстановки
+  [WixBundleName] и [WixBundleVersion] и знаки «&» перед буквами быстрого
+  доступа обязаны уцелеть: первые подставляет Burn, вторые — подчёркнутые
+  буквы в кнопках.
+
+  Текст лицензии остаётся английским намеренно: переводы GPL v3 не имеют
+  юридической силы, и FSF просит распространять оригинал.
+-->
+<WixLocalization Culture="ru-ru" Language="1049" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="Caption">Установка [WixBundleName]</String>
+  <String Id="Title">[WixBundleName]</String>
+  <String Id="InstallVersion">Версия [WixBundleVersion]</String>
+  <String Id="ConfirmCancelMessage">Прервать установку?</String>
+  <String Id="ExecuteUpgradeRelatedBundleMessage">Прежняя версия</String>
+  <String Id="HelpHeader">Справка по установщику</String>
+  <String Id="HelpText">/install | /repair | /uninstall | /layout [каталог] — установить, восстановить, удалить
+   или собрать полную локальную копию установщика в каталоге. По умолчанию — установка.
+
+/passive | /quiet — показывать минимум окон без вопросов либо не показывать ничего
+   и ни о чём не спрашивать. По умолчанию окна и вопросы показываются.
+
+/norestart   — не перезагружать. По умолчанию установщик спросит перед перезагрузкой.
+/log log.txt — писать журнал в указанный файл. По умолчанию журнал создаётся в %TEMP%.</String>
+  <String Id="HelpCloseButton">&amp;Закрыть</String>
+  <String Id="InstallAcceptCheckbox">Я &amp;принимаю условия лицензии</String>
+  <String Id="InstallOptionsButton">&amp;Параметры</String>
+  <String Id="InstallInstallButton">&amp;Установить</String>
+  <String Id="InstallCloseButton">&amp;Закрыть</String>
+  <String Id="OptionsHeader">Параметры установки</String>
+  <String Id="OptionsLocationLabel">Папка установки:</String>
+  <String Id="OptionsBrowseButton">&amp;Обзор</String>
+  <String Id="OptionsOkButton">&amp;ОК</String>
+  <String Id="OptionsCancelButton">О&amp;тмена</String>
+  <String Id="ProgressHeader">Ход установки</String>
+  <String Id="ProgressLabel">Выполняется:</String>
+  <String Id="OverallProgressPackageText">Подготовка…</String>
+  <String Id="ProgressCancelButton">О&amp;тмена</String>
+  <String Id="ModifyHeader">Изменение установки</String>
+  <String Id="ModifyRepairButton">&amp;Восстановить</String>
+  <String Id="ModifyUninstallButton">&amp;Удалить</String>
+  <String Id="ModifyCloseButton">&amp;Закрыть</String>
+  <String Id="SuccessRepairHeader">Восстановление завершено</String>
+  <String Id="SuccessUninstallHeader">Удаление завершено</String>
+  <String Id="SuccessInstallHeader">Установка завершена</String>
+  <String Id="SuccessHeader">Готово</String>
+  <String Id="SuccessLaunchButton">&amp;Запустить</String>
+  <String Id="SuccessRestartText">Чтобы пользоваться программой, перезагрузите компьютер.</String>
+  <String Id="SuccessRestartButton">&amp;Перезагрузить</String>
+  <String Id="SuccessCloseButton">&amp;Закрыть</String>
+  <String Id="FailureHeader">Установка не удалась</String>
+  <String Id="FailureInstallHeader">Установка не удалась</String>
+  <String Id="FailureUninstallHeader">Удаление не удалось</String>
+  <String Id="FailureRepairHeader">Восстановление не удалось</String>
+  <String Id="FailureHyperlinkLogText">Установка прервана из-за ошибки. Устраните причину и запустите установщик заново. Подробности — в &lt;a href="#"&gt;журнале&lt;/a&gt;.</String>
+  <String Id="FailureRestartText">Чтобы откат завершился, перезагрузите компьютер.</String>
+  <String Id="FailureRestartButton">&amp;Перезагрузить</String>
+  <String Id="FailureCloseButton">&amp;Закрыть</String>
+  <String Id="FilesInUseHeader">Файлы заняты</String>
+  <String Id="FilesInUseLabel">Эти программы держат файлы, которые нужно обновить:</String>
+  <String Id="FilesInUseCloseRadioButton">Закрыть &amp;программы и попробовать запустить их снова.</String>
+  <String Id="FilesInUseDontCloseRadioButton">&amp;Не закрывать программы. Потребуется перезагрузка.</String>
+  <String Id="FilesInUseOkButton">&amp;ОК</String>
+  <String Id="FilesInUseCancelButton">О&amp;тмена</String>
+  <String Id="ErrorFailNoActionReboot">Ничего не сделано: требуется перезагрузка системы.</String>
+</WixLocalization>

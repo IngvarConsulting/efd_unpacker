@@ -18,6 +18,22 @@
         LogoFile="resources\windows-setup-logo.bmp"
         ShowVersion="yes"
         SuppressRepair="yes" />
+
+      <!-- Русские подписи мастера. Имя обязано быть ровно «1049\thm.wxl»:
+           wixstdba ищет локализацию по пути «<папка BA>\<номер языка>\thm.wxl»,
+           перебирая языки системы (locutil.cpp, LocProbeForFileEx), а под
+           именем «thm.wxl» тема кладётся в бандл им самим (wixstdba.wxs).
+           1049 — русский.
+
+           Одного bal:UseUILanguages выше было мало: он выбирает из того, что
+           в бандле ЕСТЬ, а WiX v3.14 кладёт у темы RtfLicense единственную
+           локализацию, английскую. Папки по номерам языков в поставке WiX
+           есть, но в них лежит mbapreq.wxl — диалог предусловий .NET,
+           которым мы не пользуемся. -->
+      <Payload
+        Name="1049\thm.wxl"
+        SourceFile="installer\windows\1049\thm.wxl"
+        Compressed="yes" />
     </BootstrapperApplicationRef>
 
     <Chain>

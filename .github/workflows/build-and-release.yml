@@ -337,6 +337,31 @@ jobs:
           if ($bad.ExitCode -eq 0) { throw "damaged archive reported success" }
           if ($bad.Output -notmatch "unpack_corrupted_archive") { throw "damaged archive named no corrupted-archive error" }
 
+      # Русские подписи мастера обязаны лежать внутри setup.exe по пути,
+      # который wixstdba будет искать на русской системе: «1049\thm.wxl».
+      # Ошибка в имени или номере языка ничего не ломает — мастер просто
+      # молча остаётся английским, и увидеть это можно только глазами на
+      # русской Windows. Здесь видно машинно.
+      - name: Check the wizard carries Russian strings
+        shell: pwsh
+        run: |
+          $extracted = Join-Path $env:TEMP "bundle"
+          dark.exe -nologo -x $extracted .\efd_unpacker_setup.exe | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "dark failed to unpack the bundle" }
+
+          $wxl = Get-ChildItem -Path $extracted -Recurse -File -Filter thm.wxl |
+                 Where-Object { $_.Directory.Name -eq "1049" } |
+                 Select-Object -First 1
+          if (-not $wxl) {
+            Get-ChildItem -Path $extracted -Recurse -File | ForEach-Object { $_.FullName }
+            throw "1049\thm.wxl is not inside the bundle; the wizard stays English"
+          }
+
+          $text = Get-Content $wxl.FullName -Raw -Encoding UTF8
+          if ($text -notmatch 'Language="1049"') { throw "the embedded wxl is not Russian" }
+          if ($text -notmatch "Установить") { throw "the embedded wxl has no Russian text" }
+          Write-Host "Russian wizard strings found: $($wxl.FullName)"
+
   test-dmg:
     timeout-minutes: 20
     needs: build-macos
