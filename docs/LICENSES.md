@@ -12,6 +12,7 @@
 | PyQt5-Qt5 — библиотеки Qt 5 | LGPL v3 | [licenses/LGPL-3.0.txt](../licenses/LGPL-3.0.txt) |
 | PyQt5-sip | BSD-2-Clause | [github.com/Python-SIP/sip](https://github.com/Python-SIP/sip) |
 | onec_dtools | MIT | [github.com/Infactum/onec_dtools](https://github.com/Infactum/onec_dtools/blob/master/LICENSE) |
+| Send2Trash | BSD-3-Clause | [github.com/arsenetar/send2trash](https://github.com/arsenetar/send2trash) |
 
 PyQt5-Qt5 и PyQt5-sip приходят транзитивно, но вкомпилированы в бинарь.
 Закрепить их в `requirements.txt` не выходит, и это не недосмотр: **под

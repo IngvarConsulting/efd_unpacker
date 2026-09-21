@@ -59,7 +59,7 @@ from ..domain.plan import (
 )
 from ..domain.unpack_service import UnpackService
 from ..infrastructure import rar
-from ..infrastructure.os_utils import open_folder
+from ..infrastructure.os_utils import move_to_trash, open_folder
 from ..runtime import app_version
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import Translator
@@ -121,6 +121,9 @@ class MainWindow(QMainWindow):
         self._batch_thread: Optional[BatchThread] = None
         self._templates_root = ""
         self._written_kinds: set = set()
+        #: Ключи отметок того, что записано в этом запуске. По ним кнопка
+        #: «Удалить архивы» узнаёт, что исходный файл больше не нужен.
+        self._written: set = set()
         # Экраны настроек создаются при первом заходе: поиск программ для .rar
         # и чтение вариантов каталога ни к чему тому, кто в меню не заходил.
         self._paths = None
@@ -339,6 +342,12 @@ class MainWindow(QMainWindow):
         self.check_only_cf = QCheckBox(self._t("MainWindow", "Without demo databases"))
         self.check_only_cf.stateChanged.connect(self._rebuild_plan)
 
+        self.button_trash = QPushButton(self._t("MainWindow", "Delete archives"))
+        self.button_trash.setStyleSheet(style.secondary_button_sheet())
+        self.button_trash.setCursor(Qt.PointingHandCursor)
+        self.button_trash.clicked.connect(self.delete_unpacked_archives)
+        self.button_trash.hide()
+
         self.button_clear = QPushButton(self._t("MainWindow", "Clear list"))
         self.button_clear.setStyleSheet(style.secondary_button_sheet())
         self.button_clear.clicked.connect(self._clear_list)
@@ -360,6 +369,7 @@ class MainWindow(QMainWindow):
         bar.setSpacing(12)
         bar.addWidget(self.check_only_cf)
         bar.addStretch()
+        bar.addWidget(self.button_trash)
         bar.addWidget(self.button_clear)
         bar.addWidget(self.button_stop)
         bar.addWidget(self.button_unpack)
@@ -693,6 +703,89 @@ class MainWindow(QMainWindow):
             if self._row_of.get(id(item)) is not None and self._row_of[id(item)].selected()
         ]
 
+    def _is_unpacked(self, item: PlannedItem) -> bool:
+        """
+        Лежит ли содержимое этого элемента распакованным.
+
+        Два случая: записали сейчас либо нашли на месте прошлой распаковкой.
+        Ключ отметки, а не строка: строки пересобираются при смене фильтра, и
+        по ним «записано в этом запуске» не переживёт ни одного переключения.
+        """
+        if item.action is Action.SKIP and item.reason is SkipReason.ALREADY_INSTALLED:
+            return True
+        return self._mark_key(item) in self._written
+
+    def _unpacked_origins(self) -> List[str]:
+        """
+        Исходные файлы, ВСЁ содержимое которых распаковано.
+
+        Всё, а не хоть что-нибудь: в одной поставке бывает несколько
+        шаблонов, и если один записан, а другой отказал, удалять архив
+        нельзя — второго взять будет неоткуда.
+        """
+        by_origin: Dict[str, List[PlannedItem]] = {}
+        for item in self._plan.items:
+            by_origin.setdefault(item.origin, []).append(item)
+        return sorted(
+            origin for origin, items in by_origin.items()
+            if all(self._is_unpacked(item) for item in items)
+        )
+
+    def _trash_size(self, origins: Sequence[str]) -> int:
+        total = 0
+        for path in origins:
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                # Файла уже нет или он недоступен: в подпись он не попадёт,
+                # а в корзину и так не уедет.
+                continue
+        return total
+
+    def delete_unpacked_archives(self) -> None:
+        """
+        Переносит в корзину архивы, всё содержимое которых распаковано.
+
+        Спрашивает до того, как трогать: файлы чужие, человек скачивал их
+        сам, и список для удаления он вправе увидеть до, а не после.
+        """
+        origins = self._unpacked_origins()
+        if not origins:
+            return
+
+        names = "\n".join("· %s" % os.path.basename(path) for path in origins[:12])
+        if len(origins) > 12:
+            names += "\n…"
+        answer = QMessageBox.question(
+            self,
+            self._t("MainWindow", "Delete archives"),
+            "%s\n\n%s\n\n%s" % (
+                self._t("MainWindow", "Move to the trash the archives already unpacked?"),
+                names,
+                self._t("MainWindow", "Frees %s") % style.human_size(
+                    self._trash_size(origins)
+                ),
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        moved, failed = move_to_trash(origins)
+        if failed:
+            QMessageBox.warning(
+                self, self._t("MainWindow", "Error"),
+                "%s\n%s" % (
+                    self._t("MainWindow", "Some archives could not be moved:"),
+                    "\n".join("· %s" % os.path.basename(path) for path in failed),
+                ),
+            )
+        # Убираем из списка то, чего больше нет: строка, чей исходный файл
+        # уехал в корзину, обещала бы распаковку, которой не выйдет.
+        gone = set(moved)
+        self._inspected = [item for item in self._inspected if item.path not in gone]
+        self._rebuild_plan()
     def _toggle_all_marks(self) -> None:
         """
         Отмечено всё — снимаем всё, иначе отмечаем всё.
@@ -746,6 +839,7 @@ class MainWindow(QMainWindow):
         self._inspected = []
         self._unchecked = set()
         self._written_kinds = set()
+        self._written = set()
         self._rebuild_plan()
 
     # --- показ ---------------------------------------------------------------
@@ -772,6 +866,13 @@ class MainWindow(QMainWindow):
         self.mark_all.setToolTip(hint)
         self.mark_all.setAccessibleName(self.mark_all.toolTip())
         self.label_counts.setText(self._counts_text())
+        origins = self._unpacked_origins()
+        self.button_trash.setVisible(bool(origins) and not self._unpacking())
+        if origins:
+            self.button_trash.setText("%s · %s" % (
+                self._t("MainWindow", "Delete archives"),
+                style.human_size(self._trash_size(origins)),
+            ))
         self.check_only_cf.setText(self._option_text())
         self._refresh_footer()
 
@@ -1014,6 +1115,7 @@ class MainWindow(QMainWindow):
         self.progress_total.hide()
 
         self._written_kinds = {item.kind for item in result.written}
+        self._written.update(self._mark_key(item) for item in result.written)
         if any(item.kind is ItemKind.SUPPLY for item in result.written):
             # Сохраняем только когда в каталог шаблонов действительно писали.
             self.settings_service.set_output_path(self._templates_root)

@@ -84,6 +84,7 @@ LICENSES = (
     ("PyQt5-Qt5", "LGPL v3"),
     ("PyQt5-sip", "BSD-2-Clause"),
     ("onec_dtools", "MIT"),
+    ("Send2Trash", "BSD-3-Clause"),
 )
 
 #: Логотип партнёра. Нарисован белым по тёмному, поэтому и лежит на тёмной

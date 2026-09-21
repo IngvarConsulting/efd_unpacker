@@ -113,6 +113,22 @@
         <translation>Очистить список</translation>
     </message>
     <message>
+        <source>Delete archives</source>
+        <translation>Удалить архивы</translation>
+    </message>
+    <message>
+        <source>Move to the trash the archives already unpacked?</source>
+        <translation>Перенести в корзину архивы, которые уже распакованы?</translation>
+    </message>
+    <message>
+        <source>Frees %s</source>
+        <translation>Освободится %s</translation>
+    </message>
+    <message>
+        <source>Some archives could not be moved:</source>
+        <translation>Эти архивы перенести не удалось:</translation>
+    </message>
+    <message>
         <source>Stop</source>
         <translation>Остановить</translation>
     </message>
