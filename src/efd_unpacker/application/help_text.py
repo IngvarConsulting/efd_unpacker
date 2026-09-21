@@ -8,11 +8,14 @@ cli, поэтому обратный импорт замкнул бы цикл, 
 
 from __future__ import annotations
 
+from ..runtime import app_version
+
 
 def format_help_text(translator) -> str:
     """Return localized CLI help while preserving literal command syntax."""
     lines = [
         translator.translate("CLIHelp", "EFD Unpacker - cross-platform EFD file unpacker"),
+        "%s %s" % (translator.translate("CLIHelp", "Version:"), app_version()),
         "",
         translator.translate("CLIHelp", "CLI modes:"),
         f"  {translator.translate('CLIHelp', '1. GUI mode: open the window and preselect the input file')}",

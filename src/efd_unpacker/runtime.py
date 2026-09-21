@@ -63,6 +63,31 @@ def resource_path(*parts: str) -> str:
     return str(base_path.joinpath(*parts))
 
 
+#: Что показываем, когда version.txt нет. Так же подписывает сборку без тега
+#: сам Makefile, и выдумывать здесь другое слово значило бы развести два
+#: ответа на один и тот же вопрос.
+DEV_VERSION = "dev"
+
+
+def app_version() -> str:
+    """
+    Версия приложения из version.txt.
+
+    Файл создаёт `make create-version` из тега git, и он же едет в поставку
+    рядом с переводами. Раньше номер был вписан в исходник руками, и разойтись
+    с настоящим релизом ему мешало только чужое внимание: в окне стояло 2.0.0
+    независимо от того, что собрали.
+
+    В рабочем дереве файла нет — там и релиза нет, поэтому честный ответ
+    «dev», а не выдуманный номер.
+    """
+    try:
+        with open(resource_path("version.txt"), encoding="utf-8") as handle:
+            return handle.read().strip() or DEV_VERSION
+    except OSError:
+        return DEV_VERSION
+
+
 def install_cli_launcher() -> bool:
     """
     Register `efd_unpacker` in the user's PATH for bundled DMG/AppImage builds.

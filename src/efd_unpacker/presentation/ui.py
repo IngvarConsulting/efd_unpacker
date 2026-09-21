@@ -60,12 +60,13 @@ from ..domain.plan import (
 from ..domain.unpack_service import UnpackService
 from ..infrastructure import rar
 from ..infrastructure.os_utils import open_folder
+from ..runtime import app_version
 from ..infrastructure.settings_service import SettingsService
 from ..localization.translator import Translator
 from . import rows, screens, style
 from .threads import BatchThread, PlanThread, describe_failure
 
-APP_VERSION = "2.0.0"
+APP_VERSION = app_version()
 
 #: Высота значка шестерёнки, из макета.
 GEAR_HEIGHT = 15
@@ -139,7 +140,9 @@ class MainWindow(QMainWindow):
         return self.translator.translate(context, text)
 
     def _build_ui(self) -> None:
-        self.setWindowTitle(self._t("MainWindow", "EFD Unpacker"))
+        self.setWindowTitle("%s %s" % (
+            self._t("MainWindow", "EFD Unpacker"), APP_VERSION,
+        ))
         self.resize(style.WINDOW_WIDTH, style.WINDOW_HEIGHT)
         self.setMinimumSize(640, 460)
         self.setAcceptDrops(True)

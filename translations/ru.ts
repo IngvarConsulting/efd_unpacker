@@ -327,6 +327,10 @@
         <translation>EFD Unpacker - кроссплатформенный распаковщик файлов EFD</translation>
     </message>
     <message>
+        <source>Version:</source>
+        <translation>Версия:</translation>
+    </message>
+    <message>
         <source>CLI modes:</source>
         <translation>Режимы CLI:</translation>
     </message>

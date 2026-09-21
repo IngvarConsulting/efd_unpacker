@@ -237,6 +237,7 @@ build-linux-executable:
 		--add-data "licenses$(PYI_DATASEP)licenses" \
 		--add-data "LICENSE$(PYI_DATASEP)licenses" \
 		--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
+		--add-data "version.txt$(PYI_DATASEP)." \
 		main.py
 	@if [ ! -f "dist/efd_unpacker" ]; then \
 		echo "Error: efd_unpacker executable not found in dist directory."; \
@@ -323,6 +324,7 @@ build-windows-executable:
 		--add-data "licenses$(PYI_DATASEP)licenses" \
 		--add-data "LICENSE$(PYI_DATASEP)licenses" \
 		--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
+		--add-data "version.txt$(PYI_DATASEP)." \
 		--name=EFDUnpacker main.py
 	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
 		echo "Error: EFDUnpacker.exe not found in dist directory."; \
