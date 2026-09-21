@@ -128,6 +128,11 @@ class MainWindow(QMainWindow):
         #: Ключи того, что записано не целиком: часть осталась в архиве.
         #: Перевешивает «уже установлено» — см. _is_unpacked.
         self._partial: set = set()
+        #: Каталоги, про которые человек сказал «всё равно распакуй».
+        #: Путями, а не ключами отметок: вопрос «уже установлено?» задаётся
+        #: именно каталогу, и два архива, метящие в один и тот же, спорить о
+        #: нём не должны.
+        self._forced: set = set()
         #: Стоял ли фильтр на старте последнего батча. См. _wrote_in_full.
         self._filtered = False
         # Экраны настроек создаются при первом заходе: поиск программ для .rar
@@ -611,8 +616,19 @@ class MainWindow(QMainWindow):
             templates_root=self.settings_service.get_output_path(),
             distributions_root=self.settings_service.get_distributions_path(),
             only_configuration=self.check_only_cf.isChecked(),
-            is_installed=os.path.isdir,
+            is_installed=self._is_installed,
         )
+
+    def _is_installed(self, destination: str) -> bool:
+        """
+        Считать ли каталог уже распакованным.
+
+        Каталог на месте — ещё не ответ. Распаковка могла оборваться на
+        середине: кнопкой «Остановить», отказом, закрытием окна. Снаружи это
+        не отличить, а человек отличает — и, настояв на строке, говорит нам
+        то, чего мы сами не видим.
+        """
+        return os.path.isdir(destination) and destination not in self._forced
 
     def _rebuild_plan(self) -> None:
         """
@@ -639,7 +655,7 @@ class MainWindow(QMainWindow):
                 trailing=self._trailing(item),
                 state=self._initial_state(item),
             )
-            row.toggled.connect(self._refresh)
+            row.toggled.connect(lambda item=item: self._mark_toggled(item))
             if item.reason is SkipReason.RAR_TOOL_MISSING:
                 # Экран инструментов достижим и по месту, а не только из меню:
                 # строка сообщает, что программы нет, и здесь же говорит, где
@@ -682,6 +698,11 @@ class MainWindow(QMainWindow):
             # уже записанную ошибку, — см. domain/batch.run.
             return rows.BROKEN
         if item.action is Action.SKIP:
+            # «Уже установлено» — наше умолчание, а не невозможность, и знак
+            # у него переключается: см. TOGGLEABLE. Прочие пропуски желанием
+            # не лечатся.
+            if item.reason is SkipReason.ALREADY_INSTALLED:
+                return rows.INSTALLED
             return rows.UNAVAILABLE
         return rows.UNCHECKED if self._mark_key(item) in self._unchecked else rows.PENDING
 
@@ -829,11 +850,11 @@ class MainWindow(QMainWindow):
             return
         for item in self._plan.items:
             row = self._row_of.get(id(item))
-            # Всё переключаемое, а не только снятое: отказ распаковки тоже
-            # переключается (см. TOGGLEABLE), и «отметить все» обязано брать
-            # и его — иначе после сплошных отказов кнопка обещала бы
+            # Всё предлагаемое, а не только снятое: отказ распаковки тоже
+            # предлагается повторить (см. OFFERED), и «отметить все» обязано
+            # брать и его — иначе после сплошных отказов кнопка обещала бы
             # действие и не делала ничего.
-            if row is not None and row.state() in rows.TOGGLEABLE:
+            if row is not None and row.state() in rows.OFFERED:
                 if row.state() != rows.PENDING:
                     row.set_state(rows.PENDING)
                 self._unchecked.discard(self._mark_key(item))
@@ -843,18 +864,48 @@ class MainWindow(QMainWindow):
         """
         Вид общего знака по тому, что отмечено в строках.
 
-        Считаются переключаемые строки: «уже установлено» и отказ осмотра не
-        отмечаются никаким желанием, и учитывать их значило бы никогда не
-        показывать «отмечено всё».
+        Считаются предлагаемые строки (OFFERED). Отказ осмотра не отмечается
+        никаким желанием, а «уже установлено» отмечается только поимённо —
+        считать их значило бы никогда не показывать «отмечено всё».
 
         Отказ РАСПАКОВКИ при этом считается — он переключается, то есть
         просто не отмечен. Не считай мы его, смесь отмеченного и отказавшего
         выглядела бы как «отмечено всё», хотя отказавшая строка не поедет.
         """
-        states = [row.state() for row in self.rows if row.state() in rows.TOGGLEABLE]
+        states = [row.state() for row in self.rows if row.state() in rows.OFFERED]
         if not states or all(state != rows.PENDING for state in states):
             return rows.UNCHECKED
         return rows.PENDING if all(state == rows.PENDING for state in states) else rows.PARTIAL
+
+    def _mark_toggled(self, item: PlannedItem) -> None:
+        """
+        Щелчок по знаку строки.
+
+        Обычной строке хватает пересчёта подписей. «Уже установлено» — другое
+        дело: чтобы настоянная строка правда поехала, план обязан пересобраться
+        с нею как с записью. Исполнение берёт из плана только то, у чего
+        action = WRITE (см. Plan.to_write), и отметки одной ему мало.
+
+        Пересборка здесь по карману: осмотр не повторяется, а построение плана
+        из уже осмотренного стоит микросекунд — см. _rebuild_plan.
+        """
+        destination = item.destination
+        row = self._row_of.get(id(item))
+        if item.reason is SkipReason.ALREADY_INSTALLED:
+            self._forced.add(destination)
+        elif destination in self._forced and (row is None or row.state() != rows.PENDING):
+            # Настоянное сняли — возвращаем умолчание, а с ним и честную
+            # подпись «уже установлено» вместо пути, по которому никто не
+            # поедет.
+            self._forced.discard(destination)
+        else:
+            self._refresh()
+            return
+
+        # Отметку после пересборки задаёт _initial_state, и прошлое «снято»
+        # ему помешало бы: настоянная строка вышла бы неотмеченной.
+        self._unchecked.discard(self._mark_key(item))
+        self._rebuild_plan()
 
     def _clear_marks(self) -> None:
         for item in self._plan.items:
@@ -869,6 +920,7 @@ class MainWindow(QMainWindow):
         self._unchecked = set()
         self._written_kinds = set()
         self._written = set()
+        self._forced = set()
         # _partial переживает очистку, а _written — нет, и это не оплошность.
         # Стороны неравны: забыв «записано целиком», мы всего лишь перестанем
         # предлагать удаление. Забыв «записано не всё», мы предложим удалить
@@ -1164,6 +1216,13 @@ class MainWindow(QMainWindow):
             if self._wrote_in_full(written):
                 self._written.add(key)
                 self._partial.discard(key)
+                # Настояние отработало и больше не нужно: каталог неполон был
+                # до нас, а теперь мы сами его дописали. Оставь мы его, любая
+                # следующая пересборка плана — щелчок по фильтру, новый файл в
+                # списке — снова объявляла бы каталог неустановленным и
+                # возвращала строку ОТМЕЧЕННОЙ. Настаивали один раз, а
+                # переписывалось бы при каждом запуске.
+                self._forced.discard(written.destination)
             else:
                 self._partial.add(key)
         if any(item.kind is ItemKind.SUPPLY for item in result.written):
