@@ -653,15 +653,35 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
     else:
         parts = ("other", stem)
 
+    destination = _join(settings.distributions_root, parts)
+
+    # Та же мерка, что у шаблонов: каталог есть — значит уже распаковано.
+    #
+    # Раньше её здесь не было, и не случайно: проверка осмысленна ровно
+    # настолько, насколько точен адрес. Дистрибутивы валились в
+    # «other/<имя файла>», потом обрели версию, комплектацию, формат пакетов
+    # и систему — и только теперь «platform/8.5.4.1683/windows-full-x86_64»
+    # описывает содержимое так же однозначно, как «1c/<продукт>/<версия>»
+    # описывает шаблон.
+    #
+    # Оборванная на середине распаковка тоже оставляет каталог, и такой
+    # дистрибутив будет пропущен. Риск тот же, что у шаблонов, и принят
+    # сознательно: строка остаётся в плане с причиной, её видно, и снять
+    # пропуск — дело одного щелчка по знаку.
+    action, reason = Action.WRITE, None
+    if settings.is_installed(destination):
+        action, reason = Action.SKIP, SkipReason.ALREADY_INSTALLED
+
     return PlannedItem(
         kind=found.kind,
         title=found.title or result.name,
         version=found.version,
         source=(result.name,),
         origin=result.path,
-        destination=_join(settings.distributions_root, parts),
+        destination=destination,
         bytes_total=sum(entry.size for entry in result.files),
-        action=Action.WRITE,
+        action=action,
+        reason=reason,
         files=result.files,
         file_count=len(result.files),
     )
