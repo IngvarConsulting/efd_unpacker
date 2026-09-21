@@ -8,8 +8,15 @@
 | Компонент | Лицензия | Полный текст |
 |-----------|----------|--------------|
 | EFD Unpacker | MIT | [LICENSE](../LICENSE) |
-| PyQt5 | GPL v3 | [riverbankcomputing.com/commercial/license-faq](https://www.riverbankcomputing.com/commercial/license-faq) |
+| PyQt5 | GPL v3 | [licenses/GPL-3.0.txt](../licenses/GPL-3.0.txt) |
+| PyQt5-Qt5 — библиотеки Qt 5 | LGPL v3 | [licenses/LGPL-3.0.txt](../licenses/LGPL-3.0.txt) |
+| PyQt5-sip | BSD-2-Clause | [github.com/Python-SIP/sip](https://github.com/Python-SIP/sip) |
 | onec_dtools | MIT | [github.com/Infactum/onec_dtools](https://github.com/Infactum/onec_dtools/blob/master/LICENSE) |
+
+PyQt5-Qt5 и PyQt5-sip приходят транзитивно, но вкомпилированы в бинарь, и
+`requirements.txt` закрепляет их явно. PyQt5 просит их диапазоном, то есть две
+сборки одного тега могли бы получить разные Qt и разный sip — а получатель
+бинаря вправе знать, каким именно исходникам тот соответствует.
 
 Список сверяется с `requirements.txt` тестом: зависимость добавят, а сюда
 дописать забудут — и экран начнёт умалчивать о лицензии.
@@ -43,11 +50,9 @@
   на PyPI, точные версии зафиксированы в `requirements.txt` соответствующего
   релиза.
 
-### Где лежат полные тексты
+### Какие тексты и где они лежат
 
-В репозитории — в каталоге [`licenses/`](../licenses). В каждой сборке они
-тоже есть: рядом с приложением, в папке `licenses`. Это требование самой
-GPL v3 — лицензия должна ехать вместе с программой, ссылки недостаточно.
+В репозитории — в каталоге [`licenses/`](../licenses):
 
 | Файл | Что это |
 |------|---------|
@@ -55,6 +60,20 @@ GPL v3 — лицензия должна ехать вместе с програ
 | `licenses/LGPL-3.0.txt` | GNU Lesser General Public License v3 — лицензия библиотек Qt |
 | `LICENSE` | MIT — лицензия исходного кода проекта |
 
-В deb-пакете то же самое лежит по адресу
-`/usr/share/doc/efd-unpacker/copyright` в формате машиночитаемого copyright
-Debian.
+Эти же три файла едут в каждую сборку: GPL v3 требует, чтобы лицензия
+распространялась вместе с программой, и ссылки недостаточно. Место у каждой
+системы своё — то, которое для неё привычно:
+
+| Поставка | Где искать |
+|----------|------------|
+| Windows | в папке установки, рядом с `EFDUnpacker.exe` |
+| macOS (`.dmg`) | папка `licenses` рядом с `EFDUnpacker.app` |
+| `.AppImage` | `usr/share/doc/efd-unpacker/` внутри образа |
+| `.deb` | `/usr/share/doc/efd-unpacker/` после установки |
+
+В deb и AppImage рядом с ними лежит ещё и `copyright` — тот же перечень в
+машиночитаемом формате Debian.
+
+Кроме того, все три файла вложены в сам исполняемый файл: приложение может
+показать их, не обращаясь к диску. Для чтения человеком это не замена — за
+ней идите по адресам из таблицы выше.

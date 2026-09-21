@@ -77,6 +77,8 @@ BUILD_LICENSE = "GPL v3"
 LICENSES = (
     ("EFD Unpacker", "MIT"),
     ("PyQt5", "GPL v3"),
+    ("PyQt5-Qt5", "LGPL v3"),
+    ("PyQt5-sip", "BSD-2-Clause"),
     ("onec_dtools", "MIT"),
 )
 

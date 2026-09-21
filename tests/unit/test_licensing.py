@@ -103,6 +103,25 @@ def test_the_windows_installer_puts_them_next_to_the_application():
     assert "licenses\\LGPL-3.0.txt" in wxs
 
 
+def test_the_installer_promises_the_files_it_actually_installs():
+    """
+    Экран согласия называет файлы по именам — и эти имена не должны разойтись
+    с тем, что установщик кладёт.
+
+    Проверяется соответствие имён, а не формулировка: как именно написан
+    абзац, дело редактуры, а вот обещать LICENSE.txt и положить LICENSE —
+    это уже обман получателя.
+    """
+    wxs = (ROOT / "installer" / "windows" / "installer.wxs").read_text(encoding="utf-8")
+    rtf = (ROOT / "installer" / "windows" / "license.rtf").read_text(encoding="ascii")
+
+    installed = re.findall(r'Id="License\w+" Name="([^"]+)"', wxs)
+
+    assert len(installed) == 3, "ожидались три файла лицензий, найдено %r" % installed
+    for name in installed:
+        assert name in rtf, "установщик кладёт %s, но на экране о нём ни слова" % name
+
+
 def test_the_installer_license_screen_shows_the_whole_gpl():
     """
     Экран согласия в установщике Windows показывает условия целиком.
@@ -119,6 +138,42 @@ def test_the_installer_license_screen_shows_the_whole_gpl():
     assert rtf.startswith("{\\rtf1")
     missing = [line for line in gpl.split("\n") if line and line not in rtf]
     assert missing == [], "в экране лицензии нет строк: %r" % missing[:3]
+
+
+def test_every_bundled_dependency_is_pinned_exactly():
+    """
+    GPL v3 обещает получателю исходники, СООТВЕТСТВУЮЩИЕ его бинарю.
+
+    Пока PyQt5-Qt5 и PyQt5-sip приходили транзитивно, диапазоном
+    (>=5.15.2,<5.16.0 и >=12.15,<13), две сборки одного тега могли получить
+    разные Qt и разный sip — и обещание становилось непроверяемым.
+    Транзитивность тут не оправдание: в бинарь вкомпилированы именно они.
+    """
+    from importlib import metadata
+
+    from packaging.requirements import Requirement
+
+    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    listed = {}
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            listed[Requirement(line).name.lower()] = line
+
+    assert listed, "requirements.txt пуст"
+    assert [line for line in listed.values() if "==" not in line] == []
+
+    # Мало закрепить перечисленное: дыра была в том, что Qt и sip в списке не
+    # значились вовсе. Что именно тянет за собой PyQt5, спрашиваем у него
+    # самого — иначе тест пришлось бы править вручную при каждой новой
+    # зависимости, а это ровно тот случай, когда забывают.
+    bundled = {
+        Requirement(text).name.lower()
+        for text in (metadata.requires("PyQt5") or [])
+        if "extra ==" not in text
+    }
+
+    assert not bundled - set(listed), "не закреплены: %s" % sorted(bundled - set(listed))
 
 
 def test_the_documents_say_what_the_builds_are_licensed_under():
