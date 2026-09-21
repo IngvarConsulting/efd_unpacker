@@ -69,6 +69,13 @@ BROKEN = "broken"        # отказ ОСМОТРА: повторять неч�
 #: было бы неожиданно — у неё для этого есть «Открыть папку».
 TOGGLEABLE = (PENDING, UNCHECKED, PARTIAL, FAILED, INSTALLED)
 
+#: Между папкой дерева и именем. Тот же знак, что в Config.title.
+ARROW = "\u2192"
+
+#: Между разными именами. Не «/» и не «→»: оба заняты строением дерева, а
+#: здесь перечисление равноправных вещей.
+SEPARATOR = " \u00b7 "
+
 #: Что берёт «отметить всё» и что считает общий знак в шапке.
 #:
 #: Уже, а не TOGGLEABLE: «уже установлено» щелчком включается поимённо, но
@@ -229,15 +236,16 @@ class DetailLabel(QLabel):
         self.setToolTip("")
         self.setText(text)
 
-    def set_appears(self, caption: str, values: Sequence[str]) -> None:
-        self._appears = (caption, tuple(values))
+    def set_appears(self, caption: str, appearance, full: Sequence[str]) -> None:
+        self._appears = (caption, appearance)
         # Шрифт ставится виджету, а не таблицей стилей: размер из таблицы в
         # font() не попадает, и мерить пришлось бы не тем, чем рисуем.
         self.setFont(_font(mono=False, size=style.APPEARS_SIZE))
         self.setTextFormat(Qt.RichText)
-        # Целиком — в подсказке: в строку название влезает не всегда, а узнать
-        # его полностью человек должен без распаковки заново.
-        self.setToolTip(literal_tooltip(*values))
+        # В подсказке — ИСХОДНЫЕ строки дерева целиком, до всякой свёртки:
+        # на экране показано короче, и папка, в которой искать, там названа
+        # не всегда.
+        self.setToolTip(literal_tooltip(*full))
         self._draw()
 
     def resizeEvent(self, event) -> None:
@@ -259,15 +267,26 @@ class DetailLabel(QLabel):
         """
         if self._appears is None:
             return
-        caption, values = self._appears
+        caption, appearance = self._appears
         metrics = QFontMetrics(self.font())
-        room = max(self.width() - metrics.width(caption + " "), DetailLabel.MIN_ROOM)
-        shown = "<br>".join(
+
+        head = caption + (" %s %s" % (appearance.group, ARROW) if appearance.group else "")
+        tail = " + %s" % ", ".join(appearance.variants) if appearance.variants else ""
+
+        # Место делится только между именами. Приписка и папка своё место
+        # получают ЦЕЛИКОМ и не укорачиваются никогда: приписка — это всё,
+        # чем одно имя отличается от другого, и съесть её значило бы оставить
+        # на экране два одинаковых имени.
+        room = self.width() - metrics.width(head + " ") - metrics.width(tail)
+        room -= metrics.width(SEPARATOR) * (len(appearance.names) - 1)
+        share = max(room // max(len(appearance.names), 1), DetailLabel.MIN_ROOM)
+
+        shown = SEPARATOR.join(
             '<span style="color: %s;">%s</span>'
-            % (style.INK, html.escape(metrics.elidedText(value, Qt.ElideRight, room)))
-            for value in values
+            % (style.INK, html.escape(metrics.elidedText(name, Qt.ElideRight, share)))
+            for name in appearance.names
         )
-        self.setText("%s %s" % (html.escape(caption), shown))
+        self.setText("%s %s%s" % (html.escape(head), shown, html.escape(tail)))
 
 
 class PlanRow(QWidget):
@@ -388,18 +407,18 @@ class PlanRow(QWidget):
         self.label_detail.setStyleSheet(self._detail_sheet())
         self.label_detail.set_plain(text)
 
-    def set_appears(self, caption: str, values: Sequence[str]) -> None:
+    def set_appears(self, caption: str, appearance, full: Sequence[str]) -> None:
         """
         Нижний ярус готовой строки: «В 1С появится: …».
 
-        Подпись приглушена, значение — основным цветом, как в макете; ради
-        двух цветов в одной строке берётся разметка.
+        Подпись, папка и приписка приглушены, имена — основным цветом, как в
+        макете; ради двух цветов в одной строке берётся разметка.
         """
-        if not values:
+        if not appearance:
             return
         # Не моноширинным: это фраза и название продукта, а не путь.
         self.label_detail.setStyleSheet("color: %s;" % style.MUTED)
-        self.label_detail.set_appears(caption, values)
+        self.label_detail.set_appears(caption, appearance, full)
 
 
 

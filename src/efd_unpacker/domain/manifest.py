@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 #: Имя файла по стандарту поставки #std731.
 NAME = "1cv8.mft"
@@ -87,6 +88,125 @@ class Manifest:
             config for config in self.configs
             if not config.source or os.path.isfile(os.path.join(directory, config.source))
         )
+
+
+@dataclass(frozen=True)
+class Appearance:
+    """
+    Что поставка даст в 1С — в том виде, в каком это помещается в строку.
+
+    Три части, потому что рисуются они по-разному: имена основным цветом,
+    папка и приписки приглушённым. Приписки нужны отдельным полем ещё и
+    затем, чтобы их никогда не съедало многоточие: укорачивать можно имя,
+    но не то единственное, чем два имени различаются.
+    """
+
+    #: Имена элементов дерева. Обычно одно.
+    names: Tuple[str, ...] = ()
+    #: Приписки вида «(демо)», отличающие варианты одного и того же имени.
+    variants: Tuple[str, ...] = ()
+    #: Общая папка — только если она не пересказывает ни одно из имён.
+    group: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.names)
+
+
+#: Латинские двойники кириллических букв, неотличимые на вид в нижнем
+#: регистре. Нужны ровно для одного вопроса — «это одно и то же имя?».
+#: Настоящий случай: «1С:Архив 1.0» и «1C:Архив 1.0 (демо)» в одном
+#: манифесте, кириллическая С в первом и латинская C во втором.
+#:
+#: Только нижний регистр: сравнение идёт после casefold, а в нижнем
+#: регистре двойники — ровно эти семь. Пары вроде «В» и «B» отпадают
+#: сами, и это к лучшему: сводить «b» с «в» значило бы калечить латиницу.
+_CONFUSABLE = str.maketrans({
+    "a": "а", "c": "с", "e": "е", "o": "о", "p": "р", "x": "х", "y": "у",
+})
+
+#: Приставка вендора в начале имени папки. Она есть у папки и обычно нет у
+#: элемента — без её снятия папка не опознавалась бы как пересказ.
+_VENDOR_LEAD = re.compile(r"^1с[:\s]\s*")
+
+#: Приписка варианта: ОДНА завершающая скобка без вложенных.
+_VARIANT = re.compile(r"^(?P<base>.*?)\s*(?P<mark>\([^()]*\))$")
+
+
+def _key(text: str) -> str:
+    """Ключ сравнения. Наружу не уходит никогда: показываем всегда исходник."""
+    return " ".join(text.split()).casefold().translate(_CONFUSABLE)
+
+
+def _bare(text: str) -> str:
+    """То же, но без приставки вендора: папка её несёт, элемент обычно нет."""
+    return _VENDOR_LEAD.sub("", _key(text))
+
+
+def _split_variant(title: str) -> Tuple[str, str]:
+    match = _VARIANT.match(title)
+    if match and match.group("base").strip():
+        return match.group("base").strip(), match.group("mark")
+    return title, ""
+
+
+def _distinct(titles: Sequence[str]) -> Tuple[str, ...]:
+    """Разные имена без повторов, в порядке манифеста и дословно."""
+    seen: List[str] = []
+    out: List[str] = []
+    for title in titles:
+        if _key(title) not in seen:
+            seen.append(_key(title))
+            out.append(title)
+    return tuple(out)
+
+
+def summarize(configs: Sequence[Config]) -> Appearance:
+    """
+    Сводит строки дерева 1С к тому, что читается одним взглядом.
+
+    Дерево повторяется само в себе: у «Бухгалтерии предприятия КОРП» папка,
+    элемент и его демо-двойник — это одно имя, напечатанное трижды, а вся
+    новизна второй строки в шести знаках «(демо)» на самом хвосте, там, где
+    работает многоточие. Читать такое приходится посимвольным сличением.
+
+    Поэтому сличаем мы, а не человек. Папка молчит, если пересказывает имя;
+    два значения, различающиеся ровно завершающей скобкой, становятся одним
+    именем и припиской.
+
+    Свернуть можно только при ТОЧНОМ совпадении после осторожной
+    нормализации, и в сомнении показывается больше, а не меньше: на
+    настоящем манифесте есть случай, где второй элемент правда другой
+    («Демонстрационная конфигурация для тестирования на АПК»), и свернуть
+    его значило бы соврать о том, чего в 1С не появится.
+
+    Единственное значение не сворачивается никогда, даже когда оно
+    «(демо)»: это не приписка, а предупреждение — рабочего шаблона нет.
+    """
+    rows = []
+    for config in configs:
+        parts = [part.strip() for part in config.catalog.split(CATALOG_SEPARATOR)]
+        parts = [part for part in parts if part]
+        if parts:
+            rows.append((parts[0] if len(parts) > 1 else "", parts[-1]))
+    if not rows:
+        return Appearance()
+
+    items = [item for _, item in rows]
+    split = [_split_variant(item) for item in items]
+    bases = [base for base, _ in split]
+
+    if len(items) == 1 or len({_key(base) for base in bases}) != 1:
+        names, variants = _distinct(items), ()
+    else:
+        names, variants = (bases[0],), tuple(mark for _, mark in split if mark)
+
+    group = ""
+    folders = {folder for folder, _ in rows if folder}
+    if len(folders) == 1:
+        only = next(iter(folders))
+        if not any(_bare(only) == _bare(base) for base in bases):
+            group = only
+    return Appearance(names=names, variants=variants, group=group)
 
 
 def decode(raw: bytes) -> str:
