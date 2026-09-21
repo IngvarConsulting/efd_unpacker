@@ -707,8 +707,13 @@ class MainWindow(QMainWindow):
             return
         for item in self._plan.items:
             row = self._row_of.get(id(item))
-            if row is not None and row.state() == rows.UNCHECKED:
-                row.set_state(rows.PENDING)
+            # Всё переключаемое, а не только снятое: отказ распаковки тоже
+            # переключается (см. TOGGLEABLE), и «отметить все» обязано брать
+            # и его — иначе после сплошных отказов кнопка обещала бы
+            # действие и не делала ничего.
+            if row is not None and row.state() in rows.TOGGLEABLE:
+                if row.state() != rows.PENDING:
+                    row.set_state(rows.PENDING)
                 self._unchecked.discard(self._mark_key(item))
         self._refresh()
 
@@ -716,15 +721,16 @@ class MainWindow(QMainWindow):
         """
         Вид общего знака по тому, что отмечено в строках.
 
-        Считаются только переключаемые строки: «уже установлено» и отказ
-        осмотра не отмечаются никаким желанием, и учитывать их значило бы
-        никогда не показывать «отмечено всё».
+        Считаются переключаемые строки: «уже установлено» и отказ осмотра не
+        отмечаются никаким желанием, и учитывать их значило бы никогда не
+        показывать «отмечено всё».
+
+        Отказ РАСПАКОВКИ при этом считается — он переключается, то есть
+        просто не отмечен. Не считай мы его, смесь отмеченного и отказавшего
+        выглядела бы как «отмечено всё», хотя отказавшая строка не поедет.
         """
-        states = [
-            row.state() for row in self.rows
-            if row.state() in (rows.PENDING, rows.UNCHECKED)
-        ]
-        if not states or all(state == rows.UNCHECKED for state in states):
+        states = [row.state() for row in self.rows if row.state() in rows.TOGGLEABLE]
+        if not states or all(state != rows.PENDING for state in states):
             return rows.UNCHECKED
         return rows.PENDING if all(state == rows.PENDING for state in states) else rows.PARTIAL
 

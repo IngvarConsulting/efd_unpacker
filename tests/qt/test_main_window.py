@@ -1768,3 +1768,51 @@ def test_unavailable_rows_do_not_keep_the_header_mark_from_being_full(qtbot):
     qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
 
     assert window.mark_all.state() == row_widgets.PENDING
+
+
+def test_a_failed_row_counts_as_unmarked_for_the_header(qtbot):
+    """
+    Отказ распаковки переключается, значит он просто не отмечен.
+
+    Проверяется смесь ОТМЕЧЕННОГО и отказавшего — только на ней и видна
+    разница. Первая редакция теста брала «готово + отказ», а там обе строки
+    не в счёт, и ответ выходил один при любом устройстве: мутация «не
+    считать отказ» её пережила.
+
+    Без учёта отказа такая смесь показывалась как «отмечено всё», хотя
+    отказавшая строка не поедет, и человек об этом не узнал бы.
+    """
+    def fail_first_then_stop(current, sink, _supply, _other, _cancel=None):
+        first = current.to_write[0]
+        error = UnpackError(UnpackErrorCode.PERMISSION)
+        sink(ItemStarted(first))
+        sink(ItemFailed(first, error))
+        # До второго не дошли: он остаётся отмеченным и ждёт.
+        return BatchResult(failed=((first, error),), cancelled=True)
+
+    plan = Plan(items=(item(title="A"), item(title="B")))
+    window = make_window(qtbot, plan=plan, batch=fail_first_then_stop)
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 2, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window._batch_thread is None, timeout=3000)
+
+    assert [row.state() for row in window.rows] == [row_widgets.FAILED, row_widgets.PENDING]
+    assert window.mark_all.state() == row_widgets.PARTIAL
+
+
+def test_marking_everything_takes_the_failed_rows_too(qtbot):
+    """
+    После сплошных отказов кнопка обещала «отметить все» и не делала ничего:
+    снятых строк не было, а отказавших она не брала.
+    """
+    window = make_window(qtbot, batch=failing_batch, plan=Plan(items=(item(),)))
+    drop(window, ["/d/a.zip"])
+    qtbot.waitUntil(lambda: len(window.rows) == 1, timeout=2000)
+    window.unpack()
+    qtbot.waitUntil(lambda: window.rows[0].mark.state() == row_widgets.FAILED, timeout=2000)
+
+    window.mark_all.click()
+
+    assert window.rows[0].mark.state() == row_widgets.PENDING
+    assert window.button_unpack.isEnabled()
