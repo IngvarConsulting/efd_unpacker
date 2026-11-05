@@ -89,17 +89,24 @@ def _substitute(message: str, detail: str) -> str:
 
 def _write_detail(translator: Translator, details: dict) -> str:
     """
-    Путь и причина. Длинный путь назван прямо: Windows сообщает о нём как о
-    «не найденном пути», и по одной этой фразе причину не угадать.
+    Путь и причина. Длинный путь назван отдельно: Windows сообщает о нём как
+    о «не найденном пути», и по одной этой фразе причину не угадать.
     """
     path = str(details.get("path", ""))
-    if details.get("long_path"):
+    if details.get("reason") == "folder_in_the_way":
         reason = translator.translate(
-            "UnpackService", "the path is longer than Windows allows (260 characters)"
+            "UnpackService", "a folder with this name is in the way, remove it and try again"
         )
     else:
         reason = str(details.get("error", ""))
-    return " — ".join(part for part in (path, reason) if part)
+    # Пояснение дополняет причину от ОС, а не заменяет её: на длинном пути
+    # отказ бывает и другим — например, кончилось место.
+    note = ""
+    if details.get("long_path"):
+        note = translator.translate(
+            "UnpackService", "the path is longer than Windows allows (260 characters)"
+        )
+    return " — ".join(part for part in (path, reason, note) if part)
 
 
 def _unpack_detail(translator: Translator, error: UnpackError) -> str:

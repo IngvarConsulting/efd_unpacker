@@ -1176,3 +1176,17 @@ def test_other_kinds_still_unpack_nested_archives():
 
     assert item.kind is ItemKind.PLATFORM
     assert [f.trail for f in item.files] == [f.trail for f in found]
+
+
+def test_content_with_its_own_configuration_keeps_every_nested_archive_whole():
+    """Рядом есть свой .cf, значит tools.zip с обработками распаковывать незачем."""
+    tools = FoundFile(trail=("SSL_Ru_En.zip", "tools.zip"), size=500)
+    found = (
+        FoundFile(trail=("SSL_Ru_En.zip", "1cv8_en.cf"), size=100),
+        nested("processor.epf", tools),
+        nested("other.cf", tools),
+    )
+
+    (item,) = content_plan(found).items
+
+    assert [f.trail[-1] for f in item.files] == ["1cv8_en.cf", "tools.zip"]

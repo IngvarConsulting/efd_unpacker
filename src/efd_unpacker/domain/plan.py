@@ -723,17 +723,20 @@ def keep_nested_archives_whole(files: Sequence[FoundFile]) -> Tuple[FoundFile, .
     в каталоге по умолчанию выходят за 260 символов пути, и запись на Windows
     падала.
 
-    Исключение — архив, внутри которого и лежат конфигурации или выгрузки:
-    у обёртки вида «архив → архив → 1cv8.cf» ради этих файлов поставка и
-    опознана как content, и оставить их запакованными значило бы не
-    распаковать ничего.
+    Исключение — когда конфигурации и выгрузки лежат ТОЛЬКО во вложенных
+    архивах. У обёртки вида «архив → архив → 1cv8.cf» ради этих файлов
+    поставка и опознана как content, и оставить их запакованными значило бы
+    не распаковать ничего. Если же рядом уже есть свой .cf, то tools.zip с
+    обработками — такая же отдельная вещь, как и dictionary.zip.
 
     Порядок сохраняется: архив встаёт на место своего первого файла.
     """
-    holds_content = {
-        found.carrier.trail for found in files
-        if found.carrier is not None and _CONTENT.search(found.name)
-    }
+    holds_content = set()
+    if not any(found.carrier is None and _CONTENT.search(found.name) for found in files):
+        holds_content = {
+            found.carrier.trail for found in files
+            if found.carrier is not None and _CONTENT.search(found.name)
+        }
     kept: List[FoundFile] = []
     placed: Set[Tuple[str, ...]] = set()
     for found in files:

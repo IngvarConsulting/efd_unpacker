@@ -96,6 +96,7 @@ class Writers:
             reject_conflicting_entries(
                 [leaf.display_path for leaf in chosen], [list(parts) for parts in names]
             )
+            self._reject_folders_in_the_way(item.destination, names)
             done = 0
             for leaf, parts in zip(chosen, names):
                 self._raise_if_cancelled()
@@ -114,6 +115,25 @@ class Writers:
                 {"reason": "broken_container", "entry": item.title,
                  "expected": len(wanted), "actual": written},
             )
+
+    @staticmethod
+    def _reject_folders_in_the_way(destination: str, names) -> None:
+        """
+        Файл не встанет на место папки с тем же именем — сказать об этом сразу.
+
+        Настоящий случай: прежние версии разворачивали dictionary.zip в папку
+        `dictionary.zip/`, в том числе наполовину, если запись обрывалась.
+        Теперь там должен лечь файл, и os.replace отказал бы уже после записи
+        соседних файлов. Папку не удаляем: в ней могут быть и правки
+        пользователя, а решить это за него нечем.
+        """
+        for parts in names:
+            path = os.path.join(destination, *parts)
+            if os.path.isdir(path):
+                raise UnpackError(
+                    UnpackErrorCode.WRITE_FAILED,
+                    {"path": os.path.abspath(path), "reason": "folder_in_the_way"},
+                )
 
     def _keep_for(self, item: PlannedItem) -> Callable[[str], bool]:
         """
@@ -147,14 +167,18 @@ class Writers:
         и пишется байт в байт, один раз на месте своего первого файла.
         """
         chosen: List[Leaf] = []
-        seen = set()
+        # Повторы убираются только у носителей: на него ссылается каждый его
+        # лист. Два ОБЫЧНЫХ листа с одним именем — это двусмысленный архив, и
+        # отклонить его обязана reject_conflicting_entries; молча оставив
+        # первый, мы записали бы половину и отчитались об успехе.
+        carriers = set()
         for leaf in leaves:
-            for candidate in (leaf, leaf.carrier):
-                if candidate is None or candidate.trail in seen:
-                    continue
-                if candidate.trail in wanted:
-                    seen.add(candidate.trail)
-                    chosen.append(candidate)
+            if leaf.trail in wanted:
+                chosen.append(leaf)
+            carrier = leaf.carrier
+            if carrier is not None and carrier.trail in wanted and carrier.trail not in carriers:
+                carriers.add(carrier.trail)
+                chosen.append(carrier)
         return chosen
 
     @staticmethod
@@ -215,18 +239,21 @@ class Writers:
         with writing_to(path):
             descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
         try:
-            with os.fdopen(descriptor, "wb") as out_file, self._open(leaf, origin) as source:
-                while True:
-                    self._raise_if_cancelled()
-                    chunk = source.read(CHUNK)
-                    if not chunk:
-                        break
-                    with writing_to(path):
-                        out_file.write(chunk)
-            # mkstemp создаёт файл с 0600, и os.replace переносит этот режим на
-            # цель: без этой строки распакованный setup-full-*.run переставал
-            # быть исполняемым и требовал chmod руками.
+            # Под writing_to весь блок, включая закрытие: последний буфер
+            # сбрасывается именно там, и нехватка места всплывает при выходе из
+            # with. Отказы чтения сюда не доходят: _open и _read уже перевели
+            # их в отказ источника.
             with writing_to(path):
+                with os.fdopen(descriptor, "wb") as out_file, self._open(leaf, origin) as source:
+                    while True:
+                        self._raise_if_cancelled()
+                        chunk = self._read(source, origin)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                # mkstemp создаёт файл с 0600, и os.replace переносит этот режим на
+                # цель: без этой строки распакованный setup-full-*.run переставал
+                # быть исполняемым и требовал chmod руками.
                 apply_file_mode(temporary, path)
                 os.replace(temporary, path)
         except BaseException:
@@ -235,6 +262,14 @@ class Writers:
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _read(source, origin: str) -> bytes:
+        """Порция из источника; отказ ОС здесь — тоже про источник."""
+        try:
+            return source.read(CHUNK)
+        except OSError as exc:
+            raise source_failure(origin, exc) from exc
 
     @staticmethod
     def _open(leaf: Leaf, origin: str):

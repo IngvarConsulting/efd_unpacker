@@ -162,7 +162,7 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
 
                 with writing_to(path):
                     os.makedirs(os.path.dirname(path), exist_ok=True)
-                    self._write_entry(buffer_file, path, src_path, size)
+                self._write_entry(buffer_file, path, src_path, size)
                 _apply_file_mtime(path, modified_at)
 
                 written += size
@@ -179,34 +179,47 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
         он стёр бы пользовательские шаблоны, которые распаковка перезаписывает.
         """
         directory = os.path.dirname(path)
-        descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
+        with writing_to(path):
+            descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
 
         try:
-            with os.fdopen(descriptor, "wb") as out_file:
-                written = 0
-                while written < size:
-                    # Одна запись бывает в сотни мегабайт: без опроса внутри
-                    # цикла отмена не успевала сработать и закрытие окна
-                    # неизбежно упиралось в terminate().
-                    self._raise_if_cancelled(src_path)
+            # Под writing_to и закрытие: последний буфер сбрасывается там.
+            with writing_to(path):
+                with os.fdopen(descriptor, "wb") as out_file:
+                    written = 0
+                    while written < size:
+                        # Одна запись бывает в сотни мегабайт: без опроса внутри
+                        # цикла отмена не успевала сработать и закрытие окна
+                        # неизбежно упиралось в terminate().
+                        self._raise_if_cancelled(src_path)
 
-                    data = buffer_file.read(min(self.CHUNK_SIZE, size - written))
-                    if not data:
-                        # Объявленный размер больше, чем осталось в потоке.
-                        raise UnpackError(
-                            UnpackErrorCode.CORRUPTED_ARCHIVE,
-                            {"reason": "truncated_entry", "entry": src_path,
-                             "expected": size, "actual": written},
-                        )
-                    written += out_file.write(data)
-            apply_file_mode(temporary, path)
-            os.replace(temporary, path)
+                        data = self._read_buffer(buffer_file, min(self.CHUNK_SIZE, size - written))
+                        if not data:
+                            # Объявленный размер больше, чем осталось в потоке.
+                            raise UnpackError(
+                                UnpackErrorCode.CORRUPTED_ARCHIVE,
+                                {"reason": "truncated_entry", "entry": src_path,
+                                 "expected": size, "actual": written},
+                            )
+                        written += out_file.write(data)
+                apply_file_mode(temporary, path)
+                os.replace(temporary, path)
         except BaseException:
             try:
                 os.unlink(temporary)
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _read_buffer(buffer_file: BinaryIO, size: int) -> bytes:
+        """Чтение разжатого буфера. Его отказ — не отказ записи назначения."""
+        try:
+            return buffer_file.read(size)
+        except OSError as exc:
+            raise UnpackError(
+                UnpackErrorCode.UNEXPECTED, {"error": str(exc) or type(exc).__name__}
+            ) from exc
 
     def _inflate_to(self, buffer_file: BinaryIO) -> None:
         """Разжимает поток порциями, удерживая пиковую память и общий объём."""
