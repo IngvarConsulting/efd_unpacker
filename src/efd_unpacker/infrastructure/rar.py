@@ -40,7 +40,13 @@ EXTRACT_TIMEOUT = 1800.0
 #: Дата в выводе libarchive зависит от локали, а LC_ALL=C ломает не-ASCII имена
 #: (превращает их в восьмеричные escape-последовательности). Поэтому меняется
 #: только LC_TIME: дата становится предсказуемой, имена остаются целыми.
-_LISTING_DATE = re.compile(r"\s([A-Z][a-z]{2}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4}))\s")
+#: Месяц — любое слово: tar.exe русской Windows пишет «февр.» и на LC_TIME=C
+#: не смотрит, так что дату он отдаёт на языке системы. Разделители только
+#: ASCII: байт месяца в чужой кодировке может декодироваться в неразрывный
+#: пробел, и \s разорвал бы слово.
+_LISTING_DATE = re.compile(
+    r"[ \t]([^ \t\d][^ \t]*[ \t]+\d{1,2}[ \t]+(?:\d{2}:\d{2}|\d{4}))[ \t]"
+)
 
 LIBARCHIVE = "libarchive"
 SEVENZIP = "sevenzip"
@@ -467,7 +473,20 @@ def list_entries(tool: Tool, archive: str) -> Optional[Tuple[RarEntry, ...]]:
     parse = {
         LIBARCHIVE: _parse_libarchive, UNAR: _parse_unar,
     }.get(tool.family, _parse_sevenzip)
-    return parse(output)
+    entries = parse(output)
+    if tool.family == LIBARCHIVE and not entries and _lists_files(output):
+        # Программа что-то перечислила, а разбор не понял ни строки. Это не
+        # пустой архив: иначе архив на 908 МБ молча уходил в «ничего не
+        # найдено», без следующей программы и без совета поставить 7-Zip.
+        return None
+    return entries
+
+
+def _lists_files(output: str) -> bool:
+    """Есть ли в выводе bsdtar строки, кроме строк папок."""
+    return any(
+        line.strip() and not line.startswith("d") for line in output.split("\n")
+    )
 
 
 def _parse_libarchive(output: str) -> Tuple[RarEntry, ...]:
@@ -475,15 +494,24 @@ def _parse_libarchive(output: str) -> Tuple[RarEntry, ...]:
     Разбор `bsdtar -tvf`, привязанный к дате, а не к номерам колонок.
 
     По позициям разбирать нельзя: имя владельца и группы бывают с пробелами,
-    и колонки съезжают. Дата при LC_TIME=C всегда «Mon DD HH:MM» или
-    «Mon DD  YYYY», поэтому она и служит якорем: до неё последнее слово —
-    размер, после неё — имя целиком, вместе с пробелами.
+    и колонки съезжают. Дата всегда «месяц DD HH:MM» или «месяц DD  YYYY»,
+    поэтому она и служит якорем: до неё последнее слово — размер, после неё —
+    имя целиком, вместе с пробелами. Название месяца зависит от языка системы.
+
+    Папка отличается первой буквой прав: tar.exe из Windows пишет её без «/»
+    на конце, и без этой проверки она становилась файлом с именем `extinfo`
+    рядом с настоящим `extinfo/…` — и вся поставка отклонялась.
 
     Проверено на настоящем RAR5: 44 записи из 44, включая имена с пробелами
     и кириллицей.
     """
     entries = []
-    for line in output.splitlines():
+    # split, а не splitlines: тот режет и по символам вроде \x85, а в них может
+    # превратиться байт месяца, прочитанный в чужой кодировке.
+    for raw in output.split("\n"):
+        line = raw.rstrip("\r")
+        if line.startswith("d"):
+            continue
         match = _LISTING_DATE.search(line)
         if not match:
             continue

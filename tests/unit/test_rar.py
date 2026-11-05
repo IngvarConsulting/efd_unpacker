@@ -1064,3 +1064,66 @@ def test_helpers_pass_no_windows_flags_elsewhere(monkeypatch, platform):
     rar._run(["bsdtar", "-tvf", "a.rar"], 1.0)
 
     assert [c.get("creationflags") for c in calls] == [None, None]
+
+
+# --- вывод tar.exe русской Windows -------------------------------------------
+
+#: Настоящие строки `tar.exe -tvf windows64full_8_3_24_1819.rar`.
+RUSSIAN_WINDOWS_LISTING = (
+    "-rwxrwxrwx  0 0      0       23022 февр. 18  2025 0x041f.ini\r\n"
+    "-rwxrwxrwx  0 0      0    15311608 февр. 18  2025 vc_redist.x64.exe\r\n"
+    "-rwxrwxrwx  0 0      0      543500 февр. 18  2025 extinfo/Liberica licenses.pdf\r\n"
+    "drwxrwxrwx  0 0      0           0 февр. 18  2025 extinfo\r\n"
+)
+
+
+def test_libarchive_listing_reads_a_russian_month():
+    """tar.exe на LC_TIME=C не смотрит, и дата приходит на языке системы."""
+    entries = rar._parse_libarchive(RUSSIAN_WINDOWS_LISTING)
+
+    assert [(e.name, e.size) for e in entries] == [
+        ("0x041f.ini", 23022),
+        ("vc_redist.x64.exe", 15311608),
+        ("extinfo/Liberica licenses.pdf", 543500),
+    ]
+
+
+def test_libarchive_listing_skips_a_folder_written_without_a_slash():
+    """Иначе `extinfo` становится файлом и конфликтует с `extinfo/…`."""
+    names = [e.name for e in rar._parse_libarchive(RUSSIAN_WINDOWS_LISTING)]
+
+    assert "extinfo" not in names
+
+
+@pytest.mark.parametrize("month", ["март", "м\xa0рт", "\u0413\u0425\x85"])
+def test_libarchive_listing_survives_a_month_in_a_foreign_encoding(month):
+    """
+    Вывод декодируется угаданной кодировкой, и байт месяца может стать
+    неразрывным пробелом или разрывом строки. Имя и размер от этого не зависят.
+    """
+    listing = "-rwxrwxrwx  0 0      0       7 %s 18  2025 a.ini\r\n" % month
+
+    assert [(e.name, e.size) for e in rar._parse_libarchive(listing)] == [("a.ini", 7)]
+
+
+def _libarchive_answering(monkeypatch, output):
+    class Completed:
+        returncode = 0
+        stdout = output.encode("utf-8")
+
+    monkeypatch.setattr(rar, "_run", lambda *_args: Completed())
+    return Tool(path="tar.exe", family=LIBARCHIVE, version="bsdtar")
+
+
+def test_listing_nobody_could_parse_is_a_failed_tool_not_an_empty_archive(monkeypatch):
+    """Следующая программа или совет поставить 7-Zip, а не «ничего не найдено»."""
+    tool = _libarchive_answering(monkeypatch, "-rwxrwxrwx что-то незнакомое a.ini\n")
+
+    assert rar.list_entries(tool, "a.rar") is None
+
+
+@pytest.mark.parametrize("output", ["", "drwxrwxrwx  0 0  0  0 Feb 18  2025 only\n"])
+def test_archive_without_files_stays_an_empty_archive(monkeypatch, output):
+    tool = _libarchive_answering(monkeypatch, output)
+
+    assert rar.list_entries(tool, "a.rar") == ()
