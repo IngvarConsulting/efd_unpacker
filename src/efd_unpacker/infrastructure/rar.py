@@ -116,6 +116,27 @@ def _environment() -> Dict[str, str]:
     return env
 
 
+#: CREATE_NO_WINDOW из WinBase.h. Через getattr: константа есть в subprocess
+#: только на Windows, а тесты и остальной код живут везде.
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def _window_flags() -> Dict[str, int]:
+    """
+    Флаги запуска, при которых консольная программа не открывает своё окно.
+
+    7z.exe и tar.exe — консольные. Окно приложения на Windows собрано
+    --windowed, консоли у него нет, и унаследовать её ребёнку неоткуда:
+    Windows создаёт ему новую. Без флага оглавление и распаковка .rar
+    мигали бы окном консоли на каждом вызове — ровно то, от чего
+    избавлялась windowed-сборка. Вывод при этом не теряется: capture_output
+    отдаёт ребёнку свои каналы, консоль ему для этого не нужна.
+    """
+    if sys.platform == "win32":
+        return {"creationflags": CREATE_NO_WINDOW}
+    return {}
+
+
 # --- поиск кандидатов --------------------------------------------------------
 
 #: Имена в PATH по системам, от самого вероятного к самому редкому.
@@ -340,7 +361,7 @@ def _version(path: str, family: str, prefix: Sequence[str] = ()) -> str:
     try:
         completed = subprocess.run(
             list(prefix) + [path] + arguments, capture_output=True,
-            timeout=LIST_TIMEOUT, env=_environment(),
+            timeout=LIST_TIMEOUT, env=_environment(), **_window_flags(),
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -674,7 +695,7 @@ def _run(command: Sequence[str], timeout: float):
     try:
         return subprocess.run(
             list(command), capture_output=True,
-            timeout=timeout, env=_environment(),
+            timeout=timeout, env=_environment(), **_window_flags(),
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -1012,3 +1012,55 @@ def test_a_single_entry_is_extracted_by_a_real_tool(tmp_path, family, monkeypatc
     assert rar.verify(tools[0], archive, entries), (
         "%s не достала одну запись из собственного архива" % tools[0].path
     )
+
+
+# --- без окна консоли на Windows ---------------------------------------------
+
+
+class _Completed:
+    returncode = 0
+    stdout = b"7-Zip 24.08\n"
+    stderr = b""
+
+
+def _spy_run(monkeypatch):
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(kwargs)
+        return _Completed()
+
+    monkeypatch.setattr(rar.subprocess, "run", run)
+    return calls
+
+
+@pytest.mark.parametrize("call", ["version", "run"])
+def test_helpers_open_no_console_window_on_windows(monkeypatch, call):
+    """
+    Окно на Windows собрано --windowed, консоли у него нет. Консольный 7z.exe
+    без CREATE_NO_WINDOW получил бы от Windows своё окно и мигал им на каждом
+    оглавлении и распаковке .rar.
+    """
+    monkeypatch.setattr(rar.sys, "platform", "win32")
+    calls = _spy_run(monkeypatch)
+
+    if call == "version":
+        rar._version("7z.exe", SEVENZIP)
+    else:
+        rar._run(["7z.exe", "l", "a.rar"], 1.0)
+
+    assert len(calls) == 1
+    assert calls[0].get("creationflags", 0) & rar.CREATE_NO_WINDOW
+    assert calls[0].get("capture_output") is True, "без каналов вывод пропал бы вместе с консолью"
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_helpers_pass_no_windows_flags_elsewhere(monkeypatch, platform):
+    """Ненулевой creationflags вне Windows subprocess отвергает с ValueError."""
+    monkeypatch.setattr(rar.sys, "platform", platform)
+    calls = _spy_run(monkeypatch)
+
+    rar._version("bsdtar", LIBARCHIVE)
+    rar._run(["bsdtar", "-tvf", "a.rar"], 1.0)
+
+    assert [c.get("creationflags") for c in calls] == [None, None]
