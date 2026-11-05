@@ -25,8 +25,8 @@ from efd_unpacker.infrastructure import rar
 
 DOWNLOADS = Path.home() / "Downloads"
 
-#: Архив и каталог, в который он обязан лечь. Двадцать четыре дистрибутива:
-#: две системы, три версии платформы, четыре архитектуры, оба формата
+#: Архив и каталог, в который он обязан лечь. Двадцать восемь дистрибутивов:
+#: две системы, семь версий платформы, четыре архитектуры, оба формата
 #: пакетов, установщики и наборы пакетов.
 EXPECTED = (
     ("deb64_8_3_27_2342.zip", "platform/8.3.27.2342/linux-server-deb-x86_64"),
@@ -64,6 +64,10 @@ EXPECTED = (
     ("windows64full_with_clients_8_5_4_1683.rar",
      "platform/8.5.4.1683/windows-full-win-mac-clients-x86_64"),
     ("windows_8_5_4_1683.rar", "platform/8.5.4.1683/windows-full"),
+    ("windows64full_8_3_24_1819.rar", "platform/8.3.24.1819/windows-full-x86_64"),
+    ("windows64full_8_3_25_1633.rar", "platform/8.3.25.1633/windows-full-x86_64"),
+    ("windows64full_8_3_26_1656.rar", "platform/8.3.26.1656/windows-full-x86_64"),
+    ("windows64full_8_5_4_2028.rar", "platform/8.5.4.2028/windows-full-x86_64"),
 )
 
 
