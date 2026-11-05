@@ -1127,3 +1127,18 @@ def test_archive_without_files_stays_an_empty_archive(monkeypatch, output):
     tool = _libarchive_answering(monkeypatch, output)
 
     assert rar.list_entries(tool, "a.rar") == ()
+
+
+@pytest.mark.parametrize("line, name, size", [
+    # Владелец с числовой группой и размером из четырёх цифр похож на дату.
+    ("-rw-r--r--  0 alice 20 2025 Jan  1  2024 payload.efd", "payload.efd", 2025),
+    ("-rw-r--r--  0 alice 20 2025 февр. 1  2024 payload.efd", "payload.efd", 2025),
+    # Английская дата в имени файла не должна подменять русскую в начале строки.
+    ("-rwxrwxrwx  0 0 0  7 февр. 18  2025 report Jan 1 2024.txt", "report Jan 1 2024.txt", 7),
+    # Как и слово в имени, если месяц настоящий английский.
+    ("-rwxrwxrwx  0 0 0  7 Feb 18  2025 report Jan 1 2024.txt", "report Jan 1 2024.txt", 7),
+])
+def test_libarchive_listing_is_not_fooled_by_what_looks_like_a_date(line, name, size):
+    (entry,) = rar._parse_libarchive(line + "\n")
+
+    assert (entry.name, entry.size) == (name, size)
