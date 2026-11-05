@@ -31,6 +31,11 @@ class UnpackErrorCode(Enum):
 
     FILE_NOT_FOUND = "unpack_file_not_found"
     PERMISSION = "unpack_permission"
+    #: Не удалось записать файл НАЗНАЧЕНИЯ. Отдельно от FILE_NOT_FOUND и
+    #: PERMISSION, которые говорят об источнике: путь длиннее 260 символов
+    #: Windows отвергает с FileNotFoundError, и распаковка словаря из
+    #: SSL_*_Ru_En.zip отчитывалась «Файл не найден» про архив, лежащий на месте.
+    WRITE_FAILED = "unpack_write_failed"
     UNSAFE_ENTRY = "unpack_unsafe_entry"
     TOO_LARGE = "unpack_too_large"
     CORRUPTED_ARCHIVE = "unpack_corrupted_archive"

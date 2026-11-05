@@ -17,6 +17,7 @@ from .writing import (
     apply_file_mode,
     reject_conflicting_entries,
     resolve_entry_path,
+    writing_to,
 )
 from .supply import parse_catalog
 
@@ -159,8 +160,9 @@ class SafeSupplyReader(onec_dtools.SupplyReader):
                     buffer_file.seek(size, os.SEEK_CUR)
                     continue
 
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                self._write_entry(buffer_file, path, src_path, size)
+                with writing_to(path):
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    self._write_entry(buffer_file, path, src_path, size)
                 _apply_file_mtime(path, modified_at)
 
                 written += size

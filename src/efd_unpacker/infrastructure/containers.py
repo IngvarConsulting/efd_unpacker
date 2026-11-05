@@ -68,6 +68,13 @@ class Leaf:
     trail: Tuple[str, ...]
     size: int
     opener: Callable[[], BinaryIO]
+    #: Вложенный архив первого уровня, из которого пришёл лист, — сам как
+    #: файл. None у листа, лежащего прямо в источнике. Спуск во вложенные
+    #: нужен осмотру (так находится .efd в demo.zip), но поставке вида
+    #: «content» вложенный архив нужен целиком: dictionary.zip из
+    #: SSL_*_Ru_En.zip — это проект Language Tool на 9382 файла с путями
+    #: длиннее 260 символов, и россыпью он бесполезен.
+    carrier: Optional["Leaf"] = None
 
     @property
     def name(self) -> str:
@@ -192,6 +199,7 @@ def _descend(
     trail: Tuple[str, ...],
     kind: str,
     depth_left: int,
+    carrier: Optional[Leaf] = None,
 ) -> Iterator[Leaf]:
     if depth_left <= 0:
         raise UnpackError(
@@ -207,9 +215,14 @@ def _descend(
         child_kind = detect_kind(head)
 
         if child_kind is None:
-            yield Leaf(trail=child_trail, size=size, opener=child_opener)
+            yield Leaf(trail=child_trail, size=size, opener=child_opener, carrier=carrier)
         else:
-            yield from _descend(child_opener, child_trail, child_kind, depth_left - 1)
+            # Носитель — архив ПЕРВОГО уровня: глубже он уже назначен, и
+            # архив внутри dictionary.zip едет внутри dictionary.zip.
+            child_carrier = carrier or Leaf(trail=child_trail, size=size, opener=child_opener)
+            yield from _descend(
+                child_opener, child_trail, child_kind, depth_left - 1, child_carrier
+            )
 
 
 #: Отказы разборщиков, которые означают «файл повреждён», а не ошибку в коде.

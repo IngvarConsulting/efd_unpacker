@@ -383,3 +383,62 @@ def test_dmg_source_is_reopened_through_the_image_reader(tmp_path, monkeypatch):
     assert len(mounted) == 2, "образ должен монтироваться и на осмотре, и на записи"
     written = _tree(roots.distributions_root)
     assert written and written[0].endswith("1cv8-client-8.5.1.1529.pkg")
+
+
+# --- поставка «content» с вложенным архивом ----------------------------------
+
+
+def test_content_writes_a_nested_archive_byte_for_byte(tmp_path):
+    """dictionary.zip ложится одним файлом, тем же самым, что лежал в поставке."""
+    dictionary = _zip_bytes([(".project", b"p"), ("src/Catalogs/x_en.lstr", b"x")])
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("1cv8_en.cf", b"CONFIG"),
+        ("dictionary.zip", dictionary),
+        ("ReadMe.txt", b"read me"),
+    ]), name="SSL_3_2_1_569_Ru_En.zip")
+
+    Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    root = tmp_path / "d" / "content" / "SSL_3_2_1_569_Ru_En"
+    assert _tree(root) == ["1cv8_en.cf", "ReadMe.txt", "dictionary.zip"]
+    assert (root / "dictionary.zip").read_bytes() == dictionary
+    assert plan.bytes_to_write == sum(f.stat().st_size for f in root.iterdir())
+
+
+# --- отказ записи ------------------------------------------------------------
+
+
+def test_failure_to_write_is_not_reported_as_a_missing_source(tmp_path, monkeypatch):
+    """
+    Путь длиннее 260 символов Windows отвергает с FileNotFoundError. Раньше
+    его ловил перевод отказов ИСТОЧНИКА, и распаковка отчитывалась «Файл не
+    найден» про архив, который лежал на месте.
+    """
+    plan, roots = _plan_for(tmp_path, _zip_bytes([("1cv8_en.cf", b"CONFIG")]))
+
+    def refuse(*_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the path specified")
+
+    monkeypatch.setattr("efd_unpacker.application.executor.tempfile.mkstemp", refuse)
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED
+    assert caught.value.details["path"].endswith("1cv8_en.cf")
+    assert caught.value.details["error"] == "The system cannot find the path specified"
+
+
+def test_failure_to_write_a_template_is_named_too(tmp_path, monkeypatch):
+    """Та же подмена кода жила и в записи шаблонов: через UnpackService."""
+    plan, roots = _plan_for(tmp_path, _zip_bytes([("1cv8.efd", _supply(TWO_TEMPLATES))]))
+
+    def refuse(*_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the path specified")
+
+    monkeypatch.setattr("efd_unpacker.domain.unpack_service.tempfile.mkstemp", refuse)
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).unpack_supply(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED

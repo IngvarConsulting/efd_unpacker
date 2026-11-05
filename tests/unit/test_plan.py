@@ -1114,3 +1114,65 @@ def test_the_row_title_loses_the_vendor_wrapper():
     )
 
     assert plan.items[0].title == "Бухгалтерия предприятия КОРП, редакция 3.0"
+
+
+# --- вложенные архивы в поставке «content» -----------------------------------
+
+DICTIONARY = FoundFile(trail=("SSL_Ru_En.zip", "dictionary.zip"), size=500)
+
+
+def nested(name, carrier=DICTIONARY, size=10):
+    return FoundFile(trail=carrier.trail + (name,), size=size, carrier=carrier)
+
+
+def content_plan(found):
+    return build_plan([Inspected(path="/dl/SSL_Ru_En.zip", files=found)], settings())
+
+
+def test_content_keeps_a_nested_archive_as_one_file():
+    """
+    SSL_3_2_1_569_Ru_En.zip: рядом с 1cv8_en.cf лежит dictionary.zip — проект
+    Language Tool. Россыпью это 9382 файла, и 14 из них в каталоге по
+    умолчанию длиннее 260 символов, так что запись на Windows падала.
+    """
+    found = (
+        FoundFile(trail=("SSL_Ru_En.zip", "1cv8_en.cf"), size=100),
+        nested(".project"),
+        nested("src/Catalogs/x_en.lstr"),
+        FoundFile(trail=("SSL_Ru_En.zip", "ReadMe.txt"), size=1),
+    )
+
+    (item,) = content_plan(found).items
+
+    assert item.kind is ItemKind.CONTENT
+    assert [f.trail[-1] for f in item.files] == ["1cv8_en.cf", "dictionary.zip", "ReadMe.txt"]
+    assert item.file_count == 3
+    # Объём — самого архива, а не его содержимого: на диск ляжет архив.
+    assert item.bytes_total == 100 + 500 + 1
+
+
+def test_content_unpacks_a_nested_archive_that_holds_the_configuration():
+    """
+    Обёртка «архив → архив → 1cv8.cf»: ради этих файлов поставка и опознана
+    как content, оставить их запакованными значило бы не распаковать ничего.
+    """
+    wrapper = FoundFile(trail=("SSL_Ru_En.zip", "inner.zip"), size=500)
+    found = (nested("1cv8.cf", wrapper), nested("ReadMe.txt", wrapper))
+
+    (item,) = content_plan(found).items
+
+    assert [f.trail for f in item.files] == [f.trail for f in found]
+
+
+def test_other_kinds_still_unpack_nested_archives():
+    """Правило только для content: пакеты и платформа раскладываются как прежде."""
+    bundle = FoundFile(trail=("deb64.zip", "bundle.zip"), size=500)
+    found = (
+        nested("1c-enterprise-8.3.27.2342-common_8.3.27-2342_amd64.deb", bundle),
+        nested("1c-enterprise-8.3.27.2342-server_8.3.27-2342_amd64.deb", bundle),
+    )
+
+    (item,) = build_plan([Inspected(path="/dl/deb64.zip", files=found)], settings()).items
+
+    assert item.kind is ItemKind.PLATFORM
+    assert [f.trail for f in item.files] == [f.trail for f in found]

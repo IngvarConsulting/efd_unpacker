@@ -14,18 +14,32 @@ from __future__ import annotations
 
 import os
 import tempfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Callable, List, Optional, Set, Tuple
 
 from ..domain.errors import UnpackError, UnpackErrorCode
 from ..domain.plan import PlannedItem, keeps_configuration
 from ..domain.supply import safe_relative_parts
 from ..domain.unpack_service import UnpackService
-from ..domain.writing import apply_file_mode, reject_conflicting_entries, resolve_entry_path
+from ..domain.writing import (
+    apply_file_mode,
+    reject_conflicting_entries,
+    resolve_entry_path,
+    writing_to,
+)
 from ..infrastructure.containers import Leaf
 from .sources import leaves_of
 
 CHUNK = 1024 * 1024
+
+
+def source_failure(origin: str, exc: OSError) -> UnpackError:
+    """Отказ ОС при чтении ИСТОЧНИКА: файл пропал или к нему нет доступа."""
+    if isinstance(exc, PermissionError):
+        return UnpackError(UnpackErrorCode.PERMISSION, {"path": origin, "error": str(exc)})
+    if isinstance(exc, FileNotFoundError):
+        return UnpackError(UnpackErrorCode.FILE_NOT_FOUND, {"path": origin})
+    return UnpackError(UnpackErrorCode.UNEXPECTED, {"path": origin, "error": str(exc)})
 
 
 class Writers:
@@ -74,7 +88,7 @@ class Writers:
         wanted = {found.trail for found in item.files}
         written = 0
         with self._source(item.origin) as leaves:
-            chosen = [leaf for leaf in leaves if leaf.trail in wanted]
+            chosen = self._chosen(leaves, wanted)
             # Проверяем все имена и только потом пишем: отклонить на середине
             # значит оставить пользователю половину файлов. Заодно ловится
             # случай, когда `a.txt` и `./a.txt` дают один и тот же путь.
@@ -85,7 +99,7 @@ class Writers:
             done = 0
             for leaf, parts in zip(chosen, names):
                 self._raise_if_cancelled()
-                self._write_leaf(leaf, item.destination, parts)
+                self._write_leaf(leaf, item.destination, parts, item.origin)
                 written += 1
                 done += leaf.size
                 if self._on_progress is not None:
@@ -123,10 +137,31 @@ class Writers:
         return keep
 
     @staticmethod
+    def _chosen(leaves, wanted) -> List[Leaf]:
+        """
+        Листья, обещанные планом, — и вложенные архивы, если план взял их целиком.
+
+        План поставки «content» ставит вместо файлов dictionary.zip сам
+        dictionary.zip (keep_nested_archives_whole). Листом он не является —
+        осмотр спустился внутрь, — поэтому берётся с листа как его носитель
+        и пишется байт в байт, один раз на месте своего первого файла.
+        """
+        chosen: List[Leaf] = []
+        seen = set()
+        for leaf in leaves:
+            for candidate in (leaf, leaf.carrier):
+                if candidate is None or candidate.trail in seen:
+                    continue
+                if candidate.trail in wanted:
+                    seen.add(candidate.trail)
+                    chosen.append(candidate)
+        return chosen
+
+    @staticmethod
     def _pick(leaves, item: PlannedItem):
         for leaf in leaves:
             if leaf.trail == item.source:
-                return leaf.opener()
+                return Writers._open(leaf, item.origin)
         raise UnpackError(
             UnpackErrorCode.FILE_NOT_FOUND,
             {"entry": " → ".join(item.source), "path": item.origin},
@@ -149,48 +184,65 @@ class Writers:
         Между осмотром и записью файл могли удалить или закрыть доступ. Без
         перевода пользователь видел бы «Неожиданная ошибка» там, где точный
         код «Файл не найден» уже есть.
-        """
-        try:
-            with leaves_of(origin) as leaves:
-                yield leaves
-        except FileNotFoundError as exc:
-            raise UnpackError(UnpackErrorCode.FILE_NOT_FOUND, {"path": origin}) from exc
-        except PermissionError as exc:
-            raise UnpackError(
-                UnpackErrorCode.PERMISSION, {"path": origin, "error": str(exc)}
-            ) from exc
 
-    def _write_leaf(self, leaf: Leaf, destination: str, parts: Tuple[str, ...]) -> None:
+        Переводится только ОТКРЫТИЕ источника. Раньше под тот же перехват
+        попадала и вся запись внутри `with`, и отказ создать файл назначения —
+        путь длиннее 260 символов Windows отвергает с FileNotFoundError —
+        выдавался за пропажу самого архива.
+        """
+        with ExitStack() as stack:
+            try:
+                leaves = stack.enter_context(leaves_of(origin))
+            except OSError as exc:
+                raise source_failure(origin, exc) from exc
+            yield leaves
+
+    def _write_leaf(
+        self, leaf: Leaf, destination: str, parts: Tuple[str, ...], origin: str
+    ) -> None:
         """Один файл из контейнера, атомарно и внутри каталога назначения."""
         root = os.path.realpath(destination)
-        os.makedirs(root, exist_ok=True)
+        with writing_to(root):
+            os.makedirs(root, exist_ok=True)
         # Проверка до makedirs подкаталогов: промежуточный симлинк наружу иначе
         # увёл бы и временный файл, и окончательный за пределы назначения.
         path = resolve_entry_path(root, leaf.display_path, list(parts))
         directory = os.path.dirname(path) or root
-        os.makedirs(directory, exist_ok=True)
+        with writing_to(path):
+            os.makedirs(directory, exist_ok=True)
         resolve_entry_path(root, leaf.display_path, list(parts))
 
-        descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
+        with writing_to(path):
+            descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=".efd-", suffix=".part")
         try:
-            with os.fdopen(descriptor, "wb") as out_file, leaf.opener() as source:
+            with os.fdopen(descriptor, "wb") as out_file, self._open(leaf, origin) as source:
                 while True:
                     self._raise_if_cancelled()
                     chunk = source.read(CHUNK)
                     if not chunk:
                         break
-                    out_file.write(chunk)
+                    with writing_to(path):
+                        out_file.write(chunk)
             # mkstemp создаёт файл с 0600, и os.replace переносит этот режим на
             # цель: без этой строки распакованный setup-full-*.run переставал
             # быть исполняемым и требовал chmod руками.
-            apply_file_mode(temporary, path)
-            os.replace(temporary, path)
+            with writing_to(path):
+                apply_file_mode(temporary, path)
+                os.replace(temporary, path)
         except BaseException:
             try:
                 os.unlink(temporary)
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _open(leaf: Leaf, origin: str):
+        """Поток листа; отказ ОС здесь — про источник, а не про назначение."""
+        try:
+            return leaf.opener()
+        except OSError as exc:
+            raise source_failure(origin, exc) from exc
 
     def _raise_if_cancelled(self) -> None:
         if self._cancel_check is not None and self._cancel_check():

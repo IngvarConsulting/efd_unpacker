@@ -12,9 +12,16 @@ from __future__ import annotations
 
 import os
 import stat
-from typing import List
+import sys
+from contextlib import contextmanager
+from typing import Iterator, List
 
 from .errors import UnpackError, UnpackErrorCode
+
+#: Предел длины пути в Windows без длинных путей (MAX_PATH, вместе с
+#: завершающим нулём). Включены ли длинные пути, Python заранее не скажет,
+#: поэтому это лишь подсказка в сообщении, а не запрет.
+WINDOWS_MAX_PATH = 260
 
 _UMASK = os.umask(0)
 os.umask(_UMASK)
@@ -99,3 +106,31 @@ def apply_file_mode(temporary: str, path: str) -> None:
     except OSError:
         # На Windows chmod умеет немногое; права — не повод валить распаковку.
         pass
+
+
+def write_failure(path: str, exc: OSError) -> UnpackError:
+    """
+    Отказ записи файла назначения в доменных терминах.
+
+    Причина берётся из самой ОС, а длинный путь называется отдельно: Windows
+    отвечает на него «системе не удаётся найти путь», и без подсказки человек
+    ищет пропавший файл, а не длину пути.
+    """
+    absolute = os.path.abspath(path)
+    return UnpackError(
+        UnpackErrorCode.WRITE_FAILED,
+        {
+            "path": absolute,
+            "error": exc.strerror or str(exc) or type(exc).__name__,
+            "long_path": sys.platform == "win32" and len(absolute) >= WINDOWS_MAX_PATH,
+        },
+    )
+
+
+@contextmanager
+def writing_to(path: str) -> Iterator[None]:
+    """Переводит отказ ОС при записи `path` в WRITE_FAILED."""
+    try:
+        yield
+    except OSError as exc:
+        raise write_failure(path, exc) from exc

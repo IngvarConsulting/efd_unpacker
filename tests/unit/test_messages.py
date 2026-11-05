@@ -129,3 +129,28 @@ def test_unknown_corruption_reason_drops_the_tail():
 
 def test_success_message_is_translated():
     assert format_unpack_result(russian(), success=True) == "Распаковка завершена успешно"
+
+
+def test_write_failure_names_the_long_path_instead_of_a_missing_file(translator):
+    """Windows зовёт длинный путь «ненайденным»; сообщение называет причину прямо."""
+    error = UnpackError(UnpackErrorCode.WRITE_FAILED, {
+        "path": "C:/very/long/path.lstr",
+        "error": "The system cannot find the path specified",
+        "long_path": True,
+    })
+
+    result = format_unpack_result(translator, success=False, error=error)
+
+    assert "C:/very/long/path.lstr" in result
+    assert "260" in result
+    assert "cannot find" not in result
+
+
+def test_write_failure_without_a_long_path_keeps_the_system_reason(translator):
+    error = UnpackError(UnpackErrorCode.WRITE_FAILED, {
+        "path": "/out/a.cf", "error": "No space left on device", "long_path": False,
+    })
+
+    result = format_unpack_result(translator, success=False, error=error)
+
+    assert "/out/a.cf" in result and "No space left on device" in result
