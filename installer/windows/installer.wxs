@@ -133,6 +133,19 @@
              пользуется. -->
       </Component>
 
+      <!-- Консольный двойник EFDUnpacker.exe для командной строки: тот же код,
+           собранный консольным. Каталог стоит в PATH, а PATHEXT ставит .COM
+           раньше .EXE, поэтому вызов `EFDUnpacker` из cmd и PowerShell
+           попадает сюда и печатает в консоль. Ярлыки и ассоциация .efd
+           по-прежнему указывают на windowed-сборку .exe, у которой окна
+           консоли нет. Отдельный компонент, а не ещё один файл в
+           MainExecutable: состав компонента с замороженным GUID не меняют.
+           GUID фиксированный по той же причине, что у MainExecutable: версии
+           у файла нет. -->
+      <Component Id="ConsoleExecutable" Guid="3A9889A9-527A-400C-8727-A45E66F99ADA">
+        <File Source="dist\EFDUnpacker.com" KeyPath="yes" Id="EFDUnpackerCOM" Name="EFDUnpacker.com" />
+      </Component>
+
       <!-- Фиксированный GUID, а не «*»: KeyPath здесь каталог (CreateFolder),
            а для директорного KeyPath WiX v3 авто-GUID не выдаёт. Заморожен
            так же навсегда, как UpgradeCode. -->

@@ -58,7 +58,8 @@ Universal2 одним проходом невозможен — PyQt5 публи
 arm64 и x86_64, и `target_arch='universal2'` падает с `IncompatibleBinaryArchError`.
 
 ### Windows
-- промежуточный `dist/EFDUnpacker.exe`
+- промежуточный `dist/EFDUnpacker.exe` — windowed-сборка для окна, ярлыков и ассоциации `.efd`
+- промежуточный `dist/EFDUnpacker.com` — та же программа с `--console`, для командной строки
 - промежуточный `dist/efd-unpacker-<version>-windows.msi`
 - основной артефакт `dist/efd-unpacker-<version>-windows-setup.exe`
 

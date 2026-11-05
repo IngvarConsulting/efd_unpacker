@@ -318,8 +318,43 @@ jobs:
           # ProgramFiles64Folder. Перебор кандидатов был следствием
           # неопределённости — 64-битный exe мог оказаться в
           # Program Files (x86), и смоук-тест это скрывал.
-          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"
-          if (-not (Test-Path $exe)) { throw "Installed executable not found at $exe" }
+          $gui = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"
+          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.com"
+          foreach ($f in @($gui, $exe)) {
+            if (-not (Test-Path $f)) { throw "Installed executable not found at $f" }
+          }
+
+          # Подсистема из PE-заголовка: 2 — GUI, 3 — консоль. Консольный exe
+          # получает окно консоли от Windows ещё до запуска своего кода, и
+          # спрятать его потом без мелькания нельзя. Поэтому то, что
+          # открывают ярлык и ассоциация .efd, обязано быть GUI, а то, что
+          # находится в PATH для командной строки, — консольным. Глазами это
+          # видно только на живой машине, здесь — машинно.
+          function Get-PeSubsystem([string]$Path) {
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+            # сигнатура PE (4) + COFF-заголовок (20) + смещение Subsystem в
+            # опциональном заголовке (68); одинаково для PE32 и PE32+.
+            return [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+          }
+          $guiSub = Get-PeSubsystem $gui
+          $cliSub = Get-PeSubsystem $exe
+          Write-Host "subsystem: EFDUnpacker.exe=$guiSub, EFDUnpacker.com=$cliSub"
+          if ($guiSub -ne 2) { throw "EFDUnpacker.exe is not a GUI binary (subsystem $guiSub): a console window opens before the app" }
+          if ($cliSub -ne 3) { throw "EFDUnpacker.com is not a console binary (subsystem $cliSub): CLI output goes nowhere" }
+
+          # Так команду набирает человек: из PATH и без расширения. Найтись
+          # должен .com — PATHEXT ставит его раньше .exe; найдись .exe,
+          # вывод ушёл бы в никуда и usage не напечатался бы.
+          $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+          $viaPath = cmd /c "EFDUnpacker --help" 2>&1 | Out-String
+          Write-Host "--- EFDUnpacker --help via PATH (exit $LASTEXITCODE) ---"
+          Write-Host $viaPath
+          if ($LASTEXITCODE -ne 0) { throw "EFDUnpacker --help via PATH exited with $LASTEXITCODE" }
+          if ($viaPath -notmatch [regex]::Escape("efd_unpacker unpack <file>... -tmplts <dir>")) {
+            throw "EFDUnpacker --help via PATH printed no usage line: PATH resolves to the windowed .exe?"
+          }
+
           $out = Join-Path $env:TEMP "efd-out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
@@ -463,7 +498,10 @@ jobs:
         run: |
           # Ровно один путь: MSI собирается с -arch x64 и ставит в
           # ProgramFiles64Folder.
-          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"
+          $exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.com"
+          if (-not (Test-Path "C:\Program Files\EFD Unpacker\EFDUnpacker.exe")) {
+            throw "after the upgrade EFDUnpacker.exe is gone — the old uninstall took the new files"
+          }
           if (-not (Test-Path $exe)) {
             Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Filter "EFD Unpacker" -ErrorAction SilentlyContinue |
               ForEach-Object { Get-ChildItem $_.FullName -Recurse | ForEach-Object { Write-Host $_.FullName } }
@@ -501,8 +539,10 @@ jobs:
               throw "Start Menu folder survived the uninstall: $menu"
             }
           }
-          if (Test-Path "C:\Program Files\EFD Unpacker\EFDUnpacker.exe") {
-            throw "the executable survived the uninstall"
+          foreach ($f in @("EFDUnpacker.exe", "EFDUnpacker.com")) {
+            if (Test-Path "C:\Program Files\EFD Unpacker\$f") {
+              throw "$f survived the uninstall"
+            }
           }
           Write-Host "nothing left behind"
 
