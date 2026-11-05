@@ -129,3 +129,41 @@ def test_unknown_corruption_reason_drops_the_tail():
 
 def test_success_message_is_translated():
     assert format_unpack_result(russian(), success=True) == "Распаковка завершена успешно"
+
+
+def test_write_failure_names_the_long_path_instead_of_a_missing_file(translator):
+    """Windows зовёт длинный путь «ненайденным»; сообщение добавляет настоящую причину."""
+    error = UnpackError(UnpackErrorCode.WRITE_FAILED, {
+        "path": "C:/very/long/path.lstr",
+        "error": "The system cannot find the path specified",
+        "long_path": True,
+    })
+
+    result = format_unpack_result(translator, success=False, error=error)
+
+    assert "C:/very/long/path.lstr" in result
+    assert "260" in result
+    # Причина от ОС остаётся: на длинном пути отказ бывает и другим.
+    assert "cannot find" in result
+
+
+def test_write_failure_without_a_long_path_keeps_the_system_reason(translator):
+    error = UnpackError(UnpackErrorCode.WRITE_FAILED, {
+        "path": "/out/a.cf", "error": "No space left on device", "long_path": False,
+    })
+
+    result = format_unpack_result(translator, success=False, error=error)
+
+    assert "/out/a.cf" in result and "No space left on device" in result
+
+
+def test_write_failure_asks_to_remove_a_folder_in_the_way(translator):
+    error = UnpackError(UnpackErrorCode.WRITE_FAILED, {
+        "path": "/out/dictionary.zip", "reason": "folder_in_the_way",
+    })
+
+    result = format_unpack_result(translator, success=False, error=error)
+
+    assert "/out/dictionary.zip" in result
+    assert "%1" not in result
+    assert result.rstrip().endswith(("again", "распаковку"))

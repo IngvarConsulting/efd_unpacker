@@ -687,3 +687,30 @@ def test_leaf_content_comes_from_the_tool_that_listed_it(tmp_path, monkeypatch):
     leaf = next(iter(walk(path)))
     with leaf.opener() as handle:
         assert handle.read() == b"first!", "лист наполнила не та программа, что его перечислила"
+
+
+# --- носитель вложенного архива ----------------------------------------------
+
+
+def test_leaves_remember_their_first_level_archive(tmp_path):
+    """
+    Лист из вложенного архива знает сам архив — тропу и размер.
+
+    Без этого поставке «content» нечего положить целиком: осмотр уже
+    спустился внутрь, и наружу выходят только файлы.
+    """
+    inner = _zip_bytes([("a.txt", b"a"), ("deep.zip", _zip_bytes([("b.txt", b"b")]))])
+    path = _write(tmp_path, "outer.zip", _zip_bytes([("x.cf", b"cf"), ("dictionary.zip", inner)]))
+
+    leaves = {leaf.trail: leaf for leaf in walk(path)}
+
+    assert leaves[("outer.zip", "x.cf")].carrier is None
+    for trail in (("outer.zip", "dictionary.zip", "a.txt"),
+                  ("outer.zip", "dictionary.zip", "deep.zip", "b.txt")):
+        carrier = leaves[trail].carrier
+        # Глубже первого уровня носитель тот же: архив внутри dictionary.zip
+        # едет внутри dictionary.zip.
+        assert carrier is not None and carrier.trail == ("outer.zip", "dictionary.zip")
+        assert carrier.size == len(inner)
+        with carrier.opener() as handle:
+            assert handle.read() == inner, "носитель отдаёт не байты архива"

@@ -195,6 +195,21 @@
         <translation>Ошибка доступа к файлу</translation>
     </message>
     <message>
+        <location filename="../messages.py" line="28"/>
+        <source>Could not write a file: %1</source>
+        <translation>Не удалось записать файл: %1</translation>
+    </message>
+    <message>
+        <location filename="../messages.py" line="107"/>
+        <source>the path is longer than Windows allows (260 characters)</source>
+        <translation>путь длиннее, чем позволяет Windows (260 символов)</translation>
+    </message>
+    <message>
+        <location filename="../messages.py" line="103"/>
+        <source>a folder with this name is in the way, remove it and try again</source>
+        <translation>на этом месте лежит папка с таким же именем, удалите её и повторите распаковку</translation>
+    </message>
+    <message>
         <location filename="../unpack_service.py" line="18"/>
         <source>Archive rejected: it tries to write outside the output folder</source>
         <translation>Архив отклонён: он пытается записать файлы за пределы папки распаковки</translation>

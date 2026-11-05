@@ -8,6 +8,7 @@
 
 import io
 import os
+import warnings
 import zipfile
 
 import pytest
@@ -17,6 +18,7 @@ from efd_unpacker.application.inspector import inspect_all
 from efd_unpacker.domain.errors import UnpackError, UnpackErrorCode
 from efd_unpacker.domain.plan import PlanSettings, build_plan
 from efd_unpacker.domain.unpack_service import UnpackService
+from efd_unpacker.infrastructure.containers import Leaf
 from tests.efd_builder import build_efd
 
 
@@ -383,3 +385,155 @@ def test_dmg_source_is_reopened_through_the_image_reader(tmp_path, monkeypatch):
     assert len(mounted) == 2, "образ должен монтироваться и на осмотре, и на записи"
     written = _tree(roots.distributions_root)
     assert written and written[0].endswith("1cv8-client-8.5.1.1529.pkg")
+
+
+# --- поставка «content» с вложенным архивом ----------------------------------
+
+
+def test_content_writes_a_nested_archive_byte_for_byte(tmp_path):
+    """dictionary.zip ложится одним файлом, тем же самым, что лежал в поставке."""
+    dictionary = _zip_bytes([(".project", b"p"), ("src/Catalogs/x_en.lstr", b"x")])
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("1cv8_en.cf", b"CONFIG"),
+        ("dictionary.zip", dictionary),
+        ("ReadMe.txt", b"read me"),
+    ]), name="SSL_3_2_1_569_Ru_En.zip")
+
+    Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    root = tmp_path / "d" / "content" / "SSL_3_2_1_569_Ru_En"
+    assert _tree(root) == ["1cv8_en.cf", "ReadMe.txt", "dictionary.zip"]
+    assert (root / "dictionary.zip").read_bytes() == dictionary
+    assert plan.bytes_to_write == sum(f.stat().st_size for f in root.iterdir())
+
+
+# --- отказ записи ------------------------------------------------------------
+
+
+def test_failure_to_write_is_not_reported_as_a_missing_source(tmp_path, monkeypatch):
+    """
+    Путь длиннее 260 символов Windows отвергает с FileNotFoundError. Раньше
+    его ловил перевод отказов ИСТОЧНИКА, и распаковка отчитывалась «Файл не
+    найден» про архив, который лежал на месте.
+    """
+    plan, roots = _plan_for(tmp_path, _zip_bytes([("1cv8_en.cf", b"CONFIG")]))
+
+    def refuse(*_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the path specified")
+
+    monkeypatch.setattr("efd_unpacker.application.executor.tempfile.mkstemp", refuse)
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED
+    assert caught.value.details["path"].endswith("1cv8_en.cf")
+    assert caught.value.details["error"] == "The system cannot find the path specified"
+
+
+def test_failure_to_write_a_template_is_named_too(tmp_path, monkeypatch):
+    """Та же подмена кода жила и в записи шаблонов: через UnpackService."""
+    plan, roots = _plan_for(tmp_path, _zip_bytes([("1cv8.efd", _supply(TWO_TEMPLATES))]))
+
+    def refuse(*_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the path specified")
+
+    monkeypatch.setattr("efd_unpacker.domain.unpack_service.tempfile.mkstemp", refuse)
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).unpack_supply(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED
+
+
+def _duplicate_zip():
+    """Два файла с одним именем: zip это допускает, а zipfile лишь предупреждает."""
+    buffer = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("config.cf", b"FIRST")
+            archive.writestr("config.cf", b"SECOND")
+    return buffer.getvalue()
+
+
+def test_two_entries_with_one_name_are_still_rejected(tmp_path):
+    """
+    Какой из двух файлов настоящий, неизвестно. Записать первый и отчитаться
+    об успехе нельзя: план обещал оба.
+    """
+    plan, roots = _plan_for(tmp_path, _duplicate_zip())
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.CORRUPTED_ARCHIVE
+    assert caught.value.details["reason"] == "duplicate_entry"
+    assert _tree(tmp_path / "d") == []
+
+
+def test_folder_in_the_way_stops_before_anything_is_written(tmp_path):
+    """
+    Прежняя версия разворачивала dictionary.zip в папку. Файл на её место не
+    встанет, но и удалять её нельзя: в ней могут быть правки пользователя.
+    """
+    plan, roots = _plan_for(tmp_path, _zip_bytes([
+        ("1cv8_en.cf", b"CONFIG"),
+        ("dictionary.zip", _zip_bytes([(".project", b"p")])),
+    ]), name="SSL_3_2_1_569_Ru_En.zip")
+    root = tmp_path / "d" / "content" / "SSL_3_2_1_569_Ru_En"
+    (root / "dictionary.zip").mkdir(parents=True)
+    (root / "dictionary.zip" / "mine.txt").write_bytes(b"keep me")
+
+    with pytest.raises(UnpackError) as caught:
+        Writers(UnpackService(), roots.templates_root).extract_other(plan.items[0])
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED
+    assert caught.value.details["reason"] == "folder_in_the_way"
+    assert caught.value.details["path"].endswith("dictionary.zip")
+    assert _tree(root) == ["dictionary.zip/mine.txt"], "записано что-то ещё или папка тронута"
+
+
+class _UnreadableSource(io.BytesIO):
+    def read(self, *_args):
+        raise PermissionError(13, "Access is denied")
+
+
+def test_failure_to_read_the_source_is_not_a_write_failure(tmp_path):
+    """Отказ чтения посреди файла — про источник, сколько бы ни было записано."""
+    leaf = Leaf(trail=("src.zip", "a.cf"), size=1, opener=_UnreadableSource)
+    writers = Writers(UnpackService(), str(tmp_path / "t"))
+
+    with pytest.raises(UnpackError) as caught:
+        writers._write_leaf(leaf, str(tmp_path / "d"), ("a.cf",), "/dl/src.zip")
+
+    assert caught.value.code is UnpackErrorCode.PERMISSION
+    assert caught.value.details["path"] == "/dl/src.zip"
+    assert _tree(tmp_path / "d") == [], "остался временный файл"
+
+
+def test_failure_to_flush_the_last_buffer_is_a_write_failure(tmp_path, monkeypatch):
+    """Нехватка места часто всплывает при закрытии файла, а не при записи."""
+    real_fdopen = os.fdopen
+
+    class FullDisk:
+        def __init__(self, descriptor, mode):
+            self._file = real_fdopen(descriptor, mode)
+
+        def __enter__(self):
+            return self._file
+
+        def __exit__(self, *_exc):
+            self._file.close()
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("efd_unpacker.application.executor.os.fdopen", FullDisk)
+    leaf = Leaf(trail=("src.zip", "a.cf"), size=1, opener=lambda: io.BytesIO(b"x"))
+    writers = Writers(UnpackService(), str(tmp_path / "t"))
+
+    with pytest.raises(UnpackError) as caught:
+        writers._write_leaf(leaf, str(tmp_path / "d"), ("a.cf",), "/dl/src.zip")
+
+    assert caught.value.code is UnpackErrorCode.WRITE_FAILED
+    assert caught.value.details["error"] == "No space left on device"
+    assert _tree(tmp_path / "d") == [], "остался временный файл"

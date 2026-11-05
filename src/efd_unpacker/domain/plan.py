@@ -65,6 +65,9 @@ class FoundFile:
 
     trail: Tuple[str, ...]
     size: int
+    #: Вложенный архив первого уровня, в котором лежит файл, — сам как файл.
+    #: None у файла, лежащего прямо в источнике. См. keep_nested_archives_whole.
+    carrier: Optional["FoundFile"] = None
 
     @property
     def name(self) -> str:
@@ -656,6 +659,10 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
         found = replace(found, version=result.platform_version)
     stem = _stem(result.name)
 
+    files = result.files
+    if found.kind is ItemKind.CONTENT:
+        files = keep_nested_archives_whole(files)
+
     if found.kind is ItemKind.PLATFORM:
         parts = ("platform", found.version or "unknown", _component(found))
     elif found.kind is ItemKind.PACKAGES:
@@ -696,12 +703,50 @@ def _distribution_item(result: Inspected, settings: PlanSettings) -> PlannedItem
         source=(result.name,),
         origin=result.path,
         destination=destination,
-        bytes_total=sum(entry.size for entry in result.files),
+        bytes_total=sum(entry.size for entry in files),
         action=action,
         reason=reason,
-        files=result.files,
-        file_count=len(result.files),
+        files=files,
+        file_count=len(files),
     )
+
+
+def keep_nested_archives_whole(files: Sequence[FoundFile]) -> Tuple[FoundFile, ...]:
+    """
+    Файлы поставки «content»: вложенный архив — одним файлом, а не россыпью.
+
+    Внутрь вложенных архивов осмотр спускается всегда: так находится .efd в
+    demo.zip и пакеты платформы. Но для .cf/.dt без .efd вложенный архив —
+    отдельная вещь со своим смыслом. Настоящий случай — SSL_3_2_1_569_Ru_En.zip:
+    рядом с 1cv8_en.cf лежит dictionary.zip, проект словаря для
+    1C:Language Tool. Россыпью это 9382 файла вместо одного, а 14 из них даже
+    в каталоге по умолчанию выходят за 260 символов пути, и запись на Windows
+    падала.
+
+    Исключение — когда конфигурации и выгрузки лежат ТОЛЬКО во вложенных
+    архивах. У обёртки вида «архив → архив → 1cv8.cf» ради этих файлов
+    поставка и опознана как content, и оставить их запакованными значило бы
+    не распаковать ничего. Если же рядом уже есть свой .cf, то tools.zip с
+    обработками — такая же отдельная вещь, как и dictionary.zip.
+
+    Порядок сохраняется: архив встаёт на место своего первого файла.
+    """
+    holds_content = set()
+    if not any(found.carrier is None and _CONTENT.search(found.name) for found in files):
+        holds_content = {
+            found.carrier.trail for found in files
+            if found.carrier is not None and _CONTENT.search(found.name)
+        }
+    kept: List[FoundFile] = []
+    placed: Set[Tuple[str, ...]] = set()
+    for found in files:
+        carrier = found.carrier
+        if carrier is None or carrier.trail in holds_content:
+            kept.append(found)
+        elif carrier.trail not in placed:
+            placed.add(carrier.trail)
+            kept.append(carrier)
+    return tuple(kept)
 
 
 #: Что отбрасывает `--only cf`. Выгрузка .dt — это демонстрационная база

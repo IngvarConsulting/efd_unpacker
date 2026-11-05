@@ -109,11 +109,18 @@ def _from_leaves(path: str, leaves: Iterable[Leaf]) -> Inspected:
             if not examined and is_windows_installer(leaf.name):
                 examined = True
                 version = _platform_version(leaf)
-            files.append(FoundFile(trail=leaf.trail, size=leaf.size))
+            files.append(FoundFile(trail=leaf.trail, size=leaf.size, carrier=_carrier(leaf)))
 
     return Inspected(
         path=path, supplies=tuple(supplies), files=tuple(files), platform_version=version,
     )
+
+
+def _carrier(leaf: Leaf):
+    """Вложенный архив листа в терминах плана: тропа и размер, без потоков."""
+    if leaf.carrier is None:
+        return None
+    return FoundFile(trail=leaf.carrier.trail, size=leaf.carrier.size)
 
 
 def _platform_version(leaf: Leaf) -> str:

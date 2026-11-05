@@ -25,6 +25,7 @@ VALIDATION_KEYS = {
 UNPACK_KEYS = {
     UnpackErrorCode.FILE_NOT_FOUND: "File not found",
     UnpackErrorCode.PERMISSION: "Permission error",
+    UnpackErrorCode.WRITE_FAILED: "Could not write a file: %1",
     UnpackErrorCode.UNSAFE_ENTRY: "Archive rejected: it tries to write outside the output folder",
     UnpackErrorCode.TOO_LARGE: "Archive rejected: unpacked size exceeds the allowed limit",
     UnpackErrorCode.CORRUPTED_ARCHIVE: "Archive is damaged or incomplete: %1",
@@ -86,6 +87,28 @@ def _substitute(message: str, detail: str) -> str:
     return message.replace("%1", detail) if detail else message.replace(": %1", "")
 
 
+def _write_detail(translator: Translator, details: dict) -> str:
+    """
+    Путь и причина. Длинный путь назван отдельно: Windows сообщает о нём как
+    о «не найденном пути», и по одной этой фразе причину не угадать.
+    """
+    path = str(details.get("path", ""))
+    if details.get("reason") == "folder_in_the_way":
+        reason = translator.translate(
+            "UnpackService", "a folder with this name is in the way, remove it and try again"
+        )
+    else:
+        reason = str(details.get("error", ""))
+    # Пояснение дополняет причину от ОС, а не заменяет её: на длинном пути
+    # отказ бывает и другим — например, кончилось место.
+    note = ""
+    if details.get("long_path"):
+        note = translator.translate(
+            "UnpackService", "the path is longer than Windows allows (260 characters)"
+        )
+    return " — ".join(part for part in (path, reason, note) if part)
+
+
 def _unpack_detail(translator: Translator, error: UnpackError) -> str:
     """Короткое пояснение к ошибке распаковки для подстановки вместо %1."""
     details = error.details or {}
@@ -94,4 +117,6 @@ def _unpack_detail(translator: Translator, error: UnpackError) -> str:
     if error.code is UnpackErrorCode.CORRUPTED_ARCHIVE:
         reason = CORRUPTED_ARCHIVE_REASONS.get(details.get("reason"))
         return translator.translate("UnpackService", reason) if reason else ""
+    if error.code is UnpackErrorCode.WRITE_FAILED:
+        return _write_detail(translator, details)
     return str(details.get("error", ""))
