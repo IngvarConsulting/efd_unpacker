@@ -225,7 +225,7 @@ clean:
 	rm -rf .coverage
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-	rm -f EFDUnpacker.spec
+	rm -f EFDUnpacker.spec EFDUnpacker-console.spec
 	rm -f version.txt
 	rm -f release_notes.md
 
@@ -311,27 +311,45 @@ create-linux-archives:
 	cd dist && tar -czf efd-unpacker-$$(cat ../version.txt)-linux-portable.tar.gz efd_unpacker
 	
 # Windows build commands
-# --console + --hide-console hide-early вместо --windowed: у windowed-сборки нет
-# stdout, поэтому --help и [OK]/[ERROR] из CLI-режима уходили в никуда, хотя
-# docs/CLI.md их обещает, а установщик кладёт каталог в PATH. hide-early прячет
-# консоль, только когда процесс ей владеет (запуск из проводника, ярлыка или по
-# ассоциации .efd); при запуске из открытой консоли она остаётся, и вывод виден.
-# Опция требует PyInstaller >= 6.0 — он запинен в install-deps.
+# Два исполняемых файла из одного main.py — так же устроены devenv.exe/devenv.com.
+#
+# EFDUnpacker.exe — --windowed. Его открывают ярлыки и ассоциация .efd. Окно
+# консоли у windowed-сборки не создаётся вовсе. Прежняя одиночная сборка
+# --console --hide-console hide-early консоль только ПРЯТАЛА: Windows открывает
+# её консольному процессу сам, ещё до первой инструкции бутлоадера, поэтому при
+# каждом запуске из проводника консоль мелькала, а под Windows Terminal (по
+# умолчанию в Windows 11) не пряталась вовсе и висела рядом с окном.
+#
+# EFDUnpacker.com — --console, тот же код. Нужен CLI: у windowed-сборки нет
+# stdout, и --help, [OK]/[ERROR] и --json уходили бы в никуда (#8). PATHEXT
+# ставит .COM раньше .EXE, поэтому `EFDUnpacker ...` в cmd и PowerShell
+# находит именно его. Расширение .com у PE-файла — обычный exe: загрузчик
+# Windows смотрит на заголовок, а не на имя. hide-early оставлен на случай,
+# если .com всё же запустят двойным щелчком.
+#
+# --hide-console требует PyInstaller >= 6.0 — он запинен в install-deps.
+# Общие аргументы — переменной самой цели: так они видны в её теле, где их
+# ищет tests/unit/test_licensing.py.
+build-windows-executable: WINDOWS_PYI_ARGS = --noconfirm --onefile \
+    $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) \
+    --paths src \
+    --add-data "translations$(PYI_DATASEP)translations" \
+    --add-data "resources$(PYI_DATASEP)resources" \
+    --add-data "licenses$(PYI_DATASEP)licenses" \
+    --add-data "LICENSE$(PYI_DATASEP)licenses" \
+    --add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
+    --add-data "version.txt$(PYI_DATASEP)."
 build-windows-executable:
-	@echo "Building Windows executable with PyInstaller..."
-	pyinstaller --noconfirm --onefile --console --hide-console hide-early $(if $(wildcard resources/icon.ico),--icon=resources/icon.ico,) \
-		--paths src \
-		--add-data "translations$(PYI_DATASEP)translations" \
-		--add-data "resources$(PYI_DATASEP)resources" \
-		--add-data "licenses$(PYI_DATASEP)licenses" \
-		--add-data "LICENSE$(PYI_DATASEP)licenses" \
-		--add-data "build/BUILD-MANIFEST.txt$(PYI_DATASEP)licenses" \
-		--add-data "version.txt$(PYI_DATASEP)." \
-		--name=EFDUnpacker main.py
-	@if [ ! -f "dist/EFDUnpacker.exe" ]; then \
-		echo "Error: EFDUnpacker.exe not found in dist directory."; \
-		exit 1; \
-	fi
+	@echo "Building Windows executables with PyInstaller..."
+	pyinstaller $(WINDOWS_PYI_ARGS) --windowed --name=EFDUnpacker main.py
+	pyinstaller $(WINDOWS_PYI_ARGS) --console --hide-console hide-early --name=EFDUnpacker-console main.py
+	mv -f dist/EFDUnpacker-console.exe dist/EFDUnpacker.com
+	@for f in dist/EFDUnpacker.exe dist/EFDUnpacker.com; do \
+		if [ ! -f "$$f" ]; then \
+			echo "Error: $$f not found in dist directory."; \
+			exit 1; \
+		fi; \
+	done
 
 create-windows-zip:
 	@echo "Creating Windows portable ZIP archive..."
@@ -340,7 +358,7 @@ create-windows-zip:
 		exit 1; \
 	fi
 	@VERSION=$$(cat version.txt); \
-	cd dist && zip -r efd-unpacker-$$VERSION-windows-portable.zip EFDUnpacker.exe && cd ..
+	cd dist && zip -r efd-unpacker-$$VERSION-windows-portable.zip EFDUnpacker.exe EFDUnpacker.com && cd ..
 
 create-windows-msi:
 	@echo "Creating Windows MSI installer..."

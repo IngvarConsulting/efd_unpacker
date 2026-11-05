@@ -160,7 +160,8 @@ def test_the_package_is_built_and_installed_as_64_bit():
     # они законно встречаются в объяснении рядом, и первая редакция этой
     # проверки ловила собственный комментарий.
     assert "$exeCandidates" not in workflow, "перебор путей вернулся"
-    assert r'$exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"' in workflow
+    assert r'$gui = "C:\Program Files\EFD Unpacker\EFDUnpacker.exe"' in workflow
+    assert r'$exe = "C:\Program Files\EFD Unpacker\EFDUnpacker.com"' in workflow
 
 
 @pytest.mark.parametrize(
@@ -310,3 +311,53 @@ def test_the_transitional_upgrade_is_actually_run_somewhere():
     assert re.search(
         r"needs: \[[^\]]*test-windows-upgrade[^\]]*\]", workflow
     ), "релиз не ждёт проверку апгрейда"
+
+
+# --- окно без консоли и консоль для CLI --------------------------------------
+
+
+def windows_build_target() -> str:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    match = re.search(r"^build-windows-executable:.*?(?=\n\n)", makefile, re.S | re.M)
+    assert match is not None, "нет цели build-windows-executable"
+    return match.group(0)
+
+
+def test_the_window_binary_has_no_console_and_the_cli_binary_has_one():
+    """
+    То, что открывают ярлык и двойной щелчок по .efd, собирается --windowed.
+
+    Консольному exe окно консоли Windows создаёт сама, до первой инструкции
+    бутлоадера, и --hide-console его только прячет потом: консоль мелькала
+    перед окном при каждом запуске, а под Windows Terminal не пряталась вовсе.
+    CLI же без консольной сборки немеет (#8), поэтому рядом лежит .com.
+    """
+    pyinstaller = [line.strip() for line in windows_build_target().splitlines()
+                   if line.strip().startswith("pyinstaller ")]
+
+    gui = [line for line in pyinstaller if "--name=EFDUnpacker " in line + " "]
+    cli = [line for line in pyinstaller if "--name=EFDUnpacker-console" in line]
+    assert len(gui) == 1 and len(cli) == 1, pyinstaller
+    assert "--windowed" in gui[0] and "--console" not in gui[0]
+    assert "--console" in cli[0] and "--windowed" not in cli[0]
+    assert "dist/EFDUnpacker-console.exe dist/EFDUnpacker.com" in windows_build_target()
+
+
+def test_shortcuts_and_association_open_the_window_binary_and_the_cli_one_is_installed():
+    """
+    Ярлыки и ассоциация ведут на .exe, а .com ставится рядом.
+
+    Ярлык на .com вернул бы консоль перед окном; .com, не попавший в MSI,
+    оставил бы `EFDUnpacker --help` в консоли без вывода.
+    """
+    root = document()
+    targets = [s.get("Target") for s in root.iter(WIX + "Shortcut")]
+    assert targets and all(t == "[INSTALLFOLDER]EFDUnpacker.exe" for t in targets), targets
+
+    command = [v.get("Value") for v in root.iter(WIX + "RegistryValue")
+               if v.get("Key", "").endswith(r"shell\open\command")]
+    assert command == ['"[INSTALLFOLDER]EFDUnpacker.exe" "%1"']
+
+    sources = [f.get("Source") for f in root.iter(WIX + "File")]
+    assert r"dist\EFDUnpacker.exe" in sources
+    assert r"dist\EFDUnpacker.com" in sources

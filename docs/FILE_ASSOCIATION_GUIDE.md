@@ -38,7 +38,7 @@ efd_unpacker /path/to/file.efd
 efd_unpacker efd:///path/to/file.efd
 ```
 
-На Windows аналогичная проверка обычно делается через `EFDUnpacker.exe`.
+На Windows аналогичная проверка делается через `EFDUnpacker.exe` — его же вызывает ассоциация `.efd`.
 
 ### Linux MIME
 
