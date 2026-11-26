@@ -8,6 +8,22 @@ import pytest
 from efd_unpacker.infrastructure import os_utils
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path semantics")
+def test_move_to_trash_accepts_qt_paths_on_windows(monkeypatch, tmp_path):
+    import send2trash
+
+    archive = tmp_path / "Шаблон.efd"
+    qt_path = archive.as_posix()
+
+    def recycle(native_path):
+        if native_path != str(archive):
+            raise FileNotFoundError(native_path)
+
+    monkeypatch.setattr(send2trash, "send2trash", recycle)
+
+    assert os_utils.move_to_trash([qt_path]) == ([qt_path], [])
+
+
 def test_get_1c_configuration_location_default_windows(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", r"C:\Users\User\AppData\Roaming")

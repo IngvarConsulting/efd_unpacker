@@ -199,7 +199,10 @@ def move_to_trash(paths):
     moved, failed = [], []
     for path in paths:
         try:
-            send2trash(path)
+            # Qt возвращает пути с /, а GetShortPathNameW в Send2Trash
+            # получает путь с префиксом \\?\ и требует обратные слеши.
+            native_path = os.path.normpath(path) if sys.platform == "win32" else path
+            send2trash(native_path)
             moved.append(path)
         except Exception as exc:  # noqa: BLE001 - причин отказа открытый набор
             logger.warning("Не удалось перенести в корзину %s: %s", path, exc)

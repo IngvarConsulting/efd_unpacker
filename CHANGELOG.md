@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-11-27
+
+- В Windows кнопка «Удалить архивы» снова перемещает распакованные архивы
+  в корзину, в том числе при открытии через диалог выбора файлов или
+  перетаскивании в окно программы.
+
 ## [2.1.0] — 2026-11-06
 
 Окно на Windows открывается без консоли, а `.rar` с платформой на русской
@@ -281,7 +287,8 @@ Windows и поставки БСП без `.efd` распаковываются.
 - Запуск с аргументами командной строки.
 - Windows, macOS и Linux.
 
-[Unreleased]: https://github.com/IngvarConsulting/efd_unpacker/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/IngvarConsulting/efd_unpacker/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/IngvarConsulting/efd_unpacker/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/IngvarConsulting/efd_unpacker/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/IngvarConsulting/efd_unpacker/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/IngvarConsulting/efd_unpacker/compare/v1.3.0...v2.0.0
